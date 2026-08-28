@@ -156,37 +156,6 @@ export function Dashboard() {
         </div>
       </div>
 
-      <footer className="mt-auto flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-edge bg-bg-deep/60 px-5 py-2 text-[11px] text-muted">
-        <span className="flex items-center gap-1.5">
-          <span className={`inline-block size-1.5 rounded-full ${error ? "bg-crit" : "bg-calm"}`} />
-          {error ? "Reconnecting…" : "Operational"}
-        </span>
-        {snap && (
-          <>
-            <span>
-              <span className="num text-fg">{snap.book.totalOrders}</span> orders on book
-            </span>
-            <span>
-              Greeks coverage{" "}
-              <span className="num text-fg">
-                {snap.book.totalOrders
-                  ? Math.round((snap.book.withGreeks / snap.book.totalOrders) * 100)
-                  : 0}
-                %
-              </span>
-            </span>
-            <span>
-              Updated{" "}
-              <span className="num text-fg">
-                {new Date(snap.ts).toLocaleTimeString("en-GB")}
-              </span>
-            </span>
-          </>
-        )}
-        <span className="ml-auto text-faint">
-          Analysis and simulation, not price prediction · Powered by Thetanuts V4
-        </span>
-      </footer>
     </div>
   );
 }
