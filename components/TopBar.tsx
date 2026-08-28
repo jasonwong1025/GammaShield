@@ -1,13 +1,10 @@
 "use client";
 
-import { LivePrice } from "./LivePrice";
-
 type Props = {
-  ticker: { symbol: string; price: number }[] | null;
   connected: boolean;
 };
 
-export function TopBar({ ticker, connected }: Props) {
+export function TopBar({ connected }: Props) {
   return (
     <div className="shrink-0">
       <header className="flex items-center gap-6 px-5 h-16 border-b border-edge bg-bg/80 backdrop-blur">
@@ -48,29 +45,6 @@ export function TopBar({ ticker, connected }: Props) {
           </button>
         </div>
       </header>
-
-      {/* Ticker strip */}
-      <div className="flex items-center gap-6 px-5 h-9 border-b border-edge bg-bg-deep/60 overflow-x-auto feed-scroll text-[12px] whitespace-nowrap">
-        {ticker ? (
-          ticker.map((t) => (
-            <span key={t.symbol} className="flex items-center gap-1.5">
-              <span className="text-muted">{t.symbol}</span>
-              <LivePrice
-                value={t.price}
-                className="text-fg"
-                format={(v) =>
-                  `$${v >= 100 ? v.toLocaleString("en-US", { maximumFractionDigits: 0 }) : v.toFixed(2)}`
-                }
-              />
-            </span>
-          ))
-        ) : (
-          <span className="text-faint">Loading live prices…</span>
-        )}
-        <span className="ml-auto hidden lg:inline text-faint">
-          Live from Thetanuts V4
-        </span>
-      </div>
     </div>
   );
 }

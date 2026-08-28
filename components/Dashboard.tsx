@@ -98,10 +98,17 @@ export function Dashboard() {
 
   return (
     <div className="flex flex-col min-h-dvh">
-      <TopBar ticker={ticker} connected={!!snap && !error} />
+      <TopBar connected={!!snap && !error} />
 
       <div className="flex grow min-h-0">
-        <AssetRail asset={asset} onAsset={setAsset} />
+        <AssetRail
+          asset={asset}
+          onAsset={setAsset}
+          ticker={ticker}
+          scores={
+            snap ? { BTC: snap.assets.BTC.score, ETH: snap.assets.ETH.score } : null
+          }
+        />
 
         <div className="grow min-w-0 flex flex-col">
           {!snap && !error && <Booting />}
