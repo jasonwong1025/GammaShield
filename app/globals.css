@@ -1,26 +1,151 @@
 @import "tailwindcss";
 
+/* Light "clean white" theme. Previous navy palette kept for easy revert:
+   bg #0b1226 · bg-deep #080e1e · panel #111a30 · panel-2 #16213c
+   panel-3 #1b2848 · edge #1f2b4a · edge-2 #2b3a61 · text #e8edf7
+   muted #8b96ad · faint #5a6580 · blue #3178f2 · blue-soft #17243f
+   calm #34c08b · warn #e9b44c · crit #e4574f */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #f4f6fa;
+  --bg-deep: #edf0f6;
+  --panel: #ffffff;
+  --panel-2: #f3f5f9;
+  --panel-3: #e9edf4;
+  --edge: #e3e8f0;
+  --edge-2: #c9d2e0;
+  --text: #172136;
+  --muted: #5d6a83;
+  --faint: #8a94a8;
+  --blue: #2b66d9;
+  --blue-soft: #e8effc;
+  --calm: #12a06e;
+  --warn: #c8891a;
+  --crit: #d8433b;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-bg: var(--bg);
+  --color-bg-deep: var(--bg-deep);
+  --color-panel: var(--panel);
+  --color-panel2: var(--panel-2);
+  --color-panel3: var(--panel-3);
+  --color-edge: var(--edge);
+  --color-edge2: var(--edge-2);
+  --color-fg: var(--text);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-blue: var(--blue);
+  --color-bluesoft: var(--blue-soft);
+  --color-calm: var(--calm);
+  --color-warn: var(--warn);
+  --color-crit: var(--crit);
+  --font-sans: var(--font-inter), system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, monospace;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background:
+    radial-gradient(1200px 600px at 70% -10%, rgba(43, 102, 217, 0.05), transparent 60%),
+    radial-gradient(circle, rgba(23, 33, 54, 0.04) 1px, transparent 1px),
+    var(--bg);
+  background-size: auto, 26px 26px, auto;
+  color: var(--text);
+  font-family: var(--font-inter), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Panels: flat sections tiled edge-to-edge; the 1px dividers come from
+   gap-px grids whose container shows var(--edge) through the gaps. */
+.card {
+  background: var(--panel);
+}
+
+/* Price flash on update */
+@keyframes flash-up {
+  0% { color: var(--calm); }
+  100% { color: inherit; }
+}
+@keyframes flash-down {
+  0% { color: var(--crit); }
+  100% { color: inherit; }
+}
+.flash-up { animation: flash-up 0.9s ease-out; }
+.flash-down { animation: flash-down 0.9s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .flash-up, .flash-down { animation: none; }
+}
+
+/* Live pulse */
+@keyframes tick {
+  0% { opacity: 1; }
+  50% { opacity: 0.3; }
+  100% { opacity: 1; }
+}
+.live-dot { animation: tick 2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .live-dot { animation: none; }
+}
+
+/* Scroll areas */
+.feed-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--edge-2) transparent;
+}
+.feed-scroll::-webkit-scrollbar { width: 6px; }
+.feed-scroll::-webkit-scrollbar-thumb { background: var(--edge-2); border-radius: 3px; }
+
+/* Whale size slider */
+input[type="range"].sim-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    var(--blue) 0%,
+    var(--blue) var(--fill, 40%),
+    var(--edge-2) var(--fill, 40%)
+  );
+  outline: none;
+}
+input[type="range"].sim-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--blue);
+  box-shadow: 0 2px 8px rgba(23, 33, 54, 0.2);
+  cursor: pointer;
+}
+input[type="range"].sim-range::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--blue);
+  box-shadow: 0 2px 8px rgba(23, 33, 54, 0.2);
+  cursor: pointer;
+}
+input[type="range"].sim-range::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--edge-2);
+}
+input[type="range"].sim-range::-moz-range-progress {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--blue);
+}
+
+:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+  border-radius: 6px;
 }
