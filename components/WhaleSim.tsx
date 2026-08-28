@@ -2,6 +2,7 @@
 
 import { simulateWhale, type AssetSnapshot } from "@/lib/engine";
 import { fmtPct, fmtUsd } from "@/lib/format";
+import type { Asset } from "@/lib/assets";
 
 export type SimState = { sizeM: number; buy: boolean };
 
@@ -14,7 +15,7 @@ export function WhaleControls({
   sim,
   onChange,
 }: {
-  asset: "BTC" | "ETH";
+  asset: Asset;
   sim: SimState;
   onChange: (s: SimState) => void;
 }) {

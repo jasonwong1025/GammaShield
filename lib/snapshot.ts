@@ -8,19 +8,21 @@ import {
   type AssetSnapshot,
   type NormalizedOrder,
 } from "./engine";
+import { ALL_ASSETS, isOptionsAsset, type Asset } from "./assets";
+import { buildModelBook } from "./modelBook";
 
 export type MarketSnapshot = {
   ts: number;
   prices: { BTC: number; ETH: number };
   ticker: { symbol: string; price: number }[];
-  assets: { BTC: AssetSnapshot; ETH: AssetSnapshot };
+  assets: Record<Asset, AssetSnapshot>;
   feed: FeedRow[];
   book: { totalOrders: number; withGreeks: number };
   source: "live" | "cache";
 };
 
 export type FeedRow = {
-  asset: "BTC" | "ETH";
+  asset: Asset;
   structure: string;
   isCall: boolean;
   takerIsLong: boolean;
@@ -138,21 +140,30 @@ export async function getMarketSnapshot(): Promise<MarketSnapshot> {
     }
 
     const nowSec = Math.floor(now / 1000);
-    const tickerSymbols = ["BTC", "ETH", "SOL", "XRP", "BNB", "AVAX"];
+
+    // Assets without a live Thetanuts market get a modeled book priced off
+    // live spot, so the full risk stack works everywhere (labeled in the UI).
+    for (const symbol of ALL_ASSETS) {
+      if (isOptionsAsset(symbol)) continue;
+      normalized.push(...buildModelBook(symbol, market.prices[symbol], nowSec));
+    }
+
     const snapshot: MarketSnapshot = {
       ts: now,
       prices,
-      ticker: tickerSymbols
+      ticker: ALL_ASSETS
         .map((symbol) => ({ symbol, price: market.prices[symbol] }))
         .filter((t) => Number.isFinite(t.price) && t.price > 0),
-      assets: {
-        BTC: computeAssetSnapshot("BTC", prices.BTC, normalized, nowSec),
-        ETH: computeAssetSnapshot("ETH", prices.ETH, normalized, nowSec),
-      },
+      assets: Object.fromEntries(
+        ALL_ASSETS.map((symbol) => [
+          symbol,
+          computeAssetSnapshot(symbol, market.prices[symbol] ?? 0, normalized, nowSec),
+        ]),
+      ) as Record<Asset, AssetSnapshot>,
       feed: normalized
         .filter((o) => o.expiryTs > nowSec)
         .sort((a, b) => a.expiryTs - b.expiryTs)
-        .slice(0, 60)
+        .slice(0, 200)
         .map((o) => ({
           asset: o.asset,
           structure: o.structure,

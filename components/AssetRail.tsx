@@ -2,25 +2,14 @@
 
 import { LivePrice } from "./LivePrice";
 import { riskColor } from "@/lib/format";
+import { ALL_ASSETS, ASSET_META, type Asset } from "@/lib/assets";
 
 type Props = {
-  asset: "BTC" | "ETH";
-  onAsset: (a: "BTC" | "ETH") => void;
+  asset: Asset;
+  onAsset: (a: Asset) => void;
   ticker: { symbol: string; price: number }[] | null;
-  scores: { BTC: number; ETH: number } | null;
+  scores: Record<Asset, number> | null;
 };
-
-const TRADEABLE: { symbol: "BTC" | "ETH"; name: string }[] = [
-  { symbol: "BTC", name: "Bitcoin" },
-  { symbol: "ETH", name: "Ethereum" },
-];
-
-const SPOT_ONLY: { symbol: string; name: string }[] = [
-  { symbol: "SOL", name: "Solana" },
-  { symbol: "XRP", name: "XRP" },
-  { symbol: "BNB", name: "BNB" },
-  { symbol: "AVAX", name: "Avalanche" },
-];
 
 function CoinLogo({ symbol, className }: { symbol: string; className?: string }) {
   return (
@@ -48,7 +37,8 @@ export function AssetRail({ asset, onAsset, ticker, scores }: Props) {
         Markets
       </div>
 
-      {TRADEABLE.map(({ symbol, name }) => {
+      {ALL_ASSETS.map((symbol) => {
+        const { name, options } = ASSET_META[symbol];
         const active = asset === symbol;
         const p = price(symbol);
         const score = scores?.[symbol] ?? null;
@@ -57,6 +47,7 @@ export function AssetRail({ asset, onAsset, ticker, scores }: Props) {
             key={symbol}
             onClick={() => onAsset(symbol)}
             aria-pressed={active}
+            title={options ? undefined : "Options book modeled from live spot"}
             className={`relative px-4 py-2.5 text-left transition-colors ${
               active ? "bg-panel2" : "hover:bg-panel2/50"
             }`}
@@ -85,36 +76,9 @@ export function AssetRail({ asset, onAsset, ticker, scores }: Props) {
         );
       })}
 
-      <div className="px-4 pt-4 pb-2 text-[10px] uppercase tracking-wide text-faint">
-        Spot only
-      </div>
-
-      {SPOT_ONLY.map(({ symbol, name }) => {
-        const p = price(symbol);
-        return (
-          <div
-            key={symbol}
-            className="px-4 py-2 cursor-default"
-            title="No on-chain options market yet"
-          >
-            <span className="flex items-baseline justify-between gap-2">
-              <span className="flex items-center gap-2 text-[12.5px] font-medium text-muted">
-                <CoinLogo symbol={symbol} className="opacity-80 saturate-[.85]" />
-                {symbol}
-              </span>
-              {p !== null ? (
-                <LivePrice value={p} className="text-[12px] text-muted" format={fmtPrice} />
-              ) : (
-                <span className="text-[12px] text-faint">—</span>
-              )}
-            </span>
-            <span className="mt-0.5 block pl-6 text-[10.5px] text-faint">{name}</span>
-          </div>
-        );
-      })}
-
       <div className="mt-auto px-4 py-3 border-t border-edge text-[10px] leading-4 text-faint">
-        Risk scores update every 10s from the live Thetanuts book.
+        Risk scores update every 10s. BTC &amp; ETH read the live Thetanuts book;
+        other books are modeled from live spot.
       </div>
     </aside>
   );

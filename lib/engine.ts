@@ -3,8 +3,10 @@
 // Thetanuts book (see lib/snapshot.ts). All math here is deliberately simple
 // and inspectable — this is a market-structure estimate, not a price forecast.
 
+import type { Asset } from "./assets";
+
 export type NormalizedOrder = {
-  asset: "BTC" | "ETH";
+  asset: Asset;
   structure: string; // CALL | PUT | SPREAD | FLY | CONDOR
   isCall: boolean;
   /** Taker side is long when true (maker/MM is selling the option). */
@@ -38,7 +40,7 @@ export type Factors = {
 };
 
 export type AssetSnapshot = {
-  asset: "BTC" | "ETH";
+  asset: Asset;
   spot: number;
   score: number;
   regime: "dampening" | "amplifying" | "neutral";
@@ -67,7 +69,7 @@ function orderGex(o: NormalizedOrder, spot: number): number {
 }
 
 export function computeAssetSnapshot(
-  asset: "BTC" | "ETH",
+  asset: Asset,
   spot: number,
   orders: NormalizedOrder[],
   now = Math.floor(Date.now() / 1000),
@@ -201,8 +203,15 @@ export function simulateWhale(snapshot: AssetSnapshot, sizeUsd: number, buy: boo
   // Square-root market-impact law: move ≈ dailyVol × √(size / dailyVolume).
   // Vol and ADV are coarse constants for the global spot market — the point is
   // the relative feedback structure, not basis-point precision.
-  const dailyVolPct = snapshot.asset === "BTC" ? 2.5 : 3.2;
-  const advUsd = snapshot.asset === "BTC" ? 25_000_000_000 : 12_000_000_000;
+  const MARKET: Record<Asset, { volPct: number; advUsd: number }> = {
+    BTC: { volPct: 2.5, advUsd: 25_000_000_000 },
+    ETH: { volPct: 3.2, advUsd: 12_000_000_000 },
+    SOL: { volPct: 4.5, advUsd: 3_000_000_000 },
+    XRP: { volPct: 4.0, advUsd: 2_500_000_000 },
+    BNB: { volPct: 3.5, advUsd: 1_500_000_000 },
+    AVAX: { volPct: 5.0, advUsd: 500_000_000 },
+  };
+  const { volPct: dailyVolPct, advUsd } = MARKET[snapshot.asset];
   const impactPct = (size: number) => dailyVolPct * Math.sqrt(Math.abs(size) / advUsd);
 
   const initialMovePct = impactPct(sizeUsd) * (buy ? 1 : -1);

@@ -11,16 +11,15 @@ import { Heatmap } from "./Heatmap";
 import { BookCard } from "./BookFeed";
 import { WhaleControls, ImpactCard, type SimState } from "./WhaleSim";
 import { LivePrice } from "./LivePrice";
+import { ASSET_META, isOptionsAsset, type Asset } from "@/lib/assets";
 
 const POLL_MS = 10_000;
 const PRICE_POLL_MS = 4_000;
 
-const ASSET_NAMES = { BTC: "Bitcoin", ETH: "Ethereum" } as const;
-
 type Ticker = { symbol: string; price: number }[];
 
 export function Dashboard() {
-  const [asset, setAsset] = useState<"BTC" | "ETH">("BTC");
+  const [asset, setAsset] = useState<Asset>("BTC");
   const [sim, setSim] = useState<SimState>({ sizeM: 100, buy: true });
   const [snap, setSnap] = useState<MarketSnapshot | null>(null);
   const [ticker, setTicker] = useState<Ticker | null>(null);
@@ -93,6 +92,7 @@ export function Dashboard() {
     return () => clearInterval(id);
   }, [streaming]);
 
+  const live = isOptionsAsset(asset);
   const a = snap?.assets[asset] ?? null;
   const livePrice = ticker?.find((t) => t.symbol === asset)?.price ?? a?.spot ?? 0;
 
@@ -106,7 +106,11 @@ export function Dashboard() {
           onAsset={setAsset}
           ticker={ticker}
           scores={
-            snap ? { BTC: snap.assets.BTC.score, ETH: snap.assets.ETH.score } : null
+            snap
+              ? (Object.fromEntries(
+                  Object.entries(snap.assets).map(([k, v]) => [k, v.score]),
+                ) as Record<Asset, number>)
+              : null
           }
         />
 
@@ -114,7 +118,7 @@ export function Dashboard() {
           {!snap && !error && <Booting />}
           {error && !snap && <Failed message={error} retry={load} />}
 
-          {snap && a && (
+          {snap && (
             <>
               <div className="flex items-baseline gap-3 px-5 py-3 border-b border-edge bg-panel">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -126,13 +130,21 @@ export function Dashboard() {
                   className="size-[22px] shrink-0 self-center rounded-full"
                 />
                 <h1 className="text-[18px] font-semibold tracking-tight">
-                  {ASSET_NAMES[asset]}
+                  {ASSET_META[asset].name}
                 </h1>
                 <LivePrice
                   value={livePrice}
                   className="text-[18px] text-muted"
                   format={(v) => `$${v.toLocaleString("en-US", { maximumFractionDigits: 2 })}`}
                 />
+                {!live && (
+                  <span
+                    title="No live options market on Thetanuts yet — the book below is modeled from live spot so the full risk stack works. Options flow becomes real the moment a book launches on Base."
+                    className="hidden sm:inline-block self-center rounded-full border border-edge px-2 py-0.5 text-[10px] uppercase tracking-wide text-faint"
+                  >
+                    Modeled book
+                  </span>
+                )}
                 <span className="md:hidden ml-auto">
                   <button
                     onClick={() => setAsset(asset === "BTC" ? "ETH" : "BTC")}
@@ -143,22 +155,24 @@ export function Dashboard() {
                 </span>
               </div>
 
-              <div className="grid grow grid-cols-1 xl:grid-cols-[1fr_380px] gap-px bg-edge">
-                <div className="flex flex-col gap-px min-w-0">
-                  <PriceChart asset={asset} flip={a.flipStrike} livePrice={livePrice} />
-                  <WhaleControls asset={asset} sim={sim} onChange={setSim} />
-                  <GexChart snap={a} />
-                  <Heatmap snap={a} />
-                  <div className="grow bg-panel" />
-                </div>
+              {a && (
+                <div className="grid grow grid-cols-1 xl:grid-cols-[1fr_380px] gap-px bg-edge">
+                  <div className="flex flex-col gap-px min-w-0">
+                    <PriceChart asset={asset} flip={a.flipStrike} livePrice={livePrice} />
+                    <WhaleControls asset={asset} sim={sim} onChange={setSim} />
+                    <GexChart snap={a} />
+                    <Heatmap snap={a} />
+                    <div className="grow bg-panel" />
+                  </div>
 
-                <div className="flex flex-col gap-px min-w-0">
-                  <ScorePanel snap={a} />
-                  <ImpactCard snap={a} sim={sim} />
-                  <BookCard rows={snap.feed} snap={a} asset={asset} />
-                  <div className="grow bg-panel" />
+                  <div className="flex flex-col gap-px min-w-0">
+                    <ScorePanel snap={a} />
+                    <ImpactCard snap={a} sim={sim} />
+                    <BookCard rows={snap.feed} snap={a} asset={asset} />
+                    <div className="grow bg-panel" />
+                  </div>
                 </div>
-              </div>
+              )}
             </>
           )}
         </div>

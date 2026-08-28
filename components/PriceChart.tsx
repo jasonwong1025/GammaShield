@@ -17,6 +17,7 @@ import {
   type SeriesType,
   type UTCTimestamp,
 } from "lightweight-charts";
+import type { Asset } from "@/lib/assets";
 
 type Candle = {
   time: number;
@@ -240,7 +241,7 @@ export function PriceChart({
   flip,
   livePrice,
 }: {
-  asset: "BTC" | "ETH";
+  asset: Asset;
   flip: number | null;
   livePrice?: number;
 }) {
@@ -507,7 +508,9 @@ export function PriceChart({
         <div>
           <h2 className="text-[14px] font-semibold">{asset}/USD</h2>
           <p className="text-[12px] text-muted mt-0.5">
-            Live market data with the engine&apos;s gamma flip level overlaid.
+            {flip !== null
+              ? "Live market data with the engine's gamma flip level overlaid."
+              : "Live spot market data."}
           </p>
         </div>
 

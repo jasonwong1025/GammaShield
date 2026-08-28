@@ -28,6 +28,24 @@ const BINANCE_NATIVE: Record<number, string> = {
   604800: "1w",
 };
 
+const COINBASE_PRODUCTS: Record<string, string> = {
+  BTC: "BTC-USD",
+  ETH: "ETH-USD",
+  SOL: "SOL-USD",
+  XRP: "XRP-USD",
+  AVAX: "AVAX-USD",
+  // BNB has no Coinbase market — served by Binance only.
+};
+
+const BINANCE_SYMBOLS: Record<string, string> = {
+  BTC: "BTCUSDT",
+  ETH: "ETHUSDT",
+  SOL: "SOLUSDT",
+  XRP: "XRPUSDT",
+  BNB: "BNBUSDT",
+  AVAX: "AVAXUSDT",
+};
+
 const MIN_SEC = 60;
 const MAX_SEC = 604_800;
 const CACHE_MS = 10_000;
@@ -53,7 +71,8 @@ function aggregate(candles: Candle[], sec: number): Candle[] {
 async function fromCoinbase(asset: string, sec: number): Promise<Candle[]> {
   const base = [...COINBASE_NATIVE].reverse().find((g) => sec % g === 0);
   if (!base) throw new Error("no coinbase granularity");
-  const product = asset === "BTC" ? "BTC-USD" : "ETH-USD";
+  const product = COINBASE_PRODUCTS[asset];
+  if (!product) throw new Error("no coinbase market");
   const url = `https://api.exchange.coinbase.com/products/${product}/candles?granularity=${base}`;
   const res = await fetch(url, {
     headers: { "user-agent": "gammashield-hackathon" },
@@ -75,8 +94,11 @@ async function fromBinance(asset: string, sec: number): Promise<Candle[]> {
         .sort((a, b) => b - a)
         .find((g) => sec % g === 0);
   if (!baseSec) throw new Error("no binance granularity");
-  const symbol = asset === "BTC" ? "BTCUSDT" : "ETHUSDT";
-  const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${BINANCE_NATIVE[baseSec]}&limit=500`;
+  const symbol = BINANCE_SYMBOLS[asset];
+  if (!symbol) throw new Error("no binance market");
+  // data-api.binance.vision is Binance's official public market-data mirror;
+  // api.binance.com is geo-blocked on some networks.
+  const url = `https://data-api.binance.vision/api/v3/klines?symbol=${symbol}&interval=${BINANCE_NATIVE[baseSec]}&limit=500`;
   const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
   if (!res.ok) throw new Error(`binance ${res.status}`);
   const rows: unknown[][] = await res.json();
@@ -93,7 +115,8 @@ async function fromBinance(asset: string, sec: number): Promise<Candle[]> {
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const asset = searchParams.get("asset") === "ETH" ? "ETH" : "BTC";
+  const requested = searchParams.get("asset") ?? "BTC";
+  const asset = BINANCE_SYMBOLS[requested] ? requested : "BTC";
   const raw = Number(searchParams.get("sec"));
   const sec =
     Number.isFinite(raw) && raw >= MIN_SEC && raw <= MAX_SEC && raw % 60 === 0 ? raw : 3600;

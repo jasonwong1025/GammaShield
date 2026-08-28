@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { FeedRow } from "@/lib/snapshot";
 import type { AssetSnapshot } from "@/lib/engine";
+import type { Asset } from "@/lib/assets";
 import {
   fmtCountdown,
   fmtExpiryDate,
@@ -18,7 +19,7 @@ export function BookCard({
 }: {
   rows: FeedRow[];
   snap: AssetSnapshot;
-  asset: "BTC" | "ETH";
+  asset: Asset;
 }) {
   const [tab, setTab] = useState<"book" | "expiries">("book");
   const filtered = rows.filter((r) => r.asset === asset).slice(0, 28);
