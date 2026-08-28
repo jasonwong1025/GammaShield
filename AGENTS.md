@@ -48,7 +48,7 @@ Routes return `502` with `{ error }` on upstream failure — keep that shape.
 
 ### Client (`components/`)
 
-All chart/dashboard components are `"use client"`. Layout: `Dashboard.tsx` composes `TopBar`, `AssetRail` (asset switcher w/ live prices), `PriceChart` (lightweight-charts, 10 chart types, live tick-built candles), `ScorePanel`, `GexChart` + `Heatmap` (ECharts via the shared `EChart.tsx` wrapper), `BookFeed`, `WhaleSim`.
+All chart/dashboard components are `"use client"`. Layout: `Dashboard.tsx` composes `TopBar`, `AssetRail` (asset switcher w/ live prices), `PriceChart` (lightweight-charts, 10 chart types, live tick-built candles), `ScorePanel`, `GexChart` + `Heatmap` (ECharts via the shared `EChart.tsx` wrapper), `BookFeed`.
 
 - Live prices come from the `/api/stream` SSE feed (see `LivePrice.tsx`), not polling.
 - New ECharts charts go through `EChart.tsx`; don't instantiate echarts directly.

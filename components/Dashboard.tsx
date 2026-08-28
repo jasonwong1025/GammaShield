@@ -9,7 +9,6 @@ import { PriceChart } from "./PriceChart";
 import { GexChart } from "./GexChart";
 import { Heatmap } from "./Heatmap";
 import { BookCard } from "./BookFeed";
-import { WhaleControls, ImpactCard, type SimState } from "./WhaleSim";
 import { LivePrice } from "./LivePrice";
 import { ASSET_META, isOptionsAsset, type Asset } from "@/lib/assets";
 
@@ -20,7 +19,6 @@ type Ticker = { symbol: string; price: number }[];
 
 export function Dashboard() {
   const [asset, setAsset] = useState<Asset>("BTC");
-  const [sim, setSim] = useState<SimState>({ sizeM: 100, buy: true });
   const [snap, setSnap] = useState<MarketSnapshot | null>(null);
   const [ticker, setTicker] = useState<Ticker | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -159,7 +157,6 @@ export function Dashboard() {
                 <div className="grid grow grid-cols-1 xl:grid-cols-[1fr_380px] gap-px bg-edge">
                   <div className="flex flex-col gap-px min-w-0">
                     <PriceChart asset={asset} flip={a.flipStrike} livePrice={livePrice} />
-                    <WhaleControls asset={asset} sim={sim} onChange={setSim} />
                     <GexChart snap={a} />
                     <Heatmap snap={a} />
                     <div className="grow bg-panel" />
@@ -167,7 +164,6 @@ export function Dashboard() {
 
                   <div className="flex flex-col gap-px min-w-0">
                     <ScorePanel snap={a} />
-                    <ImpactCard snap={a} sim={sim} />
                     <BookCard rows={snap.feed} snap={a} asset={asset} />
                     <div className="grow bg-panel" />
                   </div>

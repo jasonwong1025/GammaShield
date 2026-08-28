@@ -1,8 +1,8 @@
 // Modeled options book for assets without a live Thetanuts market yet.
 // Structure (strikes, tenors, sizes, sides) is generated deterministically per
 // asset, and greeks come from Black-Scholes against the LIVE spot price — so
-// the risk engine, GEX profile, and whale simulator all behave exactly as they
-// do for the real BTC/ETH books. Clearly labeled as modeled in the UI.
+// the risk engine and GEX profile behave exactly as they do for the real
+// BTC/ETH books. Clearly labeled as modeled in the UI.
 
 import type { Asset } from "./assets";
 import type { NormalizedOrder } from "./engine";
