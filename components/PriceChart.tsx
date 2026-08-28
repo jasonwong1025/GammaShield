@@ -132,45 +132,45 @@ function TypeIcon({ type }: { type: ChartTypeKey }) {
 
 // ---------- intervals ----------
 
-type Interval = { label: string; sec: number; live?: boolean };
+type Interval = { label: string; name: string; sec: number; live?: boolean };
 
 const INTERVAL_GROUPS: { title: string; items: Interval[] }[] = [
   {
     title: "Seconds",
     items: [
-      { label: "1s", sec: 1, live: true },
-      { label: "5s", sec: 5, live: true },
-      { label: "15s", sec: 15, live: true },
-      { label: "30s", sec: 30, live: true },
+      { label: "1s", name: "1 second", sec: 1, live: true },
+      { label: "5s", name: "5 seconds", sec: 5, live: true },
+      { label: "15s", name: "15 seconds", sec: 15, live: true },
+      { label: "30s", name: "30 seconds", sec: 30, live: true },
     ],
   },
   {
     title: "Minutes",
     items: [
-      { label: "1m", sec: 60 },
-      { label: "3m", sec: 180 },
-      { label: "5m", sec: 300 },
-      { label: "15m", sec: 900 },
-      { label: "30m", sec: 1800 },
-      { label: "45m", sec: 2700 },
+      { label: "1m", name: "1 minute", sec: 60 },
+      { label: "3m", name: "3 minutes", sec: 180 },
+      { label: "5m", name: "5 minutes", sec: 300 },
+      { label: "15m", name: "15 minutes", sec: 900 },
+      { label: "30m", name: "30 minutes", sec: 1800 },
+      { label: "45m", name: "45 minutes", sec: 2700 },
     ],
   },
   {
     title: "Hours",
     items: [
-      { label: "1H", sec: 3600 },
-      { label: "2H", sec: 7200 },
-      { label: "4H", sec: 14400 },
-      { label: "6H", sec: 21600 },
-      { label: "12H", sec: 43200 },
+      { label: "1H", name: "1 hour", sec: 3600 },
+      { label: "2H", name: "2 hours", sec: 7200 },
+      { label: "4H", name: "4 hours", sec: 14400 },
+      { label: "6H", name: "6 hours", sec: 21600 },
+      { label: "12H", name: "12 hours", sec: 43200 },
     ],
   },
   {
     title: "Days",
     items: [
-      { label: "1D", sec: 86400 },
-      { label: "3D", sec: 259200 },
-      { label: "1W", sec: 604800 },
+      { label: "1D", name: "1 day", sec: 86400 },
+      { label: "3D", name: "3 days", sec: 259200 },
+      { label: "1W", name: "1 week", sec: 604800 },
     ],
   },
 ];
@@ -520,6 +520,7 @@ export function PriceChart({
                   key={label}
                   onClick={() => setIntervalTf(item)}
                   aria-pressed={interval.label === label}
+                  title={`${item.name} per candle`}
                   className={`px-2.5 h-7 rounded-md text-[12px] font-medium transition ${
                     interval.label === label ? "bg-panel3 text-fg" : "text-muted hover:text-fg"
                   }`}
@@ -535,10 +536,13 @@ export function PriceChart({
               active={!QUICK_INTERVALS.includes(interval.label)}
             >
               {(close) => (
-                <div className="w-[148px] max-h-[300px] overflow-y-auto feed-scroll">
+                <div className="w-[188px] max-h-[300px] overflow-y-auto feed-scroll">
+                  <div className="px-2.5 pt-2 pb-1.5 text-[10.5px] leading-snug text-faint border-b border-edge/60 mb-1">
+                    How much time each candle covers
+                  </div>
                   {INTERVAL_GROUPS.map((group) => (
                     <div key={group.title}>
-                      <div className="px-2.5 pt-2 pb-1 text-[10px] uppercase tracking-wide text-faint border-b border-edge/60 mb-1">
+                      <div className="px-2.5 pt-2 pb-1 text-[10px] uppercase tracking-wide text-faint">
                         {group.title}
                       </div>
                       {group.items.map((item) => (
@@ -550,10 +554,12 @@ export function PriceChart({
                             close();
                           }}
                         >
-                          <span className="flex items-center justify-between">
-                            {item.label}
-                            {item.live && (
+                          <span className="flex items-center justify-between gap-3">
+                            <span>{item.name}</span>
+                            {item.live ? (
                               <span className="text-[9px] text-calm">● live</span>
+                            ) : (
+                              <span className="text-[10px] text-faint">{item.label}</span>
                             )}
                           </span>
                         </MenuItem>
