@@ -182,11 +182,11 @@ const ALL_INTERVALS = INTERVAL_GROUPS.flatMap((g) => g.items);
 const POLL_MS = 15_000;
 
 const COLORS = {
-  calm: "#34c08b",
-  crit: "#e4574f",
-  blue: "#3178f2",
-  muted: "#8b96ad",
-  edge: "#1f2b4a",
+  calm: "#12a06e",
+  crit: "#d8433b",
+  blue: "#2b66d9",
+  muted: "#5d6a83",
+  edge: "#e3e8f0",
 };
 
 // ---------- data transforms ----------
@@ -269,7 +269,7 @@ export function PriceChart({
     if (flipRef.current !== null) {
       flipLineRef.current = main.createPriceLine({
         price: flipRef.current,
-        color: "#e9b44c",
+        color: "#c8891a",
         lineWidth: 1,
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
@@ -291,12 +291,12 @@ export function PriceChart({
         attributionLogo: true,
       },
       grid: {
-        vertLines: { color: "rgba(31, 43, 74, 0.45)" },
-        horzLines: { color: "rgba(31, 43, 74, 0.45)" },
+        vertLines: { color: "rgba(120, 128, 145, 0.14)" },
+        horzLines: { color: "rgba(120, 128, 145, 0.14)" },
       },
       crosshair: {
-        vertLine: { labelBackgroundColor: "#1b2848" },
-        horzLine: { labelBackgroundColor: "#1b2848" },
+        vertLine: { labelBackgroundColor: "#33415c" },
+        horzLine: { labelBackgroundColor: "#33415c" },
       },
       rightPriceScale: { borderColor: COLORS.edge },
       timeScale: { borderColor: COLORS.edge, timeVisible: true, secondsVisible: true },
@@ -372,8 +372,8 @@ export function PriceChart({
           return chart.addSeries(AreaSeries, {
             lineColor: COLORS.blue,
             lineWidth: 2,
-            topColor: "rgba(49, 120, 242, 0.35)",
-            bottomColor: "rgba(49, 120, 242, 0.02)",
+            topColor: "rgba(43, 102, 217, 0.30)",
+            bottomColor: "rgba(43, 102, 217, 0.02)",
           });
         case "baseline":
           return chart.addSeries(BaselineSeries, {
@@ -383,10 +383,10 @@ export function PriceChart({
             },
             topLineColor: COLORS.calm,
             bottomLineColor: COLORS.crit,
-            topFillColor1: "rgba(52, 192, 139, 0.25)",
-            topFillColor2: "rgba(52, 192, 139, 0.02)",
-            bottomFillColor1: "rgba(228, 87, 79, 0.02)",
-            bottomFillColor2: "rgba(228, 87, 79, 0.25)",
+            topFillColor1: "rgba(18, 160, 110, 0.30)",
+            topFillColor2: "rgba(18, 160, 110, 0.02)",
+            bottomFillColor1: "rgba(216, 67, 59, 0.02)",
+            bottomFillColor2: "rgba(216, 67, 59, 0.30)",
           });
         case "columns":
           return chart.addSeries(HistogramSeries, {});
@@ -412,7 +412,7 @@ export function PriceChart({
         rawRef.current.map((c) => ({
           time: c.time as UTCTimestamp,
           value: c.volume,
-          color: c.close >= c.open ? "rgba(52, 192, 139, 0.25)" : "rgba(228, 87, 79, 0.25)",
+          color: c.close >= c.open ? "rgba(18, 160, 110, 0.30)" : "rgba(216, 67, 59, 0.30)",
         })),
       );
       if (fit) {
@@ -671,7 +671,7 @@ function Menu({
         </svg>
       </button>
       {open && (
-        <div className="absolute right-0 top-9 z-30 rounded-xl border border-edge bg-panel2 p-1.5 shadow-[0_12px_32px_rgba(4,8,20,0.6)]">
+        <div className="absolute right-0 top-9 z-30 rounded-xl border border-edge bg-panel2 p-1.5 shadow-[0_12px_32px_rgba(23,33,54,0.18)]">
           {children(() => setOpen(false))}
         </div>
       )}

@@ -1,21 +1,26 @@
 @import "tailwindcss";
 
+/* Light "clean white" theme. Previous navy palette kept for easy revert:
+   bg #0b1226 · bg-deep #080e1e · panel #111a30 · panel-2 #16213c
+   panel-3 #1b2848 · edge #1f2b4a · edge-2 #2b3a61 · text #e8edf7
+   muted #8b96ad · faint #5a6580 · blue #3178f2 · blue-soft #17243f
+   calm #34c08b · warn #e9b44c · crit #e4574f */
 :root {
-  --bg: #0b1226;
-  --bg-deep: #080e1e;
-  --panel: #111a30;
-  --panel-2: #16213c;
-  --panel-3: #1b2848;
-  --edge: #1f2b4a;
-  --edge-2: #2b3a61;
-  --text: #e8edf7;
-  --muted: #8b96ad;
-  --faint: #5a6580;
-  --blue: #3178f2;
-  --blue-soft: #17243f;
-  --calm: #34c08b;
-  --warn: #e9b44c;
-  --crit: #e4574f;
+  --bg: #f4f6fa;
+  --bg-deep: #edf0f6;
+  --panel: #ffffff;
+  --panel-2: #f3f5f9;
+  --panel-3: #e9edf4;
+  --edge: #e3e8f0;
+  --edge-2: #c9d2e0;
+  --text: #172136;
+  --muted: #5d6a83;
+  --faint: #8a94a8;
+  --blue: #2b66d9;
+  --blue-soft: #e8effc;
+  --calm: #12a06e;
+  --warn: #c8891a;
+  --crit: #d8433b;
 }
 
 @theme inline {
@@ -40,8 +45,8 @@
 
 body {
   background:
-    radial-gradient(1200px 600px at 70% -10%, rgba(49, 120, 242, 0.08), transparent 60%),
-    radial-gradient(circle, rgba(232, 237, 247, 0.035) 1px, transparent 1px),
+    radial-gradient(1200px 600px at 70% -10%, rgba(43, 102, 217, 0.05), transparent 60%),
+    radial-gradient(circle, rgba(23, 33, 54, 0.04) 1px, transparent 1px),
     var(--bg);
   background-size: auto, 26px 26px, auto;
   color: var(--text);
@@ -116,7 +121,7 @@ input[type="range"].sim-range::-webkit-slider-thumb {
   border-radius: 50%;
   background: #fff;
   border: 2px solid var(--blue);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 2px 8px rgba(23, 33, 54, 0.2);
   cursor: pointer;
 }
 input[type="range"].sim-range::-moz-range-thumb {
@@ -125,7 +130,7 @@ input[type="range"].sim-range::-moz-range-thumb {
   border-radius: 50%;
   background: #fff;
   border: 2px solid var(--blue);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 2px 8px rgba(23, 33, 54, 0.2);
   cursor: pointer;
 }
 input[type="range"].sim-range::-moz-range-track {

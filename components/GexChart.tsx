@@ -53,16 +53,16 @@ function buildOption(snap: AssetSnapshot): EChartsOption {
     {
       name: "spot",
       xAxis: nearestIndex(snap.spot),
-      label: { formatter: `spot $${fmtStrike(snap.spot)}`, color: "#3178f2" },
-      lineStyle: { color: "#3178f2", type: "dashed" },
+      label: { formatter: `spot $${fmtStrike(snap.spot)}`, color: "#2b66d9" },
+      lineStyle: { color: "#2b66d9", type: "dashed" },
     },
   ];
   if (snap.flipStrike !== null) {
     markData.push({
       name: "flip",
       xAxis: nearestIndex(snap.flipStrike),
-      label: { formatter: `flip $${fmtStrike(snap.flipStrike)}`, color: "#e9b44c" },
-      lineStyle: { color: "#e9b44c", type: "dashed" },
+      label: { formatter: `flip $${fmtStrike(snap.flipStrike)}`, color: "#c8891a" },
+      lineStyle: { color: "#c8891a", type: "dashed" },
     });
   }
 
@@ -72,9 +72,9 @@ function buildOption(snap: AssetSnapshot): EChartsOption {
     tooltip: {
       trigger: "axis",
       axisPointer: { type: "shadow" },
-      backgroundColor: "#16213c",
-      borderColor: "#2b3a61",
-      textStyle: { color: "#e8edf7", fontSize: 12 },
+      backgroundColor: "#ffffff",
+      borderColor: "#c9d2e0",
+      textStyle: { color: "#172136", fontSize: 12 },
       formatter: (params) => {
         const p = Array.isArray(params) ? params[0] : params;
         const strike = strikes[p.dataIndex as number];
@@ -91,18 +91,18 @@ function buildOption(snap: AssetSnapshot): EChartsOption {
     xAxis: {
       type: "category",
       data: strikes.map((s) => fmtStrike(s)),
-      axisLine: { lineStyle: { color: "#1f2b4a" } },
+      axisLine: { lineStyle: { color: "#e3e8f0" } },
       axisTick: { show: false },
-      axisLabel: { color: "#5a6580", fontSize: 10, interval: "auto" },
+      axisLabel: { color: "#8a94a8", fontSize: 10, interval: "auto" },
     },
     yAxis: {
       type: "value",
       axisLabel: {
-        color: "#5a6580",
+        color: "#8a94a8",
         fontSize: 10,
         formatter: (v: number) => fmtUsd(v),
       },
-      splitLine: { lineStyle: { color: "rgba(31, 43, 74, 0.5)" } },
+      splitLine: { lineStyle: { color: "rgba(23, 33, 54, 0.08)" } },
     },
     series: [
       {
@@ -110,7 +110,7 @@ function buildOption(snap: AssetSnapshot): EChartsOption {
         data: rows.map((r) => ({
           value: r.gex,
           itemStyle: {
-            color: r.gex >= 0 ? "#34c08b" : "#e4574f",
+            color: r.gex >= 0 ? "#12a06e" : "#d8433b",
             borderRadius: r.gex >= 0 ? [2, 2, 0, 0] : [0, 0, 2, 2],
           },
         })),
