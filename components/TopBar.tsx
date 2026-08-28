@@ -1,5 +1,7 @@
 "use client";
 
+import { WalletConnect } from "./WalletConnect";
+
 export function TopBar() {
   return (
     <div className="shrink-0">
@@ -28,12 +30,7 @@ export function TopBar() {
         </nav>
 
         <div className="ml-auto flex items-center gap-3">
-          <button
-            className="h-9 px-4 rounded-lg bg-blue text-white text-[13px] font-medium hover:brightness-110 transition"
-            title="Wallet connection lands with the hedge flow"
-          >
-            Connect wallet
-          </button>
+          <WalletConnect />
         </div>
       </header>
     </div>
