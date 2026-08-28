@@ -24,12 +24,15 @@ const WALLETS: { key: WalletKey; name: string; icon: string; installUrl: string 
   { key: "phantom", name: "Phantom", icon: "/wallets/phantom.svg", installUrl: "https://phantom.com/download" },
 ];
 
+const BASE_RPC_URL = process.env.NEXT_PUBLIC_BASE_RPC_URL ?? "https://mainnet.base.org";
+const EXPLORER_URL = process.env.NEXT_PUBLIC_BASE_EXPLORER_URL ?? "https://basescan.org";
+
 const BASE_CHAIN = {
   chainId: "0x2105", // 8453
   chainName: "Base",
   nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-  rpcUrls: ["https://mainnet.base.org"],
-  blockExplorerUrls: ["https://basescan.org"],
+  rpcUrls: [BASE_RPC_URL],
+  blockExplorerUrls: [EXPLORER_URL],
 };
 
 const LAST_WALLET_KEY = "gs-wallet";
@@ -212,7 +215,7 @@ export function WalletConnect() {
               <MenuItem onClick={copyAddress}>{copied ? "Copied ✓" : "Copy address"}</MenuItem>
               <MenuItem
                 onClick={() =>
-                  window.open(`https://basescan.org/address/${connected.address}`, "_blank", "noopener")
+                  window.open(`${EXPLORER_URL}/address/${connected.address}`, "_blank", "noopener")
                 }
               >
                 View on BaseScan

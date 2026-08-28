@@ -11,6 +11,13 @@ export type Candle = {
   volume: number;
 };
 
+const COINBASE_API_URL =
+  process.env.COINBASE_API_URL ?? "https://api.exchange.coinbase.com";
+// data-api.binance.vision is Binance's official public market-data mirror;
+// api.binance.com is geo-blocked on some networks.
+const BINANCE_API_URL =
+  process.env.BINANCE_API_URL ?? "https://data-api.binance.vision";
+
 const COINBASE_NATIVE = [60, 300, 900, 3600, 21600, 86400];
 const BINANCE_NATIVE: Record<number, string> = {
   60: "1m",
@@ -73,7 +80,7 @@ async function fromCoinbase(asset: string, sec: number): Promise<Candle[]> {
   if (!base) throw new Error("no coinbase granularity");
   const product = COINBASE_PRODUCTS[asset];
   if (!product) throw new Error("no coinbase market");
-  const url = `https://api.exchange.coinbase.com/products/${product}/candles?granularity=${base}`;
+  const url = `${COINBASE_API_URL}/products/${product}/candles?granularity=${base}`;
   const res = await fetch(url, {
     headers: { "user-agent": "gammashield-hackathon" },
     signal: AbortSignal.timeout(5000),
@@ -96,9 +103,7 @@ async function fromBinance(asset: string, sec: number): Promise<Candle[]> {
   if (!baseSec) throw new Error("no binance granularity");
   const symbol = BINANCE_SYMBOLS[asset];
   if (!symbol) throw new Error("no binance market");
-  // data-api.binance.vision is Binance's official public market-data mirror;
-  // api.binance.com is geo-blocked on some networks.
-  const url = `https://data-api.binance.vision/api/v3/klines?symbol=${symbol}&interval=${BINANCE_NATIVE[baseSec]}&limit=500`;
+  const url = `${BINANCE_API_URL}/api/v3/klines?symbol=${symbol}&interval=${BINANCE_NATIVE[baseSec]}&limit=500`;
   const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
   if (!res.ok) throw new Error(`binance ${res.status}`);
   const rows: unknown[][] = await res.json();
