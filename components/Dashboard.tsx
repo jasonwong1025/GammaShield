@@ -103,19 +103,19 @@ export function Dashboard() {
       <div className="flex grow min-h-0">
         <AssetRail asset={asset} onAsset={setAsset} />
 
-        <div className="grow min-w-0 px-4 py-4 lg:px-6">
+        <div className="grow min-w-0 flex flex-col">
           {!snap && !error && <Booting />}
           {error && !snap && <Failed message={error} retry={load} />}
 
           {snap && a && (
             <>
-              <div className="flex items-baseline gap-3 mb-4">
-                <h1 className="text-[20px] font-semibold tracking-tight">
+              <div className="flex items-baseline gap-3 px-5 py-3 border-b border-edge bg-panel">
+                <h1 className="text-[18px] font-semibold tracking-tight">
                   {ASSET_NAMES[asset]}
                 </h1>
                 <LivePrice
                   value={livePrice}
-                  className="text-[20px] text-muted"
+                  className="text-[18px] text-muted"
                   format={(v) => `$${v.toLocaleString("en-US", { maximumFractionDigits: 2 })}`}
                 />
                 <span className="md:hidden ml-auto">
@@ -128,18 +128,20 @@ export function Dashboard() {
                 </span>
               </div>
 
-              <div className="grid gap-4 grid-cols-1 xl:grid-cols-[1fr_380px]">
-                <div className="flex flex-col gap-4 min-w-0">
+              <div className="grid grow grid-cols-1 xl:grid-cols-[1fr_380px] gap-px bg-edge">
+                <div className="flex flex-col gap-px min-w-0">
                   <PriceChart asset={asset} flip={a.flipStrike} livePrice={livePrice} />
                   <WhaleControls asset={asset} sim={sim} onChange={setSim} />
                   <GexChart snap={a} />
                   <Heatmap snap={a} />
+                  <div className="grow bg-panel" />
                 </div>
 
-                <div className="flex flex-col gap-4 min-w-0">
+                <div className="flex flex-col gap-px min-w-0">
                   <ScorePanel snap={a} />
                   <ImpactCard snap={a} sim={sim} />
                   <BookCard rows={snap.feed} snap={a} asset={asset} />
+                  <div className="grow bg-panel" />
                 </div>
               </div>
             </>

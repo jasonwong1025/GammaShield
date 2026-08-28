@@ -20,6 +20,7 @@
 
 @theme inline {
   --color-bg: var(--bg);
+  --color-bg-deep: var(--bg-deep);
   --color-panel: var(--panel);
   --color-panel2: var(--panel-2);
   --color-panel3: var(--panel-3);
@@ -52,12 +53,10 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* Cards */
+/* Panels: flat sections tiled edge-to-edge; the 1px dividers come from
+   gap-px grids whose container shows var(--edge) through the gaps. */
 .card {
   background: var(--panel);
-  border: 1px solid var(--edge);
-  border-radius: 14px;
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.02) inset, 0 8px 24px rgba(4, 8, 20, 0.35);
 }
 
 /* Price flash on update */
