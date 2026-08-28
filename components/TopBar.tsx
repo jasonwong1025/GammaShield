@@ -4,13 +4,12 @@ export function TopBar() {
   return (
     <div className="shrink-0">
       <header className="flex items-center gap-6 px-5 h-16 border-b border-edge bg-bg/80 backdrop-blur">
-        <div className="flex items-center gap-2.5">
-          <ShieldMark />
-          <div className="leading-tight">
-            <div className="text-[15px] font-semibold tracking-tight">GammaShield</div>
-            <div className="text-[10px] text-faint -mt-0.5">Amplification risk engine</div>
-          </div>
-        </div>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/gammashield-lockup.png"
+          alt="GammaShield"
+          className="h-9 w-auto shrink-0"
+        />
 
         <nav className="hidden md:flex items-center gap-1 ml-4 text-[13px]" aria-label="Sections">
           <a
@@ -38,29 +37,5 @@ export function TopBar() {
         </div>
       </header>
     </div>
-  );
-}
-
-function ShieldMark() {
-  return (
-    <svg width="30" height="32" viewBox="0 0 20 22" aria-hidden className="shrink-0">
-      <defs>
-        <linearGradient id="gs-shield" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#3178f2" />
-          <stop offset="100%" stopColor="#1e4fae" />
-        </linearGradient>
-      </defs>
-      <path
-        d="M10 1 L18.5 4.5 V11 C18.5 16 15 19.6 10 21 C5 19.6 1.5 16 1.5 11 V4.5 Z"
-        fill="url(#gs-shield)"
-      />
-      <path
-        d="M7.2 6.8 H13 M7.6 6.8 V15.4"
-        stroke="#fff"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-        fill="none"
-      />
-    </svg>
   );
 }
