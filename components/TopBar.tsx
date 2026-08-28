@@ -1,10 +1,6 @@
 "use client";
 
-type Props = {
-  connected: boolean;
-};
-
-export function TopBar({ connected }: Props) {
+export function TopBar() {
   return (
     <div className="shrink-0">
       <header className="flex items-center gap-6 px-5 h-16 border-b border-edge bg-bg/80 backdrop-blur">
@@ -33,10 +29,6 @@ export function TopBar({ connected }: Props) {
         </nav>
 
         <div className="ml-auto flex items-center gap-3">
-          <span className="hidden sm:flex items-center gap-1.5 text-[12px] text-muted">
-            <span className={`live-dot inline-block size-2 rounded-full ${connected ? "bg-calm" : "bg-crit"}`} />
-            Base mainnet
-          </span>
           <button
             className="h-9 px-4 rounded-lg bg-blue text-white text-[13px] font-medium hover:brightness-110 transition"
             title="Wallet connection lands with the hedge flow"

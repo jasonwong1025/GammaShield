@@ -98,7 +98,7 @@ export function Dashboard() {
 
   return (
     <div className="flex flex-col min-h-dvh">
-      <TopBar connected={!!snap && !error} />
+      <TopBar />
 
       <div className="flex grow min-h-0">
         <AssetRail
