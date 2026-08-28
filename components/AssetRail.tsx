@@ -10,17 +10,30 @@ type Props = {
   scores: { BTC: number; ETH: number } | null;
 };
 
-const TRADEABLE: { symbol: "BTC" | "ETH"; name: string; dot: string }[] = [
-  { symbol: "BTC", name: "Bitcoin", dot: "#f7931a" },
-  { symbol: "ETH", name: "Ethereum", dot: "#627eea" },
+const TRADEABLE: { symbol: "BTC" | "ETH"; name: string }[] = [
+  { symbol: "BTC", name: "Bitcoin" },
+  { symbol: "ETH", name: "Ethereum" },
 ];
 
-const SPOT_ONLY: { symbol: string; name: string; dot: string }[] = [
-  { symbol: "SOL", name: "Solana", dot: "#9945ff" },
-  { symbol: "XRP", name: "XRP", dot: "#4d5566" },
-  { symbol: "BNB", name: "BNB", dot: "#f0b90b" },
-  { symbol: "AVAX", name: "Avalanche", dot: "#e84142" },
+const SPOT_ONLY: { symbol: string; name: string }[] = [
+  { symbol: "SOL", name: "Solana" },
+  { symbol: "XRP", name: "XRP" },
+  { symbol: "BNB", name: "BNB" },
+  { symbol: "AVAX", name: "Avalanche" },
 ];
+
+function CoinLogo({ symbol, className }: { symbol: string; className?: string }) {
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={`/coins/${symbol.toLowerCase()}.svg`}
+      alt=""
+      width={16}
+      height={16}
+      className={`size-4 shrink-0 rounded-full ${className ?? ""}`}
+    />
+  );
+}
 
 function fmtPrice(v: number) {
   return `$${v >= 100 ? v.toLocaleString("en-US", { maximumFractionDigits: 0 }) : v.toFixed(2)}`;
@@ -35,7 +48,7 @@ export function AssetRail({ asset, onAsset, ticker, scores }: Props) {
         Markets
       </div>
 
-      {TRADEABLE.map(({ symbol, name, dot }) => {
+      {TRADEABLE.map(({ symbol, name }) => {
         const active = asset === symbol;
         const p = price(symbol);
         const score = scores?.[symbol] ?? null;
@@ -51,7 +64,7 @@ export function AssetRail({ asset, onAsset, ticker, scores }: Props) {
             {active && <span className="absolute inset-y-0 left-0 w-[2px] bg-blue" />}
             <span className="flex items-baseline justify-between gap-2">
               <span className="flex items-center gap-2 text-[13px] font-semibold text-fg">
-                <span className="size-1.5 rounded-full" style={{ background: dot }} />
+                <CoinLogo symbol={symbol} />
                 {symbol}
               </span>
               {p !== null ? (
@@ -60,7 +73,7 @@ export function AssetRail({ asset, onAsset, ticker, scores }: Props) {
                 <span className="text-[12px] text-faint">—</span>
               )}
             </span>
-            <span className="mt-0.5 flex items-baseline justify-between gap-2 pl-3.5">
+            <span className="mt-0.5 flex items-baseline justify-between gap-2 pl-6">
               <span className="text-[11px] text-faint">{name}</span>
               {score !== null && (
                 <span className="text-[11px] num" style={{ color: riskColor(score) }}>
@@ -76,7 +89,7 @@ export function AssetRail({ asset, onAsset, ticker, scores }: Props) {
         Spot only
       </div>
 
-      {SPOT_ONLY.map(({ symbol, name, dot }) => {
+      {SPOT_ONLY.map(({ symbol, name }) => {
         const p = price(symbol);
         return (
           <div
@@ -86,7 +99,7 @@ export function AssetRail({ asset, onAsset, ticker, scores }: Props) {
           >
             <span className="flex items-baseline justify-between gap-2">
               <span className="flex items-center gap-2 text-[12.5px] font-medium text-muted">
-                <span className="size-1.5 rounded-full opacity-70" style={{ background: dot }} />
+                <CoinLogo symbol={symbol} className="opacity-80 saturate-[.85]" />
                 {symbol}
               </span>
               {p !== null ? (
@@ -95,7 +108,7 @@ export function AssetRail({ asset, onAsset, ticker, scores }: Props) {
                 <span className="text-[12px] text-faint">—</span>
               )}
             </span>
-            <span className="mt-0.5 block pl-3.5 text-[10.5px] text-faint">{name}</span>
+            <span className="mt-0.5 block pl-6 text-[10.5px] text-faint">{name}</span>
           </div>
         );
       })}
