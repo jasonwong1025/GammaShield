@@ -117,6 +117,14 @@ export function Dashboard() {
           {snap && a && (
             <>
               <div className="flex items-baseline gap-3 px-5 py-3 border-b border-edge bg-panel">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={`/coins/${asset.toLowerCase()}.svg`}
+                  alt=""
+                  width={22}
+                  height={22}
+                  className="size-[22px] shrink-0 self-center rounded-full"
+                />
                 <h1 className="text-[18px] font-semibold tracking-tight">
                   {ASSET_NAMES[asset]}
                 </h1>
