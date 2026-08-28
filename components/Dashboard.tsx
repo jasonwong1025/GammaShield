@@ -130,8 +130,8 @@ export function Dashboard() {
 
               <div className="grid gap-4 grid-cols-1 xl:grid-cols-[1fr_380px]">
                 <div className="flex flex-col gap-4 min-w-0">
-                  <WhaleControls asset={asset} sim={sim} onChange={setSim} />
                   <PriceChart asset={asset} flip={a.flipStrike} livePrice={livePrice} />
+                  <WhaleControls asset={asset} sim={sim} onChange={setSim} />
                   <GexChart snap={a} />
                   <Heatmap snap={a} />
                 </div>
