@@ -414,7 +414,15 @@ export function PriceChart({
           color: c.close >= c.open ? "rgba(52, 192, 139, 0.25)" : "rgba(228, 87, 79, 0.25)",
         })),
       );
-      if (fit) chartRef.current?.timeScale().fitContent();
+      if (fit) {
+        // Show a readable recent window by default; older history stays
+        // reachable by panning/zooming.
+        const n = rawRef.current.length;
+        chartRef.current?.timeScale().setVisibleLogicalRange({
+          from: Math.max(0, n - 60),
+          to: n + 4,
+        });
+      }
     },
     [chartType],
   );
