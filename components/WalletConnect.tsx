@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-type Eip1193Provider = {
+export type Eip1193Provider = {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
   on?: (event: string, handler: (...args: never[]) => void) => void;
   removeListener?: (event: string, handler: (...args: never[]) => void) => void;
@@ -27,7 +27,7 @@ const WALLETS: { key: WalletKey; name: string; icon: string; installUrl: string 
 const BASE_RPC_URL = process.env.NEXT_PUBLIC_BASE_RPC_URL ?? "https://mainnet.base.org";
 const EXPLORER_URL = process.env.NEXT_PUBLIC_BASE_EXPLORER_URL ?? "https://basescan.org";
 
-const BASE_CHAIN = {
+export const BASE_CHAIN = {
   chainId: "0x2105", // 8453
   chainName: "Base",
   nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
@@ -37,7 +37,7 @@ const BASE_CHAIN = {
 
 const LAST_WALLET_KEY = "gs-wallet";
 
-function getProvider(key: WalletKey): Eip1193Provider | null {
+export function getProvider(key: WalletKey): Eip1193Provider | null {
   if (typeof window === "undefined") return null;
   const w = window as unknown as {
     ethereum?: Eip1193Provider;
@@ -58,7 +58,20 @@ function shortAddress(addr: string) {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
 
-async function switchToBase(provider: Eip1193Provider) {
+/** The provider to use for transactions: last-connected wallet first. */
+export function getActiveProvider(): Eip1193Provider | null {
+  let saved: string | null = null;
+  try {
+    saved = localStorage.getItem(LAST_WALLET_KEY);
+  } catch {}
+  if (saved === "metamask" || saved === "phantom") {
+    const p = getProvider(saved);
+    if (p) return p;
+  }
+  return getProvider("metamask") ?? getProvider("phantom");
+}
+
+export async function switchToBase(provider: Eip1193Provider) {
   try {
     await provider.request({
       method: "wallet_switchEthereumChain",

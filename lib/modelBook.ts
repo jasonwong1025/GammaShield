@@ -58,7 +58,7 @@ function normCdf(x: number) {
   return x >= 0 ? p : 1 - p;
 }
 
-function bsGreeks(spot: number, strike: number, iv: number, yearsToExpiry: number, isCall: boolean) {
+export function bsGreeks(spot: number, strike: number, iv: number, yearsToExpiry: number, isCall: boolean) {
   const T = Math.max(yearsToExpiry, 1 / 365 / 24);
   const d1 = (Math.log(spot / strike) + 0.5 * iv * iv * T) / (iv * Math.sqrt(T));
   const delta = isCall ? normCdf(d1) : normCdf(d1) - 1;

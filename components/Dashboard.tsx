@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { MarketSnapshot } from "@/lib/snapshot";
 import { TopBar } from "./TopBar";
 import { AssetRail } from "./AssetRail";
-import { ScorePanel } from "./ScorePanel";
+import { TradePanel } from "./TradePanel";
 import { PriceChart } from "./PriceChart";
 import { GexChart } from "./GexChart";
 import { Heatmap } from "./Heatmap";
@@ -163,7 +163,7 @@ export function Dashboard() {
                   </div>
 
                   <div className="flex flex-col gap-px min-w-0">
-                    <ScorePanel snap={a} />
+                    <TradePanel asset={asset} live={live} />
                     <BookCard rows={snap.feed} snap={a} asset={asset} />
                     <div className="grow bg-panel" />
                   </div>

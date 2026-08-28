@@ -43,6 +43,12 @@ let client: ThetanutsClient | null = null;
 let cached: MarketSnapshot | null = null;
 let cachedAt = 0;
 let inflight: Promise<MarketSnapshot> | null = null;
+let lastNormalized: NormalizedOrder[] = [];
+
+/** Normalized rows from the most recent snapshot build (for what-if math). */
+export function getLastNormalizedOrders(): NormalizedOrder[] {
+  return lastNormalized;
+}
 
 export function getClient(): ThetanutsClient {
   if (!client) {
@@ -187,6 +193,7 @@ export async function getMarketSnapshot(): Promise<MarketSnapshot> {
 
     cached = snapshot;
     cachedAt = Date.now();
+    lastNormalized = normalized;
     return snapshot;
   })().finally(() => {
     inflight = null;

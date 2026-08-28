@@ -40,6 +40,7 @@ Data flows in one direction: **exchange/chain → server (lib/ + app/api/) → c
 ### API routes (`app/api/`)
 
 - `market` — full `MarketSnapshot` (book + risk + feed), `cache-control: no-store`.
+- `quote` — trade quote for buying a call/put off the live book (`lib/trade.ts`): best ATM maker order for the requested expiry, premium, amplification impact, and approve+fill calldata for the browser wallet to sign. The SDK stays read-only server-side; only the user's wallet signs.
 - `stream` — SSE price ticks (init snapshot, then `price` events, 15s heartbeats).
 - `klines` — OHLCV proxy: Coinbase first, Binance fallback, staleness guard, aggregates finer candles for non-native intervals.
 - `price` — lightweight spot ticker.
@@ -48,7 +49,7 @@ Routes return `502` with `{ error }` on upstream failure — keep that shape.
 
 ### Client (`components/`)
 
-All chart/dashboard components are `"use client"`. Layout: `Dashboard.tsx` composes `TopBar`, `AssetRail` (asset switcher w/ live prices), `PriceChart` (lightweight-charts, 10 chart types, live tick-built candles), `ScorePanel`, `GexChart` + `Heatmap` (ECharts via the shared `EChart.tsx` wrapper), `BookFeed`.
+All chart/dashboard components are `"use client"`. Layout: `Dashboard.tsx` composes `TopBar`, `AssetRail` (asset switcher w/ live prices), `PriceChart` (lightweight-charts, 10 chart types, live tick-built candles), `TradePanel` (buy calls/puts from the live book; shows the trade's amplification-risk impact), `GexChart` + `Heatmap` (ECharts via the shared `EChart.tsx` wrapper), `BookFeed`.
 
 - Live prices come from the `/api/stream` SSE feed (see `LivePrice.tsx`), not polling.
 - New ECharts charts go through `EChart.tsx`; don't instantiate echarts directly.
