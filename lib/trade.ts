@@ -11,8 +11,7 @@
 //     estimate; filling it goes through the OptionFactory RFQ auction).
 // The SDK stays read-only here: only the user's browser wallet ever signs.
 
-import { OPTION_BOOK_ABI, type ThetanutsClient } from "@thetanuts-finance/thetanuts-client";
-import { ethers } from "ethers";
+import type { ThetanutsClient } from "@thetanuts-finance/thetanuts-client";
 import { getClient, getMarketSnapshot, getLastNormalizedOrders } from "./snapshot";
 import { computeAssetSnapshot, type NormalizedOrder } from "./engine";
 import { bsGreeks, bsRho } from "./modelBook";
@@ -88,48 +87,6 @@ async function getMmPricing(c: ThetanutsClient, asset: OptionsAsset): Promise<Mm
   const rows = await c.mmPricing.getPricingArray(asset);
   pricingCache.set(asset, { at: Date.now(), rows });
   return rows;
-}
-
-// Max fillable contracts in 6-decimal units. The SDK's calculateMaxContracts
-// mis-scales calls with <18-decimal underlying collateral (cbBTC), so compute
-// it directly: underlying-collateralized (inverse/physical) calls lock 1 unit
-// per contract; USD-collateralized legs (puts, linear calls) lock `strike`.
-function maxContracts6(order: SdkOrder, tokenDecimals: number, tokenSymbol: string): bigint {
-  const raw = order.rawApiData!;
-  if (raw.isCall && !tokenSymbol.includes("USD")) {
-    const shift = tokenDecimals - 6;
-    return shift >= 0
-      ? order.availableAmount / 10n ** BigInt(shift)
-      : order.availableAmount * 10n ** BigInt(-shift);
-  }
-  return (order.availableAmount * 100_000_000n) / BigInt(raw.strikes[0]);
-}
-
-// Encode fillOrder calldata ourselves (same field mapping as the SDK's
-// buildContractOrder — the maker's signature covers the order fields, which we
-// pass through untouched; only numContracts is taker-chosen).
-function encodeFill(order: SdkOrder, numContracts: bigint, to: string) {
-  const raw = order.rawApiData!;
-  const contractOrder = {
-    maker: order.order.maker,
-    orderExpiryTimestamp: BigInt(raw.orderExpiryTimestamp),
-    collateral: raw.collateral,
-    isCall: raw.isCall,
-    priceFeed: raw.priceFeed,
-    implementation: raw.implementation,
-    isLong: raw.isLong,
-    maxCollateralUsable: BigInt(raw.maxCollateralUsable),
-    strikes: raw.strikes.map((s) => BigInt(s)),
-    expiry: order.order.expiry,
-    price: order.order.price,
-    numContracts,
-    extraOptionData: raw.extraOptionData || "0x",
-  };
-  const iface = new ethers.Interface(OPTION_BOOK_ABI);
-  return {
-    to,
-    data: iface.encodeFunctionData("fillOrder", [contractOrder, order.signature, ethers.ZeroAddress]),
-  };
 }
 
 export async function getTradeQuote(
@@ -244,7 +201,6 @@ export async function getTradeQuote(
       (t) => t.address.toLowerCase() === raw.collateral.toLowerCase(),
     );
     tokenSymbol = token?.symbol ?? "?";
-    const tokenDecimals = token?.decimals ?? 6;
     const tokenUsd = tokenSymbol.includes("USD")
       ? 1
       : tokenSymbol.includes("ETH")
@@ -253,11 +209,16 @@ export async function getTradeQuote(
           ? market.prices.BTC
           : 1;
 
+    // The SDK owns size conversion, max-fill math, and the signed calldata.
+    // The UI expresses a size in contracts, so translate it to the SDK's
+    // 6-decimal spend input, then use its preview as the authoritative result.
+    const requestedContracts6 = BigInt(Math.floor(Math.max(contracts, 0) * 1e6));
+    const requestedSpend = (requestedContracts6 * price + 99_999_999n) / 100_000_000n;
+    const preview = c.optionBook.previewFillOrder(bookBest, requestedSpend);
     premiumPerContractToken = Number(price) / 1e8;
     premiumPerContractUsd = premiumPerContractToken * tokenUsd;
-    const max6 = maxContracts6(bookBest, tokenDecimals, tokenSymbol);
-    maxContracts = Number(max6) / 1e6;
-    filled = Math.max(0, Math.min(contracts, maxContracts));
+    maxContracts = Number(preview.maxContracts) / 1e6;
+    filled = Number(preview.numContracts) / 1e6;
     iv = raw.greeks?.iv ?? null;
     maker = bookBest.makerAddress;
     // The pricing API's greeks cover delta/gamma/theta/vega but not rho —
@@ -270,14 +231,8 @@ export async function getTradeQuote(
       : null;
 
     if (filled > 0) {
-      const contracts6 = BigInt(Math.round(filled * 1e6));
-      const fill = encodeFill(bookBest, contracts6, bookAddress);
-      // Premium the contract pulls: contracts × price, in 6-decimal token
-      // units; approve in native decimals with +1% headroom for rounding.
-      const premium6 = (contracts6 * price + 99_999_999n) / 100_000_000n; // ceil
-      const nativeAmount =
-        (premium6 * 10n ** BigInt(Math.max(tokenDecimals - 6, 0)) * 101n) / 100n;
-      const approve = c.erc20.encodeApprove(raw.collateral, fill.to, nativeAmount);
+      const fill = c.optionBook.encodeFillOrder(bookBest, requestedSpend);
+      const approve = c.erc20.encodeApprove(preview.collateralToken, fill.to, preview.totalCollateral);
       txs = { chainId: "0x2105", approve, fill };
     }
   } else {
