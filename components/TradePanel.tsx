@@ -16,10 +16,13 @@ import { TRADE_PERIODS, type TradePeriod } from "@/lib/tradePeriods";
 import { COLLATERAL_TOKENS, RESERVE_BUFFER, collateralFor, decimalsForTokenSymbol } from "@/lib/collateral";
 import type { RfqPrepared, RfqStatus } from "@/lib/rfq";
 import type { AiRiskAssessment } from "@/lib/aiRisk";
+import type { ShadowQuote } from "@/lib/shadow";
 import { fmtExpiryDate, fmtIv, fmtStrike, fmtUsd, riskColor } from "@/lib/format";
 import {
   getActiveProvider,
+  BASE_SEPOLIA_CHAIN,
   switchToBase,
+  switchToBaseSepolia,
   type Eip1193Provider,
 } from "./WalletConnect";
 
@@ -40,6 +43,12 @@ type RfqPhase =
   | { step: "done"; hash: string; optionAddress: string | null }
   | { step: "error"; message: string };
 
+type ShadowTxPhase =
+  | { step: "idle" }
+  | { step: "connecting" | "preparing" | "approving" | "filling" }
+  | { step: "done"; hash: string; quote: ShadowQuote }
+  | { step: "error"; message: string };
+
 async function connectWallet() {
   const provider = getActiveProvider();
   if (!provider) throw new Error("No wallet detected — install MetaMask or Phantom.");
@@ -47,6 +56,19 @@ async function connectWallet() {
   const from = accounts[0];
   if (!from) throw new Error("no account connected");
   await switchToBase(provider);
+  return { provider, from };
+}
+
+async function connectShadowWallet() {
+  const provider = getActiveProvider();
+  if (!provider) throw new Error("No wallet detected — install MetaMask or Phantom.");
+  const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
+  const from = accounts[0];
+  if (!from) throw new Error("no account connected");
+  await switchToBaseSepolia(provider);
+  if (await provider.request({ method: "eth_chainId" }) !== BASE_SEPOLIA_CHAIN.chainId) {
+    throw new Error("switch your wallet to Base Sepolia to continue");
+  }
   return { provider, from };
 }
 
@@ -128,12 +150,14 @@ function periodLabel(p: TradePeriod) {
 
 export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
   const [side, setSide] = useState<TradeSide>("call");
+  const [executionMode, setExecutionMode] = useState<"mainnet" | "shadow">("mainnet");
   const [amountStr, setAmountStr] = useState("1");
   const [period, setPeriod] = useState<TradePeriod>(7);
   const [quote, setQuote] = useState<TradeQuote | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [tx, setTx] = useState<TxPhase>({ step: "idle" });
+  const [shadowTx, setShadowTx] = useState<ShadowTxPhase>({ step: "idle" });
   const [rfq, setRfq] = useState<RfqPhase>({ step: "idle" });
   const [mountedSec] = useState(() => Math.floor(Date.now() / 1000));
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
@@ -333,6 +357,35 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
     }
   };
 
+  const buyShadow = async () => {
+    if (!validAmount) return;
+    try {
+      setShadowTx({ step: "connecting" });
+      const { provider, from } = await connectShadowWallet();
+      setShadowTx({ step: "preparing" });
+      const params = new URLSearchParams({ asset, buyer: from, side, contracts: amountStr, period: String(period) });
+      const res = await fetch(`/api/shadow/quote?${params}`, { cache: "no-store" });
+      const shadowQuote = await res.json();
+      if (!res.ok) throw new Error(shadowQuote.error ?? `shadow quote ${res.status}`);
+      const prepared = shadowQuote as ShadowQuote;
+      if (await needsApproval(provider, from, prepared.txs.approve, prepared.txs.fill.to)) {
+        setShadowTx({ step: "approving" });
+        await sendTx(provider, from, prepared.txs.approve);
+      }
+      setShadowTx({ step: "filling" });
+      const hash = await sendTx(provider, from, prepared.txs.fill);
+      setShadowTx({ step: "done", hash, quote: prepared });
+    } catch (e) {
+      const message =
+        (e as { code?: number })?.code === 4001
+          ? "Transaction rejected in wallet."
+          : e instanceof Error
+            ? e.message
+            : "shadow fill failed";
+      setShadowTx({ step: "error", message });
+    }
+  };
+
   // Custom-expiry path: submit a sealed-bid RFQ, then poll for maker offers.
   const requestRfq = async () => {
     if (!validAmount) return;
@@ -453,6 +506,7 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
   const currentTradeKey = quote ? `${asset}:${side}:${quote.strike}:${quote.expiryTs}:${quote.contracts}` : null;
   const aiRiskCurrent = aiRisk && aiRiskKey === currentTradeKey ? aiRisk : null;
   const busy = tx.step === "connecting" || tx.step === "approving" || tx.step === "filling";
+  const shadowBusy = shadowTx.step === "connecting" || shadowTx.step === "preparing" || shadowTx.step === "approving" || shadowTx.step === "filling";
 
   // Required collateral for this quote: the padded approve amount for a book
   // fill, or contracts × reservePrice (the RFQ escrow) otherwise — same math
@@ -503,6 +557,18 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
             {s === "call" ? "↗ Call" : "↘ Put"}
           </button>
         ))}
+      </div>
+
+      <div>
+        <div className="mb-1 text-[11px] text-muted">Execution network</div>
+        <div className="grid grid-cols-2 gap-1 rounded-lg bg-panel2 p-1">
+          <button type="button" onClick={() => setExecutionMode("mainnet")} aria-pressed={executionMode === "mainnet"} className={`h-8 rounded-md text-[12px] font-semibold ${executionMode === "mainnet" ? "bg-panel text-fg shadow-sm" : "text-muted"}`}>
+            Base mainnet
+          </button>
+          <button type="button" onClick={() => setExecutionMode("shadow")} aria-pressed={executionMode === "shadow"} className={`h-8 rounded-md text-[12px] font-semibold ${executionMode === "shadow" ? "bg-panel text-blue shadow-sm" : "text-muted"}`}>
+            Sepolia shadow
+          </button>
+        </div>
       </div>
 
       {/* Amount */}
@@ -624,6 +690,12 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
         <p className="text-[12px] text-faint">{loading ? "Quoting the live book…" : ""}</p>
       )}
 
+      {executionMode === "shadow" && (
+        <p className="rounded-lg border border-blue/25 bg-bluesoft/30 p-2.5 text-[11px] leading-relaxed text-muted">
+          Mirrors this live quote on Base Sepolia using Circle test USDC. Try 0.01 contracts for a small test; this is not a Thetanuts position.
+        </p>
+      )}
+
       {/* Amplification impact — only once the trade is fully configured. One
           card: the always-on heuristic (lib/engine.ts) up top, then an
           optional AI second opinion (GonkaRouter, manual — see fetchAiRisk)
@@ -698,7 +770,27 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
       )}
 
       {/* Action */}
-      {rfq.step === "connecting" ||
+      {executionMode === "shadow" ? (
+        <button
+          onClick={buyShadow}
+          disabled={!configured || !quoteInSync || shadowBusy}
+          className="h-10 rounded-lg bg-blue text-white text-[13px] font-semibold hover:brightness-110 transition disabled:opacity-50"
+        >
+          {shadowBusy
+            ? shadowTx.step === "connecting"
+              ? "Connecting wallet…"
+              : shadowTx.step === "preparing"
+                ? "Signing fresh shadow quote…"
+                : shadowTx.step === "approving"
+                  ? "Approving Circle test USDC…"
+                  : "Filling on Base Sepolia…"
+            : !validAmount
+              ? "Enter an amount to trade"
+              : !quoteInSync || !quote
+                ? "Quoting…"
+                : `Mirror ${quote.contracts.toFixed(3)} ${asset} ${side} on Sepolia`}
+        </button>
+      ) : rfq.step === "connecting" ||
       rfq.step === "approving" ||
       rfq.step === "requesting" ||
       rfq.step === "auction" ||
@@ -821,6 +913,12 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
         </p>
       )}
       {tx.step === "error" && <p className="text-[12px] text-crit">{tx.message}</p>}
+      {shadowTx.step === "done" && (
+        <p className="text-[12px] text-calm">
+          Shadow fill confirmed on Base Sepolia. {BASE_SEPOLIA_CHAIN.blockExplorerUrls[0] && <a href={`${BASE_SEPOLIA_CHAIN.blockExplorerUrls[0]}/tx/${shadowTx.hash}`} target="_blank" rel="noopener noreferrer" className="underline">View transaction</a>}
+        </p>
+      )}
+      {shadowTx.step === "error" && <p className="text-[12px] text-crit">{shadowTx.message}</p>}
       {rfq.step === "error" && (
         <p className="text-[12px] text-crit">
           {rfq.message}{" "}

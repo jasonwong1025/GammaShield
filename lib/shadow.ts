@@ -3,7 +3,8 @@
 
 import { ethers } from "ethers";
 import { isOptionsAsset, type OptionsAsset } from "@/lib/assets";
-import { getTradeQuote, type TradeQuote } from "@/lib/trade";
+import { getTradeQuote, type TradeQuote, type TradeSide } from "@/lib/trade";
+import { TRADE_PERIODS, type TradePeriod } from "@/lib/tradePeriods";
 
 const QUOTE_LIFETIME_SECONDS = 60;
 const MAX_CONTRACTS = 5;
@@ -39,7 +40,7 @@ export type ShadowQuote = {
     capturedAt: number;
     liquidity: TradeQuote["source"];
     asset: OptionsAsset;
-    side: "put";
+    side: TradeSide;
     strike: number;
     expiryTs: number;
     contracts: number;
@@ -75,18 +76,29 @@ function signer() {
 }
 
 function validContracts(value: number): number {
-  if (!Number.isInteger(value) || value < 1 || value > MAX_CONTRACTS) {
-    throw new Error(`contracts must be an integer from 1 to ${MAX_CONTRACTS}`);
+  if (!Number.isFinite(value) || value < 0.001 || value > MAX_CONTRACTS || Math.round(value * 1e6) !== value * 1e6) {
+    throw new Error(`contracts must be from 0.001 to ${MAX_CONTRACTS} with up to 6 decimal places`);
   }
   return value;
 }
 
-export async function getShadowQuote(asset: string, buyer: string, count = 1): Promise<ShadowQuote> {
+function validPeriod(value: number): TradePeriod {
+  if (!TRADE_PERIODS.includes(value as TradePeriod)) throw new Error("unsupported expiry period");
+  return value as TradePeriod;
+}
+
+export async function getShadowQuote(
+  asset: string,
+  buyer: string,
+  side: TradeSide,
+  count = 1,
+  period: number = 7,
+): Promise<ShadowQuote> {
   if (!isOptionsAsset(asset as OptionsAsset)) throw new Error("only BTC and ETH have a live Thetanuts book");
   if (!ethers.isAddress(buyer)) throw new Error("invalid buyer address");
 
   const contractsCount = validContracts(count);
-  const option = await getTradeQuote(asset as OptionsAsset, "put", contractsCount, 7);
+  const option = await getTradeQuote(asset as OptionsAsset, side, contractsCount, validPeriod(period));
   if (option.contracts <= 0 || option.totalCostUsd <= 0) throw new Error("no fillable shadow quote is available");
 
   const config = contracts();
@@ -96,6 +108,7 @@ export async function getShadowQuote(asset: string, buyer: string, count = 1): P
     ethers.toUtf8Bytes([
       "thetanuts-base-mainnet",
       asset,
+      side,
       option.source,
       option.strike,
       option.expiryTs,
@@ -109,7 +122,7 @@ export async function getShadowQuote(asset: string, buyer: string, count = 1): P
     sourceHash,
     asset: ethers.encodeBytes32String(asset),
     buyer: ethers.getAddress(buyer),
-    isCall: false,
+    isCall: side === "call",
     strikeE8: BigInt(Math.round(option.strike * 1e8)),
     expiry: BigInt(option.expiryTs),
     validUntil: BigInt(now + QUOTE_LIFETIME_SECONDS),
@@ -131,7 +144,7 @@ export async function getShadowQuote(asset: string, buyer: string, count = 1): P
       capturedAt: now,
       liquidity: option.source,
       asset: asset as OptionsAsset,
-      side: "put",
+      side,
       strike: option.strike,
       expiryTs: option.expiryTs,
       contracts: option.contracts,

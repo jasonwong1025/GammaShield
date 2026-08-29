@@ -197,6 +197,7 @@ export function Dashboard() {
                       asset={asset}
                       live={live}
                       spot={livePrice}
+                      onOpenDashboard={() => setActiveTab("dashboard")}
                     />
                   )}
                 </>
