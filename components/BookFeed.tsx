@@ -14,6 +14,7 @@ import {
   riskColor,
 } from "@/lib/format";
 import { ShadowPositions } from "./ShadowPositions";
+import { ThetanutsPositions } from "./ThetanutsPositions";
 
 export function BookCard({
   rows,
@@ -30,7 +31,7 @@ export function BookCard({
   /** Live spot price — informational context for the AI risk read. */
   spot: number;
 }) {
-  const [tab, setTab] = useState<"book" | "expiries" | "shadow">("book");
+  const [tab, setTab] = useState<"book" | "expiries" | "thetanuts" | "shadow">("book");
   const filtered = rows.filter((r) => r.asset === asset);
   const bookLabel = live ? "OptionBook (live)" : "Modeled book";
 
@@ -42,6 +43,7 @@ export function BookCard({
             [
               ["book", bookLabel],
               ["expiries", "Expiries"],
+              ["thetanuts", "My Thetanuts positions"],
               ["shadow", "My shadow positions"],
             ] as const
           ).map(([key, label]) => (
@@ -59,11 +61,11 @@ export function BookCard({
         </div>
         <span className="flex items-center gap-1.5 text-[11px] text-muted">
           {live && <span className="live-dot inline-block size-1.5 rounded-full bg-calm" />}
-          {tab === "book" ? `${filtered.length} orders` : tab === "expiries" ? `${snap.expiries.length} dates` : "Base Sepolia"}
+          {tab === "book" ? `${filtered.length} orders` : tab === "expiries" ? `${snap.expiries.length} dates` : tab === "thetanuts" ? "Base mainnet" : "Base Sepolia"}
         </span>
       </div>
 
-      {tab === "book" ? <BookTable rows={filtered} asset={asset} spot={spot} /> : tab === "expiries" ? <Expiries snap={snap} /> : <ShadowPositions asset={asset} />}
+      {tab === "book" ? <BookTable rows={filtered} asset={asset} spot={spot} /> : tab === "expiries" ? <Expiries snap={snap} /> : tab === "thetanuts" ? <ThetanutsPositions asset={asset} /> : <ShadowPositions asset={asset} />}
     </section>
   );
 }
