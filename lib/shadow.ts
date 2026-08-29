@@ -11,6 +11,8 @@ const MAX_CONTRACTS = 5;
 
 const BOOK_ABI = [
   "function fillShadow((bytes32 fillId,bytes32 sourceHash,bytes32 asset,address buyer,bool isCall,uint128 strikeE8,uint64 expiry,uint64 validUntil,uint128 contractsE6,uint128 premiumUsdc) quote,bytes signature)",
+  "function nextPositionId() view returns (uint256)",
+  "function positions(uint256) view returns (bytes32 sourceHash,bytes32 asset,address buyer,bool isCall,uint128 strikeE8,uint64 expiry,uint128 contractsE6,uint128 premiumUsdc)",
 ] as const;
 const ERC20_ABI = [
   "function approve(address spender,uint256 amount) returns (bool)",
@@ -54,6 +56,16 @@ export type ShadowQuote = {
   };
 };
 
+export type ShadowPosition = {
+  id: number;
+  asset: OptionsAsset;
+  isCall: boolean;
+  strike: number;
+  expiryTs: number;
+  contracts: number;
+  premiumUsd: number;
+};
+
 function contracts(): ContractConfig {
   const optionBook = process.env.SHADOW_OPTION_BOOK_ADDRESS;
   const usdc = process.env.SHADOW_USDC_ADDRESS;
@@ -73,6 +85,12 @@ function signer() {
   const key = process.env.SHADOW_QUOTE_SIGNER_PRIVATE_KEY;
   if (!key) throw new Error("SHADOW_QUOTE_SIGNER_PRIVATE_KEY is not configured");
   return new ethers.Wallet(key.startsWith("0x") ? key : `0x${key}`);
+}
+
+function rpcUrl() {
+  const value = process.env.BASE_SEPOLIA_RPC_URL ?? process.env.NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL;
+  if (!value) throw new Error("Base Sepolia RPC is not configured");
+  return value;
 }
 
 function validContracts(value: number): number {
@@ -158,4 +176,26 @@ export async function getShadowQuote(
       fill: { to: config.optionBook, data: book.encodeFunctionData("fillShadow", [quote, signature]) },
     },
   };
+}
+
+export async function getShadowPositions(buyer: string): Promise<ShadowPosition[]> {
+  if (!ethers.isAddress(buyer)) throw new Error("invalid buyer address");
+  const config = contracts();
+  const book = new ethers.Contract(config.optionBook, BOOK_ABI, new ethers.JsonRpcProvider(rpcUrl()));
+  const count = Number(await book.nextPositionId());
+  // ponytail: scans this small hackathon receipt book; add indexed buyer IDs when it becomes a shared venue.
+  const entries = await Promise.all(Array.from({ length: count }, (_, id) => book.positions(id)));
+  return entries.flatMap((entry, id) => {
+    if (entry.buyer.toLowerCase() !== buyer.toLowerCase()) return [];
+    const asset = ethers.decodeBytes32String(entry.asset) as OptionsAsset;
+    return [{
+      id,
+      asset,
+      isCall: entry.isCall,
+      strike: Number(entry.strikeE8) / 1e8,
+      expiryTs: Number(entry.expiry),
+      contracts: Number(entry.contractsE6) / 1e6,
+      premiumUsd: Number(entry.premiumUsdc) / 1e6,
+    }];
+  });
 }
