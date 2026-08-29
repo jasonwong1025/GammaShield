@@ -9,6 +9,7 @@ import { PriceChart } from "./PriceChart";
 import { GexChart } from "./GexChart";
 import { Heatmap } from "./Heatmap";
 import { BookCard } from "./BookFeed";
+import { FactChecker } from "./FactChecker";
 import { WhaleControls, ImpactCard, type SimState } from "./WhaleSim";
 import { LivePrice } from "./LivePrice";
 import { ASSET_META, isOptionsAsset, type Asset } from "@/lib/assets";
@@ -159,6 +160,7 @@ export function Dashboard() {
                 <div className="grid grow grid-cols-1 xl:grid-cols-[1fr_380px] gap-px bg-edge">
                   <div className="flex flex-col gap-px min-w-0">
                     <PriceChart asset={asset} flip={a.flipStrike} livePrice={livePrice} />
+                    <FactChecker snap={a} />
                     <WhaleControls asset={asset} sim={sim} onChange={setSim} />
                     <GexChart snap={a} />
                     <Heatmap snap={a} />
