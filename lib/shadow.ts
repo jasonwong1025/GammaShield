@@ -13,6 +13,7 @@ const BOOK_ABI = [
   "function fillShadow((bytes32 fillId,bytes32 sourceHash,bytes32 asset,address buyer,bool isCall,uint128 strikeE8,uint64 expiry,uint64 validUntil,uint128 contractsE6,uint128 premiumUsdc) quote,bytes signature)",
   "function nextPositionId() view returns (uint256)",
   "function positions(uint256) view returns (bytes32 sourceHash,bytes32 asset,address buyer,bool isCall,uint128 strikeE8,uint64 expiry,uint128 contractsE6,uint128 premiumUsdc)",
+  "event ShadowOrderFilled(uint256 indexed positionId,bytes32 indexed fillId,bytes32 indexed sourceHash,address buyer,bytes32 asset,bool isCall,uint128 strikeE8,uint64 expiry,uint128 contractsE6,uint128 premiumUsdc)",
 ] as const;
 const ERC20_ABI = [
   "function approve(address spender,uint256 amount) returns (bool)",
@@ -64,6 +65,7 @@ export type ShadowPosition = {
   expiryTs: number;
   contracts: number;
   premiumUsd: number;
+  txHash: string | null;
 };
 
 function contracts(): ContractConfig {
@@ -91,6 +93,12 @@ function rpcUrl() {
   const value = process.env.BASE_SEPOLIA_RPC_URL ?? process.env.NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL;
   if (!value) throw new Error("Base Sepolia RPC is not configured");
   return value;
+}
+
+function deploymentBlock() {
+  const value = process.env.SHADOW_DEPLOYMENT_BLOCK;
+  if (!value || !/^\d+$/.test(value)) throw new Error("SHADOW_DEPLOYMENT_BLOCK is not configured");
+  return Number(value);
 }
 
 function validContracts(value: number): number {
@@ -181,10 +189,24 @@ export async function getShadowQuote(
 export async function getShadowPositions(buyer: string): Promise<ShadowPosition[]> {
   if (!ethers.isAddress(buyer)) throw new Error("invalid buyer address");
   const config = contracts();
-  const book = new ethers.Contract(config.optionBook, BOOK_ABI, new ethers.JsonRpcProvider(rpcUrl()));
+  const provider = new ethers.JsonRpcProvider(rpcUrl());
+  const book = new ethers.Contract(config.optionBook, BOOK_ABI, provider);
   const count = Number(await book.nextPositionId());
   // ponytail: scans this small hackathon receipt book; add indexed buyer IDs when it becomes a shared venue.
   const entries = await Promise.all(Array.from({ length: count }, (_, id) => book.positions(id)));
+  const event = book.interface.getEvent("ShadowOrderFilled");
+  if (!event) throw new Error("Shadow fill event is unavailable");
+  const latest = await provider.getBlockNumber();
+  const txHashes = new Map<number, string>();
+  for (let fromBlock = deploymentBlock(); fromBlock <= latest; fromBlock += 10_000) {
+    const logs = await provider.getLogs({
+      address: config.optionBook,
+      topics: [event.topicHash],
+      fromBlock,
+      toBlock: Math.min(fromBlock + 9_999, latest),
+    });
+    for (const log of logs) txHashes.set(Number(BigInt(log.topics[1])), log.transactionHash);
+  }
   return entries.flatMap((entry, id) => {
     if (entry.buyer.toLowerCase() !== buyer.toLowerCase()) return [];
     const asset = ethers.decodeBytes32String(entry.asset) as OptionsAsset;
@@ -196,6 +218,7 @@ export async function getShadowPositions(buyer: string): Promise<ShadowPosition[
       expiryTs: Number(entry.expiry),
       contracts: Number(entry.contractsE6) / 1e6,
       premiumUsd: Number(entry.premiumUsdc) / 1e6,
+      txHash: txHashes.get(id) ?? null,
     }];
   });
 }

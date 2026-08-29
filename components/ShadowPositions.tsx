@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import type { Asset } from "@/lib/assets";
 import type { ShadowPosition } from "@/lib/shadow";
-import { fmtExpiryDate, fmtStrike, fmtUsd } from "@/lib/format";
+import { fmtCountdown, fmtExpiryDate, fmtStrike, fmtUsd } from "@/lib/format";
 import { getActiveProvider } from "./WalletConnect";
 
 export function ShadowPositions({ asset }: { asset: Asset }) {
@@ -11,6 +11,12 @@ export function ShadowPositions({ asset }: { asset: Asset }) {
   const [positions, setPositions] = useState<ShadowPosition[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1_000);
+    return () => clearInterval(id);
+  }, []);
 
   const load = async (buyer: string) => {
     setLoading(true);
@@ -74,10 +80,10 @@ export function ShadowPositions({ asset }: { asset: Asset }) {
             <tr key={position.id} className="border-t border-edge/50">
               <td className="px-4 py-2 font-sans"><span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${position.isCall ? "text-calm bg-calm/10" : "text-crit bg-crit/10"}`}>{position.isCall ? "CALL" : "PUT"}</span></td>
               <td className="px-2 py-2 text-right num text-fg">{fmtStrike(position.strike)}</td>
-              <td className="px-2 py-2 text-right text-muted">{fmtExpiryDate(position.expiryTs)}</td>
-              <td className="px-2 py-2 text-right num text-fg">{fmtUsd(position.premiumUsd, false)} USDC</td>
+              <td className="px-2 py-2 text-right text-muted whitespace-nowrap">{fmtExpiryDate(position.expiryTs)} <span className="text-faint">· {fmtCountdown(position.expiryTs, now)}</span></td>
+              <td className="px-2 py-2 text-right num text-fg">{fmtUsd(position.premiumUsd, false, 6)} USDC</td>
               <td className="px-2 py-2 text-right num text-fg">{position.contracts.toFixed(3)}</td>
-              <td className="px-4 py-2 text-right text-muted">#{position.id}</td>
+              <td className="px-4 py-2 text-right">{position.txHash && process.env.NEXT_PUBLIC_BASE_SEPOLIA_EXPLORER_URL ? <a href={`${process.env.NEXT_PUBLIC_BASE_SEPOLIA_EXPLORER_URL}/tx/${position.txHash}`} target="_blank" rel="noopener noreferrer" className="text-blue hover:underline">View receipt</a> : <span className="text-muted">#{position.id}</span>}</td>
             </tr>
           ))}
         </tbody>

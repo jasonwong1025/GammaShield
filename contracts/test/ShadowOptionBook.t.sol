@@ -8,7 +8,21 @@ interface Vm {
     function addr(uint256 privateKey) external returns (address);
     function prank(address) external;
     function sign(uint256 privateKey, bytes32 digest) external returns (uint8, bytes32, bytes32);
+    function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData, address emitter) external;
 }
+
+event ShadowOrderFilled(
+    uint256 indexed positionId,
+    bytes32 indexed fillId,
+    bytes32 indexed sourceHash,
+    address buyer,
+    bytes32 asset,
+    bool isCall,
+    uint128 strikeE8,
+    uint64 expiry,
+    uint128 contractsE6,
+    uint128 premiumUsdc
+);
 
 contract ShadowOptionBookTest {
     Vm private constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
@@ -31,6 +45,8 @@ contract ShadowOptionBookTest {
         ShadowOptionBook.ShadowQuote memory quote = _quote();
         bytes memory signature = _sign(quote);
 
+        vm.expectEmit(true, true, true, true, address(book));
+        emit ShadowOrderFilled(0, quote.fillId, quote.sourceHash, BUYER, quote.asset, quote.isCall, quote.strikeE8, quote.expiry, quote.contractsE6, quote.premiumUsdc);
         vm.prank(BUYER);
         uint256 positionId = book.fillShadow(quote, signature);
 
