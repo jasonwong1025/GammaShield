@@ -183,7 +183,7 @@ export function Dashboard() {
                   {activeTab === "copilot" && (
                     <CopilotView
                       snap={a}
-                      onNavigateToHedge={(strike) => {
+                      onNavigateToHedge={() => {
                         setActiveTab("hedge");
                       }}
                     />

@@ -283,7 +283,7 @@ export async function simulateWhatIfQuery(params: WhatIfRequest): Promise<WhatIf
   const selectedModel = params.model || GONKA_MODELS.FLASH;
 
   // 1. Coarse heuristic extraction as fallback
-  let parsedAction: "BUY" | "SELL" = params.question.toLowerCase().includes("buy") ? "BUY" : "SELL";
+  const parsedAction: "BUY" | "SELL" = params.question.toLowerCase().includes("buy") ? "BUY" : "SELL";
   let parsedSizeM = 10;
   const numMatch = params.question.match(/\$?(\d+(?:\.\d+)?)\s*(?:m|million|k|thousand|b|billion)?/i);
   if (numMatch) {

@@ -44,7 +44,7 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
   const [loading, setLoading] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  const [messages, setMessages] = useState<ChatMessage[]>([
+  const [messages, setMessages] = useState<ChatMessage[]>(() => [
     {
       id: "welcome",
       sender: "ai",
@@ -192,7 +192,7 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
                   : "text-muted hover:text-fg"
               }`}
             >
-              💬 Simulate Trade ("What-If")
+              💬 Simulate Trade (&quot;What-If&quot;)
             </button>
             <button
               type="button"

@@ -191,20 +191,22 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
             symbol: collateralFor(asset, side),
           }
         : null;
+  const collateralAddress = collateralInfo?.address;
+  const collateralDecimals = collateralInfo?.decimals;
 
   // Balance check — a wallet-side warning, not a substitute for the real
   // approve/fill math, so plain floats are fine here.
   useEffect(() => {
-    if (!walletAddress || !collateralInfo) return;
+    if (!walletAddress || !collateralAddress || collateralDecimals == null) return;
     const provider = getActiveProvider();
     if (!provider) return;
     let stale = false;
     const balanceOfData = "0x70a08231" + walletAddress.slice(2).toLowerCase().padStart(64, "0");
     provider
-      .request({ method: "eth_call", params: [{ to: collateralInfo.address, data: balanceOfData }, "latest"] })
+      .request({ method: "eth_call", params: [{ to: collateralAddress, data: balanceOfData }, "latest"] })
       .then((res) => {
         if (stale) return;
-        setTokenBalance(Number(BigInt(res as string)) / 10 ** collateralInfo.decimals);
+        setTokenBalance(Number(BigInt(res as string)) / 10 ** collateralDecimals);
       })
       .catch(() => {
         if (!stale) setTokenBalance(null);
@@ -220,7 +222,7 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
     return () => {
       stale = true;
     };
-  }, [walletAddress, collateralInfo?.address, collateralInfo?.decimals]);
+  }, [walletAddress, collateralAddress, collateralDecimals]);
 
   // Reset stale quote/tx state when the market or direction changes.
   const [prevKey, setPrevKey] = useState(`${asset}:${side}`);

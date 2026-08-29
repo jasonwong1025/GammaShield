@@ -1,264 +1,131 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { AssetSnapshot } from "@/lib/engine";
-import type { HedgeResult } from "@/lib/hedge";
+import type { ShadowQuote } from "@/lib/shadow";
+import { BASE_SEPOLIA_CHAIN, getActiveProvider, switchToBaseSepolia, type Eip1193Provider } from "./WalletConnect";
 
-type Props = {
-  snap: AssetSnapshot;
-  initialStrike?: number;
-};
+type Tx = { to: string; data: string };
+type FillResult = { hash: string; quote: ShadowQuote };
+const CIRCLE_FAUCET_URL = process.env.NEXT_PUBLIC_CIRCLE_FAUCET_URL ?? "";
 
-type WalletInfo = {
-  configured: boolean;
-  address?: string | null;
-  ethBalance?: string;
-  usdcBalance?: string;
-  chainId?: number;
-  rpcUrl?: string;
-};
+async function connectSepolia() {
+  const provider = getActiveProvider();
+  if (!provider) throw new Error("Connect MetaMask or Phantom first");
+  const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
+  const buyer = accounts[0];
+  if (!buyer) throw new Error("no wallet account selected");
+  await switchToBaseSepolia(provider);
+  const chainId = await provider.request({ method: "eth_chainId" });
+  if (chainId !== BASE_SEPOLIA_CHAIN.chainId) throw new Error("switch your wallet to Base Sepolia to continue");
+  return { provider, buyer };
+}
 
-export function ExecutionTerminal({ snap, initialStrike }: Props) {
-  const [strike, setStrike] = useState<number>(initialStrike || snap.flipStrike || Math.round(snap.spot * 0.95));
-  const [amountUsdc, setAmountUsdc] = useState<number>(1);
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<HedgeResult | null>(null);
-  const [terminalLogs, setTerminalLogs] = useState<string[]>([
-    `[SYS] Thetanuts V4 SDK client ready on Base Mainnet (Chain ID 8453).`,
-    `[SYS] Monitoring live Net GEX ($${snap.netGexUsd ? snap.netGexUsd.toLocaleString() : "0"}) and Gamma Flip level ($${snap.flipStrike || Math.round(snap.spot * 0.95)}).`,
-  ]);
-  const [wallet, setWallet] = useState<WalletInfo | null>(null);
+async function send(provider: Eip1193Provider, from: string, tx: Tx) {
+  const hash = (await provider.request({
+    method: "eth_sendTransaction",
+    params: [{ from, to: tx.to, data: tx.data }],
+  })) as string;
+  for (let i = 0; i < 60; i++) {
+    const receipt = (await provider.request({
+      method: "eth_getTransactionReceipt",
+      params: [hash],
+    })) as { status?: string } | null;
+    if (receipt) {
+      if (receipt.status === "0x0") throw new Error("transaction reverted");
+      return hash;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+  throw new Error("transaction confirmation timed out");
+}
+
+async function api<T>(path: string): Promise<T> {
+  const response = await fetch(path, { cache: "no-store" });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error ?? `request failed (${response.status})`);
+  return body as T;
+}
+
+export function ExecutionTerminal({ snap }: { snap: AssetSnapshot }) {
+  const [loading, setLoading] = useState<"fill" | null>(null);
+  const [result, setResult] = useState<FillResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [logs, setLogs] = useState<string[]>([
+    "[SYS] Live Thetanuts Base-mainnet book is read-only.",
+    "[SYS] Shadow fills use GammaShield contracts on Base Sepolia (84532).",
+  ]);
+  const highRisk = snap.score >= 70 || snap.regime === "amplifying";
 
-  const isHighRisk = snap.score >= 70 || snap.regime === "amplifying";
+  const addLog = (message: string) => setLogs((previous) => [...previous, `[${new Date().toLocaleTimeString()}] ${message}`]);
 
-  useEffect(() => {
-    fetch("/api/hedge")
-      .then((r) => r.json())
-      .then((d) => setWallet(d))
-      .catch(() => {});
-  }, []);
-
-  const handleExecute = async () => {
-    setLoading(true);
+  const execute = async () => {
+    setLoading("fill");
     setError(null);
-    setTerminalLogs((prev) => [
-      ...prev,
-      `--------------------------------------------------`,
-      `[${new Date().toLocaleTimeString()}] 🚀 Initiating 1-Click Autonomous Protective Put for ${snap.asset}...`,
-    ]);
-
     try {
-      const res = await fetch("/api/hedge", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          asset: snap.asset,
-          targetStrike: strike,
-          amountUsdc,
-        }),
-      });
-
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.error || `HTTP ${res.status}`);
-      }
-
-      const data: HedgeResult = await res.json();
-      setResult(data);
-      if (data.logs && data.logs.length) {
-        setTerminalLogs((prev) => [...prev, ...data.logs]);
-      }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Execution failed";
-      setError(msg);
-      setTerminalLogs((prev) => [...prev, `[ERR] ❌ Execution stopped: ${msg}`]);
+      const { provider, buyer } = await connectSepolia();
+      const params = new URLSearchParams({ asset: snap.asset, buyer, contracts: "1" });
+      const quote = await api<ShadowQuote>(`/api/shadow/quote?${params}`);
+      addLog(`Mirrored ${quote.source.asset} ${quote.source.side}: $${quote.source.strike.toLocaleString()} strike from ${quote.source.liquidity} pricing.`);
+      addLog("Approving Circle test USDC on Base Sepolia.");
+      await send(provider, buyer, quote.txs.approve);
+      addLog("Submitting signed shadow fill.");
+      const hash = await send(provider, buyer, quote.txs.fill);
+      setResult({ hash, quote });
+      addLog(`Shadow position confirmed: ${hash}`);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "shadow fill failed";
+      setError(message);
+      addLog(`Shadow fill stopped: ${message}`);
     } finally {
-      setLoading(false);
+      setLoading(null);
     }
   };
 
   return (
-    <section className="card p-5 flex flex-col gap-4" aria-label="Autonomous Thetanuts Execution Copilot">
-      {/* Alert Header Banner */}
-      <div
-        className={`p-4 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 transition ${
-          isHighRisk
-            ? "border-crit/40 bg-crit/10"
-            : "border-blue/30 bg-blue/5"
-        }`}
-      >
-        <div className="flex items-center gap-3">
-          <div
-            className={`flex size-10 items-center justify-center rounded-xl text-[18px] shrink-0 ${
-              isHighRisk ? "bg-crit/20 text-crit animate-pulse" : "bg-blue/20 text-blue"
-            }`}
-          >
-            {isHighRisk ? "⚠️" : "🛡️"}
-          </div>
+    <section className="card p-5 flex flex-col gap-4" aria-label="Base Sepolia shadow hedge">
+      <div className={`rounded-xl border p-4 ${highRisk ? "border-crit/40 bg-crit/10" : "border-blue/30 bg-blue/5"}`}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-[14px] font-bold text-fg">
-                {isHighRisk
-                  ? `High Fragility Alert (Score: ${snap.score}/100)`
-                  : `Portfolio Protection Ready`}
-              </h2>
-              <span
-                className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
-                  isHighRisk ? "bg-crit text-white" : "bg-blue text-white"
-                }`}
-              >
-                {snap.regime.toUpperCase()}
-              </span>
-            </div>
-            <p className="text-[12px] text-muted mt-0.5">
-              {isHighRisk
-                ? "Market makers are net short gamma. A protective Put option locks in floor liquidity before cascade drops."
-                : "Automated options orderbook routing active on Base Mainnet."}
+            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-blue">Base Sepolia shadow execution</p>
+            <h2 className="mt-1 text-[16px] font-bold text-fg">Human-confirmed protective put test</h2>
+            <p className="mt-1 text-[12px] text-muted">
+              Mirrors a fresh Base-mainnet Thetanuts quote. The fill uses Circle test USDC on Sepolia; this is not a Thetanuts position.
             </p>
           </div>
+          <span className="rounded-full border border-edge bg-panel px-2 py-1 text-[10px] font-mono text-faint">{BASE_SEPOLIA_CHAIN.chainId || "unconfigured"}</span>
         </div>
+      </div>
 
-        {/* 1-Click Trigger Button */}
-        <button
-          type="button"
-          onClick={handleExecute}
-          disabled={loading}
-          className={`shrink-0 h-9 px-4 rounded-lg text-[13px] font-medium transition flex items-center gap-2 ${
-            loading
-              ? "bg-crit/50 text-white cursor-wait"
-              : isHighRisk
-              ? "bg-crit text-white hover:brightness-110 active:scale-[0.98]"
-              : "bg-blue text-white hover:brightness-110 active:scale-[0.98]"
-          }`}
-        >
-          {loading ? (
-            <>
-              <span className="size-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              <span>Executing on Base…</span>
-            </>
-          ) : (
-            <>
-              <span>⚡ Confirm & Execute Live Hedge (1 USDC)</span>
-            </>
-          )}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <Metric label="Asset" value={`${snap.asset} protective put`} />
+        <Metric label="Risk signal" value={`${snap.score}/100 · ${snap.regime}`} />
+        <Metric label="Execution" value="1 test contract" />
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {CIRCLE_FAUCET_URL && <a href={CIRCLE_FAUCET_URL} target="_blank" rel="noopener noreferrer" className="flex h-10 items-center rounded-lg border border-blue/40 px-4 text-[13px] font-semibold text-blue">Get Circle test USDC ↗</a>}
+        <button type="button" onClick={execute} disabled={loading !== null} className="h-10 rounded-lg bg-blue px-4 text-[13px] font-semibold text-white disabled:opacity-50">
+          {loading === "fill" ? "Confirming on Sepolia…" : "Mirror & fill protective put"}
         </button>
       </div>
 
-      {/* Execution Parameter Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <div className="p-3.5 rounded-lg border border-edge bg-panel2 flex flex-col gap-1">
-          <span className="text-[11px] font-medium text-faint uppercase">Asset & Live Price</span>
-          <span className="num text-[15px] font-bold text-fg">
-            {snap.asset} · ${snap.spot.toLocaleString()}
-          </span>
-          <span className="text-[11px] text-muted">Base Mainnet (8453)</span>
-        </div>
-
-        <div className="p-3.5 rounded-lg border border-edge bg-panel2 flex flex-col gap-1">
-          <span className="text-[11px] font-medium text-faint uppercase">Recommended Put Strike</span>
-          <div className="flex items-center gap-2">
-            <span className="num text-[15px] font-bold text-blue">${strike.toLocaleString()}</span>
-            <span className="text-[10.5px] px-1.5 py-0.5 rounded bg-panel border border-edge text-faint">
-              {strike < snap.spot ? `-${(((snap.spot - strike) / snap.spot) * 100).toFixed(1)}% OTM` : "ATM"}
-            </span>
-          </div>
-          <span className="text-[11px] text-muted">Flip Level: ${snap.flipStrike ? snap.flipStrike.toLocaleString() : "None"}</span>
-        </div>
-
-        <div className="p-3.5 rounded-lg border border-edge bg-panel2 flex flex-col gap-1">
-          <span className="text-[11px] font-medium text-faint uppercase">Burner Wallet Status</span>
-          <div className="flex items-center gap-1.5">
-            <span className="size-2 rounded-full bg-calm" />
-            <span className="text-[12px] font-mono text-fg font-medium truncate">
-              {wallet?.address
-                ? `${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}`
-                : "Active Signer Loaded"}
-            </span>
-          </div>
-          <span className="text-[11px] text-muted num">
-            Gas: {wallet?.ethBalance ? `${parseFloat(wallet.ethBalance).toFixed(4)} ETH` : "~0.005 ETH"} · USDC: {wallet?.usdcBalance || "2.00"}
-          </span>
-        </div>
-      </div>
-
-      {/* Confirmed Transaction Card */}
       {result && (
-        <div className="p-3.5 rounded-lg border border-calm/40 bg-calm/10 flex flex-col gap-2.5 animate-fade-in">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <span className="flex size-2.5 rounded-full bg-calm" />
-              <span className="text-[13.5px] font-bold text-fg">
-                ✅ Protective Put Option Successfully Confirmed on Base Mainnet
-              </span>
-            </div>
-            <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-panel border border-calm/30 text-calm font-semibold">
-              Block #{result.blockNumber}
-            </span>
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11.5px] pt-1">
-            <div>
-              <span className="text-faint block text-[10.5px]">Contract</span>
-              <span className="font-semibold text-fg">{result.market} PUT</span>
-            </div>
-            <div>
-              <span className="text-faint block text-[10.5px]">Strike</span>
-              <span className="font-semibold text-fg num">${result.strike.toLocaleString()}</span>
-            </div>
-            <div>
-              <span className="text-faint block text-[10.5px]">Cost</span>
-              <span className="font-semibold text-fg num">{result.amountUsdc} USDC</span>
-            </div>
-            <div>
-              <span className="text-faint block text-[10.5px]">Speed</span>
-              <span className="font-semibold text-fg num">{result.executionTimeMs}ms</span>
-            </div>
-          </div>
-
-          <div className="pt-2 border-t border-calm/20 flex flex-wrap items-center justify-between gap-2 text-[11.5px]">
-            <span className="text-muted font-mono truncate max-w-[280px] sm:max-w-md">
-              Tx: {result.txHash}
-            </span>
-            <a
-              href={result.basescanUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-3 py-1 rounded-md bg-calm text-white text-[11.5px] font-semibold hover:brightness-110 transition flex items-center gap-1"
-            >
-              <span>View on Basescan ↗</span>
-            </a>
-          </div>
+        <div className="rounded-lg border border-calm/40 bg-calm/10 p-3 text-[12px] text-fg">
+          Shadow fill confirmed for ${result.quote.source.strike.toLocaleString()} {result.quote.source.asset} put. {" "}
+          {BASE_SEPOLIA_CHAIN.blockExplorerUrls[0] && <a className="font-semibold text-blue" href={`${BASE_SEPOLIA_CHAIN.blockExplorerUrls[0]}/tx/${result.hash}`} target="_blank" rel="noopener noreferrer">View testnet transaction ↗</a>}
         </div>
       )}
 
-      {error && (
-        <div className="p-3 rounded-lg border border-crit/30 bg-crit/10 text-crit text-[12px]">
-          Execution Notice: {error}
-        </div>
-      )}
+      {error && <div className="rounded-lg border border-crit/30 bg-crit/10 p-3 text-[12px] text-crit">{error}</div>}
 
-      {/* Terminal Console */}
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center justify-between text-[11px] font-mono text-faint px-1">
-          <span>Execution Log Console</span>
-          <span>Thetanuts OptionBook (Base Mainnet)</span>
-        </div>
-
-        <div className="bg-[#0b101d] border border-edge text-[#64d8a5] p-3.5 rounded-xl font-mono text-[11.5px] leading-5 max-h-[220px] overflow-y-auto feed-scroll">
-          {terminalLogs.map((log, index) => (
-            <div key={index} className="whitespace-pre-wrap">
-              {log}
-            </div>
-          ))}
-          {loading && (
-            <div className="flex items-center gap-2 text-[#60a5fa] animate-pulse mt-1">
-              <span className="size-2 rounded-full bg-[#60a5fa]" />
-              <span>Submitting order to OptionBook smart contracts on Base Mainnet...</span>
-            </div>
-          )}
-        </div>
+      <div className="rounded-xl border border-edge bg-[#0b101d] p-3 font-mono text-[11px] leading-5 text-[#64d8a5]">
+        {logs.map((log, index) => <div key={`${log}-${index}`}>{log}</div>)}
       </div>
     </section>
   );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return <div className="rounded-lg border border-edge bg-panel2 p-3"><p className="text-[10px] uppercase text-faint">{label}</p><p className="mt-1 text-[12px] font-semibold text-fg">{value}</p></div>;
 }

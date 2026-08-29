@@ -26,6 +26,9 @@ const WALLETS: { key: WalletKey; name: string; icon: string; installUrl: string 
 
 const BASE_RPC_URL = process.env.NEXT_PUBLIC_BASE_RPC_URL ?? "https://mainnet.base.org";
 const EXPLORER_URL = process.env.NEXT_PUBLIC_BASE_EXPLORER_URL ?? "https://basescan.org";
+const BASE_SEPOLIA_RPC_URL = process.env.NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL ?? "";
+const BASE_SEPOLIA_EXPLORER_URL = process.env.NEXT_PUBLIC_BASE_SEPOLIA_EXPLORER_URL ?? "";
+const BASE_SEPOLIA_CHAIN_ID = process.env.NEXT_PUBLIC_BASE_SEPOLIA_CHAIN_ID ?? "";
 
 export const BASE_CHAIN = {
   chainId: "0x2105", // 8453
@@ -33,6 +36,14 @@ export const BASE_CHAIN = {
   nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
   rpcUrls: [BASE_RPC_URL],
   blockExplorerUrls: [EXPLORER_URL],
+};
+
+export const BASE_SEPOLIA_CHAIN = {
+  chainId: BASE_SEPOLIA_CHAIN_ID,
+  chainName: "Base Sepolia",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: BASE_SEPOLIA_RPC_URL ? [BASE_SEPOLIA_RPC_URL] : [],
+  blockExplorerUrls: BASE_SEPOLIA_EXPLORER_URL ? [BASE_SEPOLIA_EXPLORER_URL] : [],
 };
 
 const LAST_WALLET_KEY = "gs-wallet";
@@ -103,16 +114,27 @@ export function getActiveProvider(): Eip1193Provider | null {
 }
 
 export async function switchToBase(provider: Eip1193Provider) {
+  await switchChain(provider, BASE_CHAIN);
+}
+
+export async function switchToBaseSepolia(provider: Eip1193Provider) {
+  if (!BASE_SEPOLIA_CHAIN.chainId || !BASE_SEPOLIA_CHAIN.rpcUrls.length) {
+    throw new Error("Base Sepolia wallet configuration is missing");
+  }
+  await switchChain(provider, BASE_SEPOLIA_CHAIN);
+}
+
+async function switchChain(provider: Eip1193Provider, chain: typeof BASE_CHAIN) {
   try {
     await provider.request({
       method: "wallet_switchEthereumChain",
-      params: [{ chainId: BASE_CHAIN.chainId }],
+      params: [{ chainId: chain.chainId }],
     });
   } catch (err) {
     const code = (err as { code?: number })?.code;
     if (code === 4902) {
       try {
-        await provider.request({ method: "wallet_addEthereumChain", params: [BASE_CHAIN] });
+        await provider.request({ method: "wallet_addEthereumChain", params: [chain] });
       } catch {
         /* declining the chain is fine — dashboard is read-only */
       }

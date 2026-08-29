@@ -70,7 +70,7 @@ export function TopBar({ activeTab = "dashboard", onTabChange, hasHighRiskAlert 
               <span className="flex size-2 rounded-full bg-crit animate-ping" title="Danger Zone: Risk > 75%" />
             ) : (
               <span className="text-[10px] px-1.5 py-0.2 rounded bg-calm/15 text-calm font-mono uppercase">
-                Base
+                Sepolia
               </span>
             )}
           </button>
