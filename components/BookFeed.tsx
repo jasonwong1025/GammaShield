@@ -16,21 +16,25 @@ export function BookCard({
   rows,
   snap,
   asset,
+  live,
 }: {
   rows: FeedRow[];
   snap: AssetSnapshot;
   asset: Asset;
+  /** True for BTC/ETH (real Thetanuts OptionBook); false = modeled book. */
+  live: boolean;
 }) {
   const [tab, setTab] = useState<"book" | "expiries">("book");
   const filtered = rows.filter((r) => r.asset === asset).slice(0, 28);
+  const bookLabel = live ? "OptionBook (live)" : "Modeled book";
 
   return (
-    <section className="card flex flex-col min-h-0 overflow-hidden" aria-label="Live order book">
+    <section className="card flex flex-col min-h-0 overflow-hidden" aria-label={bookLabel}>
       <div className="flex items-center justify-between px-5 pt-4 pb-3">
         <div className="flex items-center gap-1 rounded-lg bg-panel2 p-0.5">
           {(
             [
-              ["book", "Live book"],
+              ["book", bookLabel],
               ["expiries", "Expiries"],
             ] as const
           ).map(([key, label]) => (
@@ -47,7 +51,7 @@ export function BookCard({
           ))}
         </div>
         <span className="flex items-center gap-1.5 text-[11px] text-muted">
-          <span className="live-dot inline-block size-1.5 rounded-full bg-calm" />
+          {live && <span className="live-dot inline-block size-1.5 rounded-full bg-calm" />}
           {tab === "book" ? `${filtered.length} orders` : `${snap.expiries.length} dates`}
         </span>
       </div>

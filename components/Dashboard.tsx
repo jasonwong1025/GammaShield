@@ -164,7 +164,7 @@ export function Dashboard() {
 
                   <div className="flex flex-col gap-px min-w-0">
                     <TradePanel asset={asset} live={live} />
-                    <BookCard rows={snap.feed} snap={a} asset={asset} />
+                    <BookCard rows={snap.feed} snap={a} asset={asset} live={live} />
                     <div className="grow bg-panel" />
                   </div>
                 </div>

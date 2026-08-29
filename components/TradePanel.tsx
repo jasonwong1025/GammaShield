@@ -420,7 +420,7 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
         <h2 className="text-[14px] font-semibold">Trade {asset} options</h2>
         <span className="flex items-center gap-1.5 text-[11px] text-muted">
           <span className="live-dot inline-block size-1.5 rounded-full bg-calm" />
-          Live book
+          OptionBook (live)
         </span>
       </div>
 
@@ -526,7 +526,7 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
         >
           <div className="flex items-center justify-between text-[10px] uppercase tracking-wide">
             {quote.source === "book" ? (
-              <span className="text-calm">● Instant fill — live maker order</span>
+              <span className="text-calm">● Instant fill — OptionBook</span>
             ) : (
               <span className="text-faint" title="No listed maker at this expiry — price is the market-maker ask; filling it requires an RFQ auction.">
                 ◦ MM quote (estimate) — RFQ expiry
