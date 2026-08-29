@@ -11,20 +11,24 @@ type Props = {
   snap: AssetSnapshot;
   feed: FeedRow[];
   asset: Asset;
+  live: boolean;
+  spot: number;
 };
 
-export function HedgeView({ snap, feed, asset }: Props) {
+export function HedgeView({ snap, feed, asset, live, spot }: Props) {
   return (
-    <div className="p-6 grid grid-cols-1 xl:grid-cols-[1fr_400px] gap-6 bg-slate-50/60 grow">
+    <div className="grid grow grid-cols-1 xl:grid-cols-[1fr_380px] gap-px bg-edge">
       {/* Main Column: Execution Terminal */}
-      <div className="min-w-0 flex flex-col">
+      <div className="flex flex-col gap-px min-w-0">
         <ExecutionTerminal snap={snap} />
+        <div className="grow bg-panel" />
       </div>
 
       {/* Side Rail: Risk Score & Live Options Book */}
-      <div className="min-w-0 flex flex-col gap-6">
+      <div className="flex flex-col gap-px min-w-0">
         <ScorePanel snap={snap} />
-        <BookCard rows={feed} snap={snap} asset={asset} />
+        <BookCard rows={feed} snap={snap} asset={asset} live={live} spot={spot} />
+        <div className="grow bg-panel" />
       </div>
     </div>
   );

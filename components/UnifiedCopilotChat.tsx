@@ -155,15 +155,15 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
   };
 
   return (
-    <section className="bg-white rounded-2xl shadow-xs border border-slate-100/80 p-6 flex flex-col gap-5 min-h-[580px]" aria-label="Unified Gonka Copilot">
+    <section className="card p-5 flex flex-col gap-4 min-h-[600px]" aria-label="Unified Gonka Copilot">
       {/* Header & Mode Switcher */}
-      <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-100">
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-edge">
         <div>
           <div className="flex items-center gap-2">
-            <span className="flex size-2.5 rounded-full bg-blue animate-pulse" />
-            <h2 className="text-[16px] font-bold text-slate-900 tracking-tight">Gonka AI Copilot</h2>
+            <span className="live-dot inline-block size-2 rounded-full bg-blue" />
+            <h2 className="text-[15px] font-semibold text-fg tracking-tight">Gonka AI Copilot</h2>
           </div>
-          <p className="text-[12.5px] text-slate-500 mt-0.5">
+          <p className="text-[12px] text-muted mt-0.5">
             Check if viral rumors are real or simulate how dealer hedging will react to your trades.
           </p>
         </div>
@@ -173,7 +173,7 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
           <select
             value={selectedModel}
             onChange={(e) => setSelectedModel(e.target.value as GonkaModelId)}
-            className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-[11.5px] font-medium text-slate-700 focus:outline-none focus:border-blue"
+            className="px-2.5 py-1 rounded-lg border border-edge bg-panel2 text-[11.5px] font-medium text-fg focus:outline-none focus:border-blue"
             title="Select AI Model"
           >
             <option value={GONKA_MODELS.FLASH}>⚡ DeepSeek Flash (~3s)</option>
@@ -182,14 +182,14 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
           </select>
 
           {/* Mode Switcher Pill */}
-          <div className="flex p-1 rounded-xl bg-slate-100/80 border border-slate-200/60 shrink-0">
+          <div className="flex p-0.5 rounded-lg bg-panel2 border border-edge shrink-0">
             <button
               type="button"
               onClick={() => setMode("simulate")}
-              className={`px-3.5 py-1.5 rounded-lg text-[12px] font-semibold transition ${
+              className={`px-3 py-1 rounded-md text-[12px] font-medium transition ${
                 mode === "simulate"
-                  ? "bg-white text-blue shadow-xs"
-                  : "text-slate-600 hover:text-slate-900"
+                  ? "bg-panel3 text-fg font-semibold shadow-xs"
+                  : "text-muted hover:text-fg"
               }`}
             >
               💬 Simulate Trade ("What-If")
@@ -197,10 +197,10 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
             <button
               type="button"
               onClick={() => setMode("rumor")}
-              className={`px-3.5 py-1.5 rounded-lg text-[12px] font-semibold transition ${
+              className={`px-3 py-1 rounded-md text-[12px] font-medium transition ${
                 mode === "rumor"
-                  ? "bg-white text-blue shadow-xs"
-                  : "text-slate-600 hover:text-slate-900"
+                  ? "bg-panel3 text-fg font-semibold shadow-xs"
+                  : "text-muted hover:text-fg"
               }`}
             >
               🔍 Verify Rumor (Fact-Check)
@@ -210,25 +210,25 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
       </div>
 
       {/* Messages Stream */}
-      <div className="grow flex flex-col gap-3.5 max-h-[460px] overflow-y-auto pr-1 feed-scroll">
+      <div className="grow flex flex-col gap-3 max-h-[460px] overflow-y-auto pr-1 feed-scroll">
         {messages.map((m) => (
           <div
             key={m.id}
-            className={`flex flex-col gap-2.5 p-4 rounded-2xl text-[13px] leading-relaxed transition ${
+            className={`flex flex-col gap-2 p-3.5 rounded-xl text-[12.5px] leading-relaxed transition ${
               m.sender === "user"
-                ? "bg-blue/5 border border-blue/15 text-slate-900 ml-10 self-end"
-                : "bg-slate-50 border border-slate-100 text-slate-800 mr-4 self-start"
+                ? "bg-bluesoft/70 border border-blue/20 text-fg ml-10 self-end"
+                : "bg-panel2 border border-edge text-fg mr-4 self-start"
             }`}
           >
             {/* Message header */}
-            <div className="flex items-center justify-between text-[11px] font-medium text-slate-400">
+            <div className="flex items-center justify-between text-[11px] font-medium text-faint">
               <span className="flex items-center gap-1.5">
                 {m.sender === "user" ? (
                   <span>You</span>
                 ) : (
                   <>
-                    <span className="size-2 rounded-full bg-blue" />
-                    <span className="font-semibold text-slate-700">
+                    <span className="size-1.5 rounded-full bg-blue" />
+                    <span className="font-semibold text-fg">
                       Gonka Copilot · {m.mode === "simulate" ? "Trade Simulator" : "Fact-Checker"}
                     </span>
                   </>
@@ -237,30 +237,30 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
               <span>{new Date(m.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
             </div>
 
-            <p className="whitespace-pre-line text-slate-700">{m.text}</p>
+            <p className="whitespace-pre-line">{m.text}</p>
 
             {/* RUMOR FACT-CHECK RESULT CARD */}
             {m.rumorData && (
-              <div className="mt-2 p-3.5 rounded-xl bg-white border border-slate-200/80 shadow-xs flex flex-col gap-3">
-                <div className="flex items-center justify-between gap-3 pb-2.5 border-b border-slate-100">
+              <div className="mt-2 p-3 rounded-lg bg-panel border border-edge flex flex-col gap-2.5">
+                <div className="flex items-center justify-between gap-3 pb-2 border-b border-edge">
                   <div className="flex items-center gap-3">
-                    <div className="flex flex-col items-center justify-center size-12 rounded-full border-2 border-slate-100 bg-slate-50 text-center">
+                    <div className="flex flex-col items-center justify-center size-11 rounded-full border border-edge bg-panel2 text-center">
                       <span
-                        className="num text-[16px] font-bold leading-none"
+                        className="num text-[15px] font-bold leading-none"
                         style={{ color: m.rumorData.truthScore > 65 ? "var(--crit)" : "var(--calm)" }}
                       >
                         {m.rumorData.truthScore}%
                       </span>
-                      <span className="text-[8.5px] text-slate-400 font-bold uppercase mt-0.5">Truth</span>
+                      <span className="text-[8px] text-faint font-bold uppercase mt-0.5">Truth</span>
                     </div>
                     <div>
-                      <span className="font-bold text-[13px] text-slate-900">
-                        {m.rumorData.truthScore > 65 ? "⚠️ Confirmed Fragility Trigger" : "🛡️ FUD / Minimal Market Danger"}
+                      <span className="font-bold text-[12.5px] text-fg">
+                        {m.rumorData.truthScore > 65 ? "⚠️ High Fragility Alert" : "🛡️ Low Volatility Risk / FUD"}
                       </span>
                       <span
                         className="ml-2 text-[10px] font-bold px-2 py-0.5 rounded-full"
                         style={{
-                          background: m.rumorData.urgency === "CRITICAL" ? "rgba(216, 67, 59, 0.1)" : "rgba(18, 160, 110, 0.1)",
+                          background: m.rumorData.urgency === "CRITICAL" ? "rgba(216, 67, 59, 0.15)" : "rgba(18, 160, 110, 0.15)",
                           color: m.rumorData.urgency === "CRITICAL" ? "var(--crit)" : "var(--calm)",
                         }}
                       >
@@ -270,38 +270,38 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
                   </div>
                 </div>
 
-                <div className="text-[12px] text-slate-600 leading-relaxed">
-                  <span className="font-semibold text-slate-800 block mb-1">Reasoning Analysis:</span>
+                <div className="text-[12px] text-muted leading-relaxed">
+                  <span className="font-semibold text-fg block mb-0.5">Reasoning Analysis:</span>
                   <p>{m.rumorData.reasoning}</p>
                 </div>
 
                 {/* Autonomous Hedge Recommendation */}
                 <div
-                  className={`p-3 rounded-lg border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 ${
+                  className={`p-2.5 rounded-lg border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-[11.5px] ${
                     m.rumorData.shouldHedge
-                      ? "border-rose-200 bg-rose-50/60"
-                      : "border-emerald-200 bg-emerald-50/60"
+                      ? "border-crit/30 bg-crit/10"
+                      : "border-calm/30 bg-calm/10"
                   }`}
                 >
-                  <div className="flex flex-col gap-0.5 text-[11.5px]">
-                    <div className="flex items-center gap-1.5 font-bold text-slate-900">
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex items-center gap-1.5 font-bold text-fg">
                       <span>{m.rumorData.shouldHedge ? "🚨 Protective Put Recommended" : "✅ No Immediate Hedge Needed"}</span>
                       {m.rumorData.strikeSuggestion > 0 && (
-                        <span className="font-mono px-1.5 py-0.2 rounded bg-white border text-blue text-[11px]">
+                        <span className="font-mono px-1.5 py-0.2 rounded bg-panel border border-edge text-blue text-[11px]">
                           ${m.rumorData.strikeSuggestion.toLocaleString()} PUT
                         </span>
                       )}
                     </div>
-                    <span className="text-slate-600">{m.rumorData.actionRationale}</span>
+                    <span className="text-muted">{m.rumorData.actionRationale}</span>
                   </div>
 
                   {m.rumorData.shouldHedge && onNavigateToHedge && (
                     <button
                       type="button"
                       onClick={() => onNavigateToHedge(m.rumorData?.strikeSuggestion)}
-                      className="shrink-0 px-3.5 py-1.5 rounded-lg bg-rose-600 text-white text-[11.5px] font-bold hover:bg-rose-700 transition shadow-xs"
+                      className="shrink-0 px-3 py-1.5 rounded-lg bg-crit text-white text-[11px] font-bold hover:brightness-110 transition shadow-xs"
                     >
-                      Hedge on Base (~1 USDC) ⚡
+                      Hedge on Base ⚡
                     </button>
                   )}
                 </div>
@@ -310,20 +310,20 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
 
             {/* WHAT-IF SIMULATION RESULT CARD */}
             {m.whatIfData && (
-              <div className="mt-2 p-3.5 rounded-xl bg-white border border-slate-200/80 shadow-xs flex flex-col gap-3">
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11.5px] bg-slate-50 p-2.5 rounded-lg border border-slate-100">
+              <div className="mt-2 p-3 rounded-lg bg-panel border border-edge flex flex-col gap-2.5">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11.5px] bg-panel2 p-2 rounded-lg border border-edge">
                   <div>
-                    <span className="text-slate-400 block text-[10.5px]">Order</span>
-                    <span className="font-bold text-slate-800 num">
+                    <span className="text-faint block text-[10px]">Order</span>
+                    <span className="font-bold text-fg num">
                       {m.whatIfData.parsedAction} ${m.whatIfData.parsedSizeM}M
                     </span>
                   </div>
                   <div>
-                    <span className="text-slate-400 block text-[10.5px]">Direct Move</span>
-                    <span className="font-bold text-slate-800 num">{fmtPct(m.whatIfData.initialMovePct)}</span>
+                    <span className="text-faint block text-[10px]">Direct Move</span>
+                    <span className="font-bold text-fg num">{fmtPct(m.whatIfData.initialMovePct)}</span>
                   </div>
                   <div>
-                    <span className="text-slate-400 block text-[10.5px]">Dealer Hedging</span>
+                    <span className="text-faint block text-[10px]">Dealer Hedging</span>
                     <span
                       className="font-bold num"
                       style={{ color: m.whatIfData.amplification > 1.05 ? "var(--crit)" : "var(--calm)" }}
@@ -332,7 +332,7 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
                     </span>
                   </div>
                   <div>
-                    <span className="text-slate-400 block text-[10.5px]">Amplification</span>
+                    <span className="text-faint block text-[10px]">Amplification</span>
                     <span
                       className="font-bold num"
                       style={{ color: m.whatIfData.amplification > 1.05 ? "var(--crit)" : "var(--calm)" }}
@@ -342,18 +342,18 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
                   </div>
                 </div>
 
-                <div className="p-2.5 rounded-lg bg-blue-50/70 border border-blue-100 text-[12px] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                <div className="p-2.5 rounded-lg bg-blue/10 border border-blue/20 text-[11.5px] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
                   <div className="flex flex-col gap-0.5">
-                    <span className="font-semibold text-blue-900 text-[11px] uppercase tracking-wider">
+                    <span className="font-semibold text-blue text-[11px] uppercase tracking-wider">
                       Execution Strategy:
                     </span>
-                    <p className="text-slate-600 text-[11.5px]">{m.whatIfData.strategicAdvice}</p>
+                    <p className="text-muted">{m.whatIfData.strategicAdvice}</p>
                   </div>
                   {m.whatIfData.amplification > 1.15 && onNavigateToHedge && (
                     <button
                       type="button"
                       onClick={() => onNavigateToHedge()}
-                      className="shrink-0 px-3 py-1 text-[11.5px] font-bold rounded-lg bg-rose-600 text-white hover:bg-rose-700 transition"
+                      className="shrink-0 px-3 py-1 text-[11px] font-bold rounded-lg bg-crit text-white hover:brightness-110 transition"
                     >
                       Hedge Downside 🛡️
                     </button>
@@ -364,7 +364,7 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
 
             {/* Gonka Trace Pill */}
             {m.gonkaRequestId && (
-              <div className="flex items-center justify-between text-[10.5px] font-mono text-slate-400 pt-1">
+              <div className="flex items-center justify-between text-[10px] font-mono text-faint pt-0.5">
                 <span>Gonka Trace ID: {m.gonkaRequestId}</span>
                 <button
                   type="button"
@@ -379,8 +379,8 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
         ))}
 
         {loading && (
-          <div className="flex items-center gap-2 p-3.5 rounded-xl bg-slate-50 border border-slate-100 text-[12.5px] text-slate-500 self-start animate-pulse">
-            <span className="size-3.5 rounded-full border-2 border-blue border-t-transparent animate-spin" />
+          <div className="flex items-center gap-2 p-3 rounded-xl bg-panel2 border border-edge text-[12px] text-muted self-start animate-pulse">
+            <span className="size-3 rounded-full border-2 border-blue border-t-transparent animate-spin" />
             <span>Analyzing scenario with GonkaRouter multi-model AI…</span>
           </div>
         )}
@@ -390,7 +390,7 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
       <div className="flex flex-col gap-2 mt-auto">
         {/* Quick Suggestion Pills */}
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 feed-scroll">
-          <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wider shrink-0">Try:</span>
+          <span className="text-[11px] font-medium text-faint uppercase tracking-wider shrink-0">Try:</span>
           {activePills.map((pill, idx) => (
             <button
               key={idx}
@@ -399,7 +399,7 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
                 setInput(pill);
                 handleSend(pill);
               }}
-              className="text-[11.5px] px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900 transition whitespace-nowrap shrink-0 border border-slate-200/50"
+              className="text-[11.5px] px-2.5 py-1 rounded-full bg-panel2 text-muted hover:bg-panel3 hover:text-fg transition whitespace-nowrap shrink-0 border border-edge"
             >
               {pill.length > 40 ? `${pill.slice(0, 38)}…` : pill}
             </button>
@@ -423,12 +423,12 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
                 ? `Ask a trade scenario (e.g. 'What if I sell $5M ${snap.asset}?')...`
                 : `Paste a market rumor or viral tweet to fact-check...`
             }
-            className="grow px-4 py-2.5 text-[13px] bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:outline-none focus:border-blue focus:bg-white transition placeholder:text-slate-400"
+            className="grow px-3.5 py-2 text-[13px] bg-panel2 border border-edge rounded-lg text-fg focus:outline-none focus:border-blue transition placeholder:text-faint"
           />
           <button
             type="submit"
             disabled={loading || !input.trim()}
-            className="px-5 py-2.5 rounded-xl bg-blue text-white text-[13px] font-semibold hover:brightness-110 active:scale-[0.98] transition disabled:opacity-40 shadow-xs"
+            className="px-4 py-2 rounded-lg bg-blue text-white text-[13px] font-medium hover:brightness-110 active:scale-[0.98] transition disabled:opacity-40 shadow-xs"
           >
             {mode === "simulate" ? "Simulate" : "Verify"}
           </button>

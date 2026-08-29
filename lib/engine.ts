@@ -16,7 +16,9 @@ export type NormalizedOrder = {
   expiryTs: number; // unix seconds
   collateralUsd: number;
   maker: string;
-  greeks: { delta: number; gamma: number; iv: number; theta: number; vega: number } | null;
+  greeks: { delta: number; gamma: number; iv: number; theta: number; vega: number; rho: number } | null;
+  /** Ask premium per contract, USD. Null for modeled books — no pricing model backs them yet. */
+  pricePerContractUsd: number | null;
 };
 
 export type StrikeGex = { strike: number; gex: number; notionalUsd: number };
@@ -194,42 +196,5 @@ export function computeAssetSnapshot(
     avgIv,
     orderCount: live.length,
     greeksCoverage: live.length ? withGreeks.length / live.length : 0,
-  };
-}
-
-// Whale scenario: how much extra dealer hedging a market order of `sizeUsd`
-// could trigger. First-order estimate from the live GEX profile and book depth.
-export function simulateWhale(snapshot: AssetSnapshot, sizeUsd: number, buy: boolean) {
-  // Square-root market-impact law: move ≈ dailyVol × √(size / dailyVolume).
-  // Vol and ADV are coarse constants for the global spot market — the point is
-  // the relative feedback structure, not basis-point precision.
-  const MARKET: Record<Asset, { volPct: number; advUsd: number }> = {
-    BTC: { volPct: 2.5, advUsd: 25_000_000_000 },
-    ETH: { volPct: 3.2, advUsd: 12_000_000_000 },
-    SOL: { volPct: 4.5, advUsd: 3_000_000_000 },
-    XRP: { volPct: 4.0, advUsd: 2_500_000_000 },
-    BNB: { volPct: 3.5, advUsd: 1_500_000_000 },
-    AVAX: { volPct: 5.0, advUsd: 500_000_000 },
-  };
-  const { volPct: dailyVolPct, advUsd } = MARKET[snapshot.asset];
-  const impactPct = (size: number) => dailyVolPct * Math.sqrt(Math.abs(size) / advUsd);
-
-  const initialMovePct = impactPct(sizeUsd) * (buy ? 1 : -1);
-
-  // Dealer hedge flow for that move, from net GEX (USD per 1% move).
-  const hedgeFlowUsd = -snapshot.netGexUsd * initialMovePct;
-  const sameDirection = Math.sign(hedgeFlowUsd) === Math.sign(initialMovePct);
-
-  const feedbackMovePct = Math.sign(hedgeFlowUsd || 0) * impactPct(hedgeFlowUsd);
-  const totalMovePct = initialMovePct + feedbackMovePct;
-  const amplification = initialMovePct !== 0 ? totalMovePct / initialMovePct : 1;
-
-  return {
-    initialMovePct,
-    hedgeFlowUsd,
-    feedbackMovePct,
-    totalMovePct,
-    amplification,
-    sameDirection,
   };
 }

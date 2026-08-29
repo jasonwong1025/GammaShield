@@ -22,10 +22,12 @@ const PRODUCTS: Record<string, string> = {
   "AVAX-USD": "AVAX",
 };
 
+const WS_URL = process.env.COINBASE_WS_URL ?? "wss://ws-feed.exchange.coinbase.com";
+
 let started = false;
 
 function connectUpstream() {
-  const ws = new WebSocket("wss://ws-feed.exchange.coinbase.com");
+  const ws = new WebSocket(WS_URL);
   let retried = false;
   const retry = () => {
     if (retried) return;

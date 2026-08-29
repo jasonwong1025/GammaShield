@@ -9,7 +9,7 @@ import {
   type NormalizedOrder,
 } from "./engine";
 import { ALL_ASSETS, isOptionsAsset, type Asset } from "./assets";
-import { buildModelBook } from "./modelBook";
+import { buildModelBook, bsRho } from "./modelBook";
 
 export type MarketSnapshot = {
   ts: number;
@@ -33,7 +33,24 @@ export type FeedRow = {
   iv: number | null;
   delta: number | null;
   gamma: number | null;
+  theta: number | null;
+  vega: number | null;
+  /** Not in the Thetanuts pricing API — Black-Scholes-derived; see lib/modelBook.ts. */
+  rho: number | null;
+  pricePerContractUsd: number | null;
   maker: string;
+  /** What buying this order's full listed size would do to market-structure
+   * risk (lib/engine.ts, deterministic). Null when the order carries no
+   * greeks to price the hypothetical fill. Feeds the per-row risk drill-down
+   * in components/BookFeed.tsx. */
+  impact: {
+    scoreBefore: number;
+    scoreAfter: number;
+    netGexBefore: number;
+    netGexAfter: number;
+    regimeBefore: string;
+    regimeAfter: string;
+  } | null;
 };
 
 const RPC_URL = process.env.THETANUTS_RPC_URL ?? "https://mainnet.base.org";
@@ -43,6 +60,12 @@ let client: ThetanutsClient | null = null;
 let cached: MarketSnapshot | null = null;
 let cachedAt = 0;
 let inflight: Promise<MarketSnapshot> | null = null;
+let lastNormalized: NormalizedOrder[] = [];
+
+/** Normalized rows from the most recent snapshot build (for what-if math). */
+export function getLastNormalizedOrders(): NormalizedOrder[] {
+  return lastNormalized;
+}
 
 export function getClient(): ThetanutsClient {
   if (!client) {
@@ -120,6 +143,16 @@ export async function getMarketSnapshot(): Promise<MarketSnapshot> {
       const strikes = (raw.strikes ?? []).map((s) => Number(s) / 1e8);
       if (!strikes.length) continue;
 
+      const expiryTs = Number(o.order.expiry);
+      const spot = market.prices[asset];
+      // The pricing API's greeks cover delta/gamma/theta/vega but not rho —
+      // derive it via Black-Scholes at the same IV, consistent with the
+      // modeled book's greeks.
+      const greeks =
+        raw.greeks && spot > 0
+          ? { ...raw.greeks, rho: bsRho(spot, strikes[0], raw.greeks.iv, (expiryTs - now / 1000) / (365 * 86400), raw.isCall) }
+          : null;
+
       normalized.push({
         asset,
         structure:
@@ -129,13 +162,17 @@ export async function getMarketSnapshot(): Promise<MarketSnapshot> {
               : "PUT"
             : `${raw.isCall ? "CALL" : "PUT"} ${STRUCTURE_BY_LEGS[strikes.length] ?? "MULTI"}`,
         isCall: raw.isCall,
-        takerIsLong: raw.isLong,
+        // raw.isLong is the MAKER's side (verified empirically on a mainnet
+        // fork: filling an isLong=true order pays the taker premium — the
+        // maker is buying). The taker is long only when the maker sells.
+        takerIsLong: !raw.isLong,
         strike: strikes[0],
         strikes,
-        expiryTs: Number(o.order.expiry),
+        expiryTs,
         collateralUsd,
         maker: o.makerAddress,
-        greeks: raw.greeks ?? null,
+        greeks,
+        pricePerContractUsd: (Number(o.order.price) / 1e8) * tokenUsd(token.symbol),
       });
     }
 
@@ -148,36 +185,67 @@ export async function getMarketSnapshot(): Promise<MarketSnapshot> {
       normalized.push(...buildModelBook(symbol, market.prices[symbol], nowSec));
     }
 
+    const assetsBefore = Object.fromEntries(
+      ALL_ASSETS.map((symbol) => [
+        symbol,
+        computeAssetSnapshot(symbol, market.prices[symbol] ?? 0, normalized, nowSec),
+      ]),
+    ) as Record<Asset, AssetSnapshot>;
+
     const snapshot: MarketSnapshot = {
       ts: now,
       prices,
       ticker: ALL_ASSETS
         .map((symbol) => ({ symbol, price: market.prices[symbol] }))
         .filter((t) => Number.isFinite(t.price) && t.price > 0),
-      assets: Object.fromEntries(
-        ALL_ASSETS.map((symbol) => [
-          symbol,
-          computeAssetSnapshot(symbol, market.prices[symbol] ?? 0, normalized, nowSec),
-        ]),
-      ) as Record<Asset, AssetSnapshot>,
+      assets: assetsBefore,
       feed: normalized
         .filter((o) => o.expiryTs > nowSec)
         .sort((a, b) => a.expiryTs - b.expiryTs)
         .slice(0, 200)
-        .map((o) => ({
-          asset: o.asset,
-          structure: o.structure,
-          isCall: o.isCall,
-          takerIsLong: o.takerIsLong,
-          strike: o.strike,
-          strikes: o.strikes,
-          expiryTs: o.expiryTs,
-          collateralUsd: o.collateralUsd,
-          iv: o.greeks?.iv ?? null,
-          delta: o.greeks?.delta ?? null,
-          gamma: o.greeks?.gamma ?? null,
-          maker: o.maker,
-        })),
+        .map((o) => {
+          const before = assetsBefore[o.asset];
+          // Precomputed here (deterministic, free — lib/engine.ts) so a click
+          // in the UI reveals it instantly with no round trip: "if this
+          // order's full listed size gets bought, how does market-structure
+          // risk move." Same what-if math as the trade-quote impact block.
+          let impact: FeedRow["impact"] = null;
+          if (o.greeks && o.collateralUsd > 0) {
+            const after = computeAssetSnapshot(
+              o.asset,
+              market.prices[o.asset] ?? 0,
+              [...normalized, { ...o, takerIsLong: true }],
+              nowSec,
+            );
+            impact = {
+              scoreBefore: before.score,
+              scoreAfter: after.score,
+              netGexBefore: before.netGexUsd,
+              netGexAfter: after.netGexUsd,
+              regimeBefore: before.regime,
+              regimeAfter: after.regime,
+            };
+          }
+          return {
+            asset: o.asset,
+            structure: o.structure,
+            isCall: o.isCall,
+            takerIsLong: o.takerIsLong,
+            strike: o.strike,
+            strikes: o.strikes,
+            expiryTs: o.expiryTs,
+            collateralUsd: o.collateralUsd,
+            iv: o.greeks?.iv ?? null,
+            delta: o.greeks?.delta ?? null,
+            gamma: o.greeks?.gamma ?? null,
+            theta: o.greeks?.theta ?? null,
+            vega: o.greeks?.vega ?? null,
+            rho: o.greeks?.rho ?? null,
+            pricePerContractUsd: o.pricePerContractUsd,
+            maker: o.maker,
+            impact,
+          };
+        }),
       book: {
         totalOrders: orders.length,
         withGreeks: orders.filter((o) => o.rawApiData?.greeks).length,
@@ -187,6 +255,7 @@ export async function getMarketSnapshot(): Promise<MarketSnapshot> {
 
     cached = snapshot;
     cachedAt = Date.now();
+    lastNormalized = normalized;
     return snapshot;
   })().finally(() => {
     inflight = null;

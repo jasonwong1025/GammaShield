@@ -1,21 +1,23 @@
 "use client";
 
+import { WalletConnect } from "./WalletConnect";
+
 export type NavTab = "dashboard" | "copilot" | "hedge";
 
 type Props = {
-  activeTab: NavTab;
-  onTabChange: (tab: NavTab) => void;
+  activeTab?: NavTab;
+  onTabChange?: (tab: NavTab) => void;
   hasHighRiskAlert?: boolean;
 };
 
-export function TopBar({ activeTab, onTabChange, hasHighRiskAlert }: Props) {
+export function TopBar({ activeTab = "dashboard", onTabChange, hasHighRiskAlert }: Props) {
   return (
     <div className="shrink-0">
-      <header className="flex items-center gap-6 px-6 h-16 border-b border-slate-100 bg-white/90 backdrop-blur-md">
+      <header className="flex items-center gap-6 px-5 h-16 border-b border-edge bg-bg/80 backdrop-blur">
         {/* Logo */}
         <div
           className="flex items-center gap-3 cursor-pointer"
-          onClick={() => onTabChange("dashboard")}
+          onClick={() => onTabChange?.("dashboard")}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
@@ -29,59 +31,54 @@ export function TopBar({ activeTab, onTabChange, hasHighRiskAlert }: Props) {
         <nav className="hidden md:flex items-center gap-1.5 ml-6 text-[13px]" aria-label="Sections">
           <button
             type="button"
-            onClick={() => onTabChange("dashboard")}
-            className={`px-3.5 py-1.5 rounded-xl transition font-medium ${
+            onClick={() => onTabChange?.("dashboard")}
+            className={`px-3 py-1.5 rounded-lg transition font-medium ${
               activeTab === "dashboard"
-                ? "bg-blue/10 text-blue font-semibold"
-                : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                ? "bg-bluesoft text-blue font-semibold shadow-xs"
+                : "text-muted hover:text-fg hover:bg-panel2"
             }`}
           >
-            Analytics & GEX
+            Dashboard
           </button>
 
           <button
             type="button"
-            onClick={() => onTabChange("copilot")}
-            className={`px-3.5 py-1.5 rounded-xl transition font-medium flex items-center gap-2 ${
+            onClick={() => onTabChange?.("copilot")}
+            className={`px-3 py-1.5 rounded-lg transition font-medium flex items-center gap-1.5 ${
               activeTab === "copilot"
-                ? "bg-blue/10 text-blue font-semibold"
-                : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                ? "bg-bluesoft text-blue font-semibold shadow-xs"
+                : "text-muted hover:text-fg hover:bg-panel2"
             }`}
           >
-            <span>Gonka Copilot</span>
-            <span className="size-1.5 rounded-full bg-blue animate-pulse" />
+            <span>🤖 Gonka Copilot</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded bg-blue/15 text-blue font-mono uppercase">
+              AI
+            </span>
           </button>
 
           <button
             type="button"
-            onClick={() => onTabChange("hedge")}
-            className={`px-3.5 py-1.5 rounded-xl transition font-medium flex items-center gap-2 ${
+            onClick={() => onTabChange?.("hedge")}
+            className={`px-3 py-1.5 rounded-lg transition font-medium flex items-center gap-1.5 relative ${
               activeTab === "hedge"
-                ? "bg-blue/10 text-blue font-semibold"
-                : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                ? "bg-bluesoft text-blue font-semibold shadow-xs"
+                : "text-muted hover:text-fg hover:bg-panel2"
             }`}
           >
-            <span>Autonomous Hedge</span>
-            {hasHighRiskAlert && (
-              <span className="size-2 rounded-full bg-rose-500 animate-ping" title="Danger Zone: High Fragility" />
+            <span>🛡️ Autonomous Hedge</span>
+            {hasHighRiskAlert ? (
+              <span className="flex size-2 rounded-full bg-crit animate-ping" title="Danger Zone: Risk > 75%" />
+            ) : (
+              <span className="text-[10px] px-1.5 py-0.2 rounded bg-calm/15 text-calm font-mono uppercase">
+                Base
+              </span>
             )}
           </button>
         </nav>
 
-        {/* Right side status & action */}
+        {/* Right side WalletConnect and actions */}
         <div className="ml-auto flex items-center gap-3">
-          <div className="hidden sm:flex items-center gap-2 px-3 py-1 rounded-full bg-slate-50 border border-slate-200/60 text-[12px] text-slate-500 font-medium">
-            <span className="size-2 rounded-full bg-emerald-500" />
-            <span>Base Mainnet</span>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => onTabChange("hedge")}
-            className="h-9 px-4 rounded-xl bg-blue text-white text-[13px] font-semibold hover:brightness-110 active:scale-[0.98] transition shadow-xs"
-          >
-            1-Click Hedge
-          </button>
+          <WalletConnect />
         </div>
       </header>
     </div>
