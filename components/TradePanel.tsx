@@ -20,6 +20,7 @@ import type { ShadowQuote } from "@/lib/shadow";
 import { fmtExpiryDate, fmtIv, fmtStrike, fmtUsd, riskColor } from "@/lib/format";
 import {
   getActiveProvider,
+  BASE_CHAIN,
   BASE_SEPOLIA_CHAIN,
   switchToBase,
   switchToBaseSepolia,
@@ -56,6 +57,9 @@ async function connectWallet() {
   const from = accounts[0];
   if (!from) throw new Error("no account connected");
   await switchToBase(provider);
+  if (await provider.request({ method: "eth_chainId" }) !== BASE_CHAIN.chainId) {
+    throw new Error("switch your wallet to Base mainnet to continue");
+  }
   return { provider, from };
 }
 
