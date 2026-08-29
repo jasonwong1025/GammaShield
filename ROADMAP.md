@@ -42,7 +42,7 @@ GammaShield is a **Real-Time Crypto Options Market Fragility Engine & Autonomous
   * `Base URL`: `https://api.gonkarouter.io/v1`
   * `Auth Header`: `Authorization: Bearer sk-...` or `x-api-key: sk-...`
 * **Base Mainnet RPC**: Create a dedicated Base Mainnet HTTP/WS endpoint via Alchemy/Infura or use default public endpoints (`https://mainnet.base.org`).
-* **Burner Wallet**: Setup a test wallet funded with **~2 USDC** + **~$0.50 worth of ETH** (for Base gas fees).
+* **User wallet**: Fund the wallet that will review and sign the trade with the selected collateral token plus Base ETH for gas. GammaShield never stores a trading private key.
 
 #### 2. Gonka 30-Second Smoke Test
 Verify endpoint connectivity using `DeepSeek-V4-Flash`:
@@ -120,33 +120,7 @@ export async function analyzeMarketRumor(headline: string, currentGexScore: numb
 
 ### Phase 4: Thetanuts V4 SDK Live On-Chain Hedging (Days 3–4)
 
-Connect the AI decision engine to Thetanuts V4 smart contracts on Base Mainnet:
-
-```typescript
-import { ethers } from "ethers";
-import { ThetanutsClient } from "@thetanuts-finance/thetanuts-client";
-
-export async function executeLiveHedge(strikePrice: number, amountUSDC: number) {
-  const provider = new ethers.JsonRpcProvider(process.env.BASE_RPC_URL);
-  const signer = new ethers.Wallet(process.env.BURNER_PRIVATE_KEY!, provider);
-  
-  const client = new ThetanutsClient({ chainId: 8453, provider, signer }); // Base Mainnet (8453)
-  
-  console.log(`🤖 Agent executing live hedge: Buying Put option on Base Mainnet...`);
-
-  // Execute 1 USDC trade against OptionBook
-  const tx = await client.api.createMarketOrder({
-    market: "ETH-USDC",
-    side: "BUY",
-    optionType: "PUT",
-    amount: amountUSDC,
-  });
-
-  await tx.wait();
-  console.log(`✅ On-Chain Hedge Confirmed: https://basescan.org/tx/${tx.hash}`);
-  return tx.hash;
-}
-```
+AI can recommend a hedge, but the trade panel refreshes the listed order, preflights it, and asks the user wallet to sign. No server-side signer is used.
 
 ---
 
@@ -158,7 +132,7 @@ export async function executeLiveHedge(strikePrice: number, amountUSDC: number) 
   * Calculated Truth Score (0–100%)
   * AI Reasoning Trace
   * Gonka Request ID (Mandatory for Gonka track)
-* **Autonomous Execution Terminal**: Real-time console showing the AI triggering the Thetanuts SDK with a clickable Basescan TxHash link.
+* **Hedge review**: AI recommendation followed by a user-reviewed, user-signed Thetanuts trade with a clickable Basescan TxHash link.
 
 #### 2. Gonka & Thetanuts Best Practices Checklist
 * [x] Set `max_tokens >= 1024` for reasoning models.
@@ -192,11 +166,11 @@ export async function executeLiveHedge(strikePrice: number, amountUSDC: number) 
 | **4. Market Fragility Gauge & Factor Breakdown** | Phase 5 | **✅ Completed** | Implemented in `components/ScorePanel.tsx`. Circular SVG meter, 0-100 score, regime verdicts (dampening / amplifying), factor progress bars, net GEX, and flip level. |
 | **5. Interactive Whale Scenario Simulator** | Phase 2/5 | **✅ Completed** | Implemented in `lib/engine.ts` (`simulateWhale`) & `components/WhaleSim.tsx`. Square-root market impact model and dealer hedge feedback loop. |
 | **6. GEX & Depth Visualizers** | Phase 5 | **✅ Completed** | Implemented in `components/GexChart.tsx`, `components/Heatmap.tsx`, `components/PriceChart.tsx`, `components/BookFeed.tsx`. |
-| **7. Environment & Config Setup** | Phase 1 | **✅ Completed** | `.env` and `.env.example` created with `GONKA_API_KEY`, `GONKA_BASE_URL`, `BASE_RPC_URL`, `THETANUTS_RPC_URL`, and `BURNER_PRIVATE_KEY` configuration. |
-| **8. Thetanuts V4 SDK Live On-Chain Hedging** | Phase 4 | **✅ Completed** | Implemented in `lib/hedge.ts` & `app/api/hedge/route.ts`. Connects to Thetanuts OptionBook on Base Mainnet (Chain ID 8453), previews order fills with `previewFillOrder`, enforces `ensureAllowance`, and executes live ~1 USDC protective Long Put orders. |
+| **7. Environment & Config Setup** | Phase 1 | **✅ Completed** | `.env` and `.env.example` configure GonkaRouter and Base RPC endpoints; trading keys remain in the user wallet. |
+| **8. Thetanuts V4 SDK Live On-Chain Hedging** | Phase 4 | **✅ Completed** | The trade panel uses SDK-generated calldata for a fresh, preflighted, user-signed Base-mainnet OptionBook fill. |
 | **9. GonkaRouter Multi-Model Verification Layer** | Phase 3 | **✅ Completed** | Implemented in `lib/gonka.ts` & `app/api/factcheck/route.ts` & `app/api/whatif/route.ts`. Native fetch client, `MiniMaxAI/MiniMax-M2.7` primary reasoning model with multi-model fallback, 429 exponential backoff, Truth Score (0–100%) computation, and Gonka Request ID output. |
 | **10. Gonka AI Fact-Checker UI Box** | Phase 5 | **✅ Completed** | Implemented in `components/FactChecker.tsx` and integrated into `CopilotView.tsx` / `Dashboard.tsx`. Live rumor verification, Truth Score meter, urgency badge, quantitative reasoning trace, and Gonka Request ID display with one-click copy. |
-| **11. Autonomous Execution Terminal UI** | Phase 5 | **✅ Completed** | Implemented in `components/ExecutionTerminal.tsx` and `components/HedgeView.tsx`. Real-time console interface showcasing automated AI-to-onchain execution, 1-click hedge trigger, and clickable Basescan TxHash link. |
+| **11. Hedge review UI** | Phase 5 | **✅ Completed** | `components/ExecutionTerminal.tsx` and `components/HedgeView.tsx` route AI recommendations to the user-signed trade panel. |
 | **12. Gonka Smoke Test Script** | Phase 1 | **✅ Completed** | Implemented in `scripts/smoke-test.mjs`. 30-second automated API connectivity and pong verification against `https://api.gonkarouter.io/v1`. |
 | **13. "What-If" Conversational Copilot** | Phase 5 | **✅ Completed** | Implemented in `components/WhatIfChat.tsx`. Natural language trade scenario questioning powered by Gonka + deterministic `simulateWhale` feedback. |
 | **14. Tabbed Multi-View UX Navigation** | Phase 5 | **✅ Completed** | Implemented in `components/TopBar.tsx`, `components/Dashboard.tsx`, `components/CopilotView.tsx`, and `components/HedgeView.tsx`. |
@@ -207,11 +181,11 @@ export async function executeLiveHedge(strikePrice: number, amountUSDC: number) 
 
 - [x] **Compile Technical Roadmap & Architecture Plan** (`ROADMAP.md`)
 - [x] **Perform Codebase Audit & Module Validation**
-- [x] **Create `.env` & `.env.example`** with GonkaRouter API Key, Base RPC, and Burner Private Key variables
+- [x] **Create `.env` & `.env.example`** with GonkaRouter API Key and Base RPC variables
 - [x] **Build GonkaRouter API Service** (`lib/gonka.ts` & `/api/factcheck/route.ts`)
 - [x] **Build Frontend Gonka Fact-Checker Box Component** (`components/FactChecker.tsx`)
 - [x] **Build "What-If" Conversational Scenario Copilot** (`components/WhatIfChat.tsx` & `/api/whatif/route.ts`)
-- [x] **Build Live Hedging Execution Service** (`lib/hedge.ts` & `/api/hedge/route.ts`)
+- [x] **Build user-signed live hedge flow** (`components/TradePanel.tsx` & `/api/quote/route.ts`)
 - [x] **Build Autonomous Execution Terminal Component** (`components/ExecutionTerminal.tsx`)
 - [x] **Build Multi-View Tab Navigation** (`components/TopBar.tsx`, `components/CopilotView.tsx`, `components/HedgeView.tsx`, `components/Dashboard.tsx`)
 - [x] **Create Gonka Smoke Test Script** (`scripts/smoke-test.mjs`)

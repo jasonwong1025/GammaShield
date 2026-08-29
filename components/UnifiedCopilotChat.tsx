@@ -20,8 +20,8 @@ type ChatMessage = {
   text: string;
   rumorData?: FactCheckResult;
   whatIfData?: WhatIfResult;
-  gonkaRequestId?: string;
-  modelUsed?: string;
+  gonkaRequestId?: string | null;
+  modelUsed?: string | null;
   timestamp: number;
 };
 
@@ -359,6 +359,7 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
                     </button>
                   )}
                 </div>
+                {m.whatIfData.source === "deterministic" && <p className="text-[10px] font-mono text-faint">Deterministic market-impact calculation · no model call</p>}
               </div>
             )}
 

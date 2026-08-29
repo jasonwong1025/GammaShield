@@ -38,6 +38,7 @@ export type FactCheckResult = {
 export type GonkaResponse = {
   success: boolean;
   data: FactCheckResult;
+  source: "gonka";
   gonkaRequestId: string;
   modelUsed: string;
   timestamp: number;
@@ -84,13 +85,12 @@ function extractJson<T>(raw: string): T {
  * Analyze a market rumor or viral news headline against real-time options GEX positioning.
  */
 export async function analyzeMarketRumor(params: FactCheckRequest): Promise<GonkaResponse> {
-  const apiKey = process.env.GONKA_API_KEY;
+  const apiKey = process.env.GONKAROUTER_API_KEY || process.env.GONKA_API_KEY;
   if (!apiKey || apiKey === "sk-your-gonkarouter-api-key-here") {
-    // Provide a deterministic mock response if API key is not yet configured by user
-    return generateFallbackAnalysis(params, "mock-demo-req-id");
+    throw new Error("GonkaRouter API key is not configured");
   }
 
-  const baseUrl = (process.env.GONKA_BASE_URL || DEFAULT_BASE_URL).replace(/\/$/, "");
+  const baseUrl = (process.env.GONKAROUTER_BASE_URL || process.env.GONKA_BASE_URL || DEFAULT_BASE_URL).replace(/\/$/, "");
   const selectedModel = params.model || GONKA_MODELS.PRIMARY;
 
   const systemPrompt = `You are a Senior Quantitative Crypto Derivatives Risk Verifier and Autonomous Hedging Agent for GammaShield on Base Mainnet.
@@ -157,69 +157,27 @@ Headline to Fact-Check: "${params.headline}"`;
     return {
       success: true,
       data: parsedData,
+      source: "gonka",
       gonkaRequestId: json.id || `req_${Date.now().toString(36)}`,
       modelUsed: selectedModel,
       timestamp: Date.now(),
     };
   } catch (err) {
     console.error("[GonkaRouter] Inference error:", err);
-    // If upstream fails (e.g. invalid key or network outage), return fallback analysis with error context
-    return generateFallbackAnalysis(params, `error-fallback-${Date.now().toString(36)}`, err instanceof Error ? err.message : "Inference error");
+    throw new Error(err instanceof Error ? err.message : "GonkaRouter inference failed");
   }
-}
-
-/**
- * Deterministic fallback generator for demo / offline simulation
- */
-function generateFallbackAnalysis(params: FactCheckRequest, requestId: string, errorNote?: string): GonkaResponse {
-  const isHighRisk = params.gexScore > 70;
-  const isPutTrigger = params.headline.toLowerCase().includes("dump") ||
-                       params.headline.toLowerCase().includes("crash") ||
-                       params.headline.toLowerCase().includes("hack") ||
-                       params.headline.toLowerCase().includes("sec") ||
-                       params.headline.toLowerCase().includes("whale") ||
-                       isHighRisk;
-
-  const defaultStrike = params.flipStrike || Math.round(params.spotPrice * 0.95);
-
-  const mockResult: FactCheckResult = {
-    truthScore: isHighRisk ? 82 : 45,
-    urgency: isHighRisk ? "HIGH" : "MEDIUM",
-    verdict: isHighRisk
-      ? `High market fragility (${params.gexScore}/100). Rumor can trigger cascading dealer-hedging feedback.`
-      : `Moderate volatility risk. Current dealer gamma provides partial dampening.`,
-    reasoning: `Analysis executed via GonkaRouter multi-model quant layer. The headline "${params.headline}" was evaluated against ${params.asset} spot ($${params.spotPrice}) and current market structure. ${
-      params.regime === "amplifying"
-        ? "Dealers are currently net short gamma; any spot decline forces programmatic selling, exacerbating downside momentum."
-        : "Dealer positioning remains in dampening territory, but localized tail risk exists around out-of-the-money put strikes."
-    }${errorNote ? ` (Note: ${errorNote})` : ""}`,
-    marketRegimeAssessment: params.regime === "amplifying"
-      ? "Amplifying Regime: Negative GEX accelerates price slippage."
-      : "Dampening Regime: Positive GEX buffers spot volatility.",
-    shouldHedge: isPutTrigger,
-    strikeSuggestion: defaultStrike,
-    actionRationale: `Protective Put at $${defaultStrike.toLocaleString()} locks in floor liquidity before dealer flip levels are breached.`,
-  };
-
-  return {
-    success: true,
-    data: mockResult,
-    gonkaRequestId: requestId,
-    modelUsed: params.model || GONKA_MODELS.PRIMARY,
-    timestamp: Date.now(),
-  };
 }
 
 /**
  * 30-Second Smoke Test against GonkaRouter API
  */
 export async function smokeTestGonka(apiKey?: string): Promise<{ ok: boolean; message: string; id?: string }> {
-  const key = apiKey || process.env.GONKA_API_KEY;
+  const key = apiKey || process.env.GONKAROUTER_API_KEY || process.env.GONKA_API_KEY;
   if (!key || key === "sk-your-gonkarouter-api-key-here") {
     return { ok: false, message: "GONKA_API_KEY not configured in .env" };
   }
 
-  const baseUrl = (process.env.GONKA_BASE_URL || DEFAULT_BASE_URL).replace(/\/$/, "");
+  const baseUrl = (process.env.GONKAROUTER_BASE_URL || process.env.GONKA_BASE_URL || DEFAULT_BASE_URL).replace(/\/$/, "");
 
   try {
     const res = await fetch(`${baseUrl}/chat/completions`, {
@@ -270,16 +228,17 @@ export type WhatIfResult = {
   amplification: number;
   conversationalAnswer: string;
   strategicAdvice: string;
-  gonkaRequestId: string;
-  modelUsed: string;
+  source: "gonka" | "deterministic";
+  gonkaRequestId: string | null;
+  modelUsed: string | null;
 };
 
 /**
  * Natural language "What-If" Scenario Simulator for trade impact & dealer feedback.
  */
 export async function simulateWhatIfQuery(params: WhatIfRequest): Promise<WhatIfResult> {
-  const apiKey = process.env.GONKA_API_KEY;
-  const baseUrl = (process.env.GONKA_BASE_URL || DEFAULT_BASE_URL).replace(/\/$/, "");
+  const apiKey = process.env.GONKAROUTER_API_KEY || process.env.GONKA_API_KEY;
+  const baseUrl = (process.env.GONKAROUTER_BASE_URL || process.env.GONKA_BASE_URL || DEFAULT_BASE_URL).replace(/\/$/, "");
   const selectedModel = params.model || GONKA_MODELS.FLASH;
 
   // 1. Coarse heuristic extraction as fallback
@@ -363,6 +322,7 @@ JSON schema:
           hedgeFlowUsd,
           totalMovePct,
           amplification,
+          source: "gonka",
           conversationalAnswer: parsed.conversationalAnswer || `A $${parsedSizeM}M ${parsedAction.toLowerCase()} in ${params.asset} will trigger an estimated ${totalMovePct.toFixed(2)}% total price move.`,
           strategicAdvice: parsed.strategicAdvice || "Consider using a TWAP algorithm or staging entries to minimize adverse dealer hedging impact.",
           gonkaRequestId: json.id || `req_whatif_${Date.now().toString(36)}`,
@@ -374,7 +334,7 @@ JSON schema:
     }
   }
 
-  // Fallback if offline
+  // The math remains useful without a model, but must not claim to be AI output.
   return {
     parsedAction,
     parsedSizeM,
@@ -382,11 +342,12 @@ JSON schema:
     hedgeFlowUsd,
     totalMovePct,
     amplification,
+    source: "deterministic",
     conversationalAnswer: `A $${parsedSizeM}M ${parsedAction.toLowerCase()} order in ${params.asset} would directly move the market by ${initialMovePct.toFixed(2)}%. Because dealers are in ${params.regime} mode, their delta-hedging will ${sameDirection ? "chase the move with an extra $" + Math.abs(Math.round(hedgeFlowUsd)).toLocaleString() : "absorb the move"}, resulting in an estimated net ${totalMovePct.toFixed(2)}% price change (${amplification.toFixed(2)}x amplification).`,
     strategicAdvice: amplification > 1.1
       ? `Due to elevated dealer fragility (Risk Score: ${params.score}/100), execute in smaller algorithmic slices or hedge downside tail risk.`
       : `Market depth is currently stable. Direct market execution has low secondary feedback.`,
-    gonkaRequestId: `whatif_local_${Date.now().toString(36)}`,
-    modelUsed: selectedModel,
+    gonkaRequestId: null,
+    modelUsed: null,
   };
 }

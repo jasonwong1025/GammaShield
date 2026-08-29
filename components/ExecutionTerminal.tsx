@@ -11,7 +11,7 @@ export function ExecutionTerminal({ snap, onOpenDashboard }: { snap: AssetSnapsh
         <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-blue">Autonomous hedge recommendation</p>
         <h2 className="mt-1 text-[16px] font-bold text-fg">Configure the hedge in one trade panel</h2>
         <p className="mt-1 text-[12px] leading-relaxed text-muted">
-          {snap.asset} risk is {snap.score}/100 in the {snap.regime} regime. Select a put, size, expiry, and either Base mainnet or Sepolia shadow execution from the dashboard.
+          {snap.asset} risk is {snap.score}/100 in the {snap.regime} regime. AI can recommend a hedge, but it never receives a private key: you review and sign a Base-mainnet or Sepolia-shadow fill in the dashboard.
         </p>
       </div>
       <button type="button" onClick={onOpenDashboard} className="h-10 rounded-lg bg-blue text-[13px] font-semibold text-white hover:brightness-110">

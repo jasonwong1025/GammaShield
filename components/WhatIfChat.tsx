@@ -201,12 +201,9 @@ export function WhatIfChat({ snap, onNavigateToHedge }: Props) {
                   )}
                 </div>
 
-                {m.data.gonkaRequestId && (
-                  <div className="text-[10px] font-mono text-faint flex items-center justify-between pt-0.5">
-                    <span>Gonka Trace ID: {m.data.gonkaRequestId}</span>
-                    <span>Model: {m.data.modelUsed}</span>
-                  </div>
-                )}
+                <div className="text-[10px] font-mono text-faint flex items-center justify-between pt-0.5">
+                  {m.data.source === "gonka" ? <><span>Gonka Trace ID: {m.data.gonkaRequestId}</span><span>Model: {m.data.modelUsed}</span></> : <span>Deterministic market-impact calculation · no model call</span>}
+                </div>
               </div>
             )}
           </div>
