@@ -7,6 +7,7 @@ export async function GET(request: Request) {
   const side = params.get("side") as TradeSide | null;
   const contracts = Number(params.get("contracts") ?? "0");
   const period = Number(params.get("period") ?? "7") as TradePeriod;
+  const fresh = params.get("fresh") === "1";
 
   if (!asset || !isOptionsAsset(asset)) {
     return Response.json({ error: "asset must have a live options book" }, { status: 400 });
@@ -22,7 +23,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    const quote = await getTradeQuote(asset, side, contracts, period);
+    const quote = await getTradeQuote(asset, side, contracts, period, fresh);
     return Response.json(quote, { headers: { "cache-control": "no-store" } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "quote failed";

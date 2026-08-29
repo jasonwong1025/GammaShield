@@ -74,8 +74,8 @@ const PRICING_CACHE_MS = 15_000;
 let ordersCache: { at: number; orders: SdkOrder[] } | null = null;
 const pricingCache = new Map<string, { at: number; rows: MmRow[] }>();
 
-async function getBookOrders(c: ThetanutsClient): Promise<SdkOrder[]> {
-  if (ordersCache && Date.now() - ordersCache.at < ORDERS_CACHE_MS) return ordersCache.orders;
+async function getBookOrders(c: ThetanutsClient, fresh = false): Promise<SdkOrder[]> {
+  if (!fresh && ordersCache && Date.now() - ordersCache.at < ORDERS_CACHE_MS) return ordersCache.orders;
   const orders = await c.api.fetchOrders();
   ordersCache = { at: Date.now(), orders };
   return orders;
@@ -94,6 +94,7 @@ export async function getTradeQuote(
   side: TradeSide,
   contracts: number,
   period: TradePeriod,
+  fresh = false,
 ): Promise<TradeQuote> {
   if (!isOptionsAsset(asset)) {
     throw new Error(`${asset} has no live Thetanuts market to trade`);
@@ -101,7 +102,7 @@ export async function getTradeQuote(
 
   const c = getClient();
   const [orders, market, snapshot, pricing] = await Promise.all([
-    getBookOrders(c),
+    getBookOrders(c, fresh),
     c.api.getMarketData(),
     getMarketSnapshot(), // keeps getLastNormalizedOrders() fresh for impact math
     getMmPricing(c, asset),

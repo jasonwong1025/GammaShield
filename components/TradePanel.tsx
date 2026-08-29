@@ -32,7 +32,7 @@ const QUOTE_REFRESH_MS = 15_000;
 
 type TxPhase =
   | { step: "idle" }
-  | { step: "connecting" | "approving" | "filling" }
+  | { step: "connecting" | "preparing" | "approving" | "preflighting" | "filling" }
   | { step: "done"; hash: string }
   | { step: "error"; message: string };
 
@@ -111,6 +111,22 @@ async function needsApproval(
   } catch {
     return true; // can't verify — approve to be safe
   }
+}
+
+/**
+ * Simulate the exact user-signed fill after its approval is confirmed. This
+ * catches stale/filled orders and insufficient balance without broadcasting a
+ * transaction. The wallet remains the RPC authority for the user's account.
+ */
+async function preflightTx(
+  provider: Eip1193Provider,
+  from: string,
+  tx: { to: string; data: string },
+) {
+  await provider.request({
+    method: "eth_call",
+    params: [{ from, to: tx.to, data: tx.data }, "pending"],
+  });
 }
 
 async function rfqApi<T>(body: Record<string, unknown>): Promise<T> {
@@ -339,16 +355,36 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
   };
 
   const buy = async () => {
-    if (!quote?.txs) return;
+    if (!validAmount) return;
     try {
       setTx({ step: "connecting" });
       const { provider, from } = await connectWallet();
-      if (await needsApproval(provider, from, quote.txs.approve, quote.txs.fill.to)) {
-        setTx({ step: "approving" });
-        await sendTx(provider, from, quote.txs.approve);
+      setTx({ step: "preparing" });
+      const params = new URLSearchParams({
+        asset,
+        side,
+        contracts: amountStr,
+        period: String(period),
+        fresh: "1",
+      });
+      const res = await fetch(`/api/quote?${params}`, { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? `quote ${res.status}`);
+      const prepared = data as TradeQuote;
+      if (prepared.source !== "book" || !prepared.txs) {
+        throw new Error("No fresh listed OptionBook order can fill this trade. Choose an instant-fill tenor or request an RFQ.");
       }
+      if (await needsApproval(provider, from, prepared.txs.approve, prepared.txs.fill.to)) {
+        setTx({ step: "approving" });
+        await sendTx(provider, from, prepared.txs.approve);
+        if (await needsApproval(provider, from, prepared.txs.approve, prepared.txs.fill.to)) {
+          throw new Error("Collateral approval is still insufficient; retry the approval before filling.");
+        }
+      }
+      setTx({ step: "preflighting" });
+      await preflightTx(provider, from, prepared.txs.fill);
       setTx({ step: "filling" });
-      const fillHash = await sendTx(provider, from, quote.txs.fill);
+      const fillHash = await sendTx(provider, from, prepared.txs.fill);
       setTx({ step: "done", hash: fillHash });
     } catch (e) {
       const message =
@@ -512,7 +548,12 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
   const impact = configured && quoteInSync ? quote.impact : null;
   const currentTradeKey = quote ? `${asset}:${side}:${quote.strike}:${quote.expiryTs}:${quote.contracts}` : null;
   const aiRiskCurrent = aiRisk && aiRiskKey === currentTradeKey ? aiRisk : null;
-  const busy = tx.step === "connecting" || tx.step === "approving" || tx.step === "filling";
+  const busy =
+    tx.step === "connecting" ||
+    tx.step === "preparing" ||
+    tx.step === "approving" ||
+    tx.step === "preflighting" ||
+    tx.step === "filling";
   const shadowBusy = shadowTx.step === "connecting" || shadowTx.step === "preparing" || shadowTx.step === "approving" || shadowTx.step === "filling";
 
   // Required collateral for this quote: the padded approve amount for a book
@@ -697,9 +738,13 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
         <p className="text-[12px] text-faint">{loading ? "Quoting the live book…" : ""}</p>
       )}
 
-      {executionMode === "shadow" && (
+      {executionMode === "shadow" ? (
         <p className="rounded-lg border border-blue/25 bg-bluesoft/30 p-2.5 text-[11px] leading-relaxed text-muted">
           Mirrors this live quote on Base Sepolia using Circle test USDC. Try 0.01 contracts for a small test; this is not a Thetanuts position.
+        </p>
+      ) : (
+        <p className="rounded-lg border border-warn/25 bg-panel2 p-2.5 text-[11px] leading-relaxed text-muted">
+          Base mainnet uses real funds. Before your wallet can send a fill, GammaShield refetches the listed OptionBook order and simulates the exact transaction against your account.
         </p>
       )}
 
@@ -891,8 +936,12 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
           {busy
             ? tx.step === "connecting"
               ? "Connecting wallet…"
+              : tx.step === "preparing"
+                ? "Refreshing listed order…"
               : tx.step === "approving"
                 ? `Approving ${displayToken(quote?.premiumToken ?? "")}…`
+                : tx.step === "preflighting"
+                  ? "Preflighting fill…"
                 : "Filling order…"
             : insufficientToken || insufficientGas
               ? "Insufficient balance"
