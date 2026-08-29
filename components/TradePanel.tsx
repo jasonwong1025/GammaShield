@@ -2,12 +2,18 @@
 
 // Buy a call/put from the live Thetanuts book. Quotes come from /api/quote
 // (server-side SDK); the wallet only signs the approve + fill transactions.
-// The amplification-impact readout appears once direction, amount, and
-// duration are all set — it shows how *this* trade would shift the market.
+// Duration is one of the three standard periods the SDK's tenor grid is
+// built around — 7/14/28 days — each resolved to its real, Friday-anchored
+// expiry. A period with a listed maker order fills instantly; otherwise it
+// trades for real through the Thetanuts RFQ auction (request → maker offers
+// → accept best). The amplification-impact readout appears once direction,
+// amount, and duration are all set.
 
 import { useEffect, useRef, useState } from "react";
 import type { Asset } from "@/lib/assets";
 import type { TradeQuote, TradeSide } from "@/lib/trade";
+import { TRADE_PERIODS, type TradePeriod } from "@/lib/tradePeriods";
+import type { RfqPrepared, RfqStatus } from "@/lib/rfq";
 import { fmtExpiryDate, fmtIv, fmtStrike, fmtUsd, riskColor } from "@/lib/format";
 import {
   getActiveProvider,
@@ -23,6 +29,72 @@ type TxPhase =
   | { step: "connecting" | "approving" | "filling" }
   | { step: "done"; hash: string }
   | { step: "error"; message: string };
+
+type RfqPhase =
+  | { step: "idle" }
+  | { step: "connecting" | "approving" | "requesting" }
+  | { step: "auction"; status: RfqStatus | null; deadline: number }
+  | { step: "accepting"; status: RfqStatus }
+  | { step: "done"; hash: string; optionAddress: string | null }
+  | { step: "error"; message: string };
+
+async function connectWallet() {
+  const provider = getActiveProvider();
+  if (!provider) throw new Error("No wallet detected — install MetaMask or Phantom.");
+  const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
+  const from = accounts[0];
+  if (!from) throw new Error("no account connected");
+  await switchToBase(provider);
+  return { provider, from };
+}
+
+async function sendTx(
+  provider: Eip1193Provider,
+  from: string,
+  tx: { to: string; data: string },
+): Promise<string> {
+  const hash = (await provider.request({
+    method: "eth_sendTransaction",
+    params: [{ from, to: tx.to, data: tx.data }],
+  })) as string;
+  await waitForReceipt(provider, hash);
+  return hash;
+}
+
+// Skip the approve popup when the token allowance already covers the pull —
+// fewer wallet prompts, and sidesteps MetaMask's spending-cap alert flow.
+async function needsApproval(
+  provider: Eip1193Provider,
+  owner: string,
+  approve: { to: string; data: string },
+  spender: string,
+): Promise<boolean> {
+  try {
+    const needed = BigInt("0x" + approve.data.slice(-64));
+    const data =
+      "0xdd62ed3e" + // allowance(address,address)
+      owner.slice(2).toLowerCase().padStart(64, "0") +
+      spender.slice(2).toLowerCase().padStart(64, "0");
+    const res = (await provider.request({
+      method: "eth_call",
+      params: [{ to: approve.to, data }, "latest"],
+    })) as string;
+    return BigInt(res) < needed;
+  } catch {
+    return true; // can't verify — approve to be safe
+  }
+}
+
+async function rfqApi<T>(body: Record<string, unknown>): Promise<T> {
+  const res = await fetch("/api/rfq", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? `rfq ${res.status}`);
+  return data as T;
+}
 
 async function waitForReceipt(provider: Eip1193Provider, hash: string) {
   for (let i = 0; i < 60; i++) {
@@ -48,16 +120,22 @@ function fmtDays(d: number) {
   return d < 1 ? `${Math.round(d * 24)}h` : `${Math.round(d)}d`;
 }
 
+function periodLabel(p: TradePeriod) {
+  return p === 7 ? "1 Week" : p === 14 ? "2 Weeks" : "4 Weeks";
+}
+
 export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
   const [side, setSide] = useState<TradeSide>("call");
   const [amountStr, setAmountStr] = useState("1");
-  const [days, setDays] = useState(7);
+  const [period, setPeriod] = useState<TradePeriod>(7);
   const [quote, setQuote] = useState<TradeQuote | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [tx, setTx] = useState<TxPhase>({ step: "idle" });
+  const [rfq, setRfq] = useState<RfqPhase>({ step: "idle" });
   const [mountedSec] = useState(() => Math.floor(Date.now() / 1000));
   const seq = useRef(0);
+  const rfqAddress = useRef<string | null>(null);
 
   const amount = Number(amountStr);
   const validAmount = Number.isFinite(amount) && amount > 0;
@@ -78,7 +156,7 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
       try {
         const contracts = validAmount ? amount : 0;
         const res = await fetch(
-          `/api/quote?asset=${asset}&side=${side}&contracts=${contracts}&days=${days}`,
+          `/api/quote?asset=${asset}&side=${side}&contracts=${contracts}&period=${period}`,
           { cache: "no-store" },
         );
         const data = await res.json();
@@ -100,35 +178,19 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
       clearTimeout(timer);
       clearInterval(refresh);
     };
-  }, [asset, side, amount, validAmount, days, live]);
+  }, [asset, side, amount, validAmount, period, live]);
 
   const buy = async () => {
     if (!quote?.txs) return;
-    const provider = getActiveProvider();
-    if (!provider) {
-      setTx({ step: "error", message: "No wallet detected — install MetaMask or Phantom." });
-      return;
-    }
     try {
       setTx({ step: "connecting" });
-      const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
-      const from = accounts[0];
-      if (!from) throw new Error("no account connected");
-      await switchToBase(provider);
-
-      setTx({ step: "approving" });
-      const approveHash = (await provider.request({
-        method: "eth_sendTransaction",
-        params: [{ from, to: quote.txs.approve.to, data: quote.txs.approve.data }],
-      })) as string;
-      await waitForReceipt(provider, approveHash);
-
+      const { provider, from } = await connectWallet();
+      if (await needsApproval(provider, from, quote.txs.approve, quote.txs.fill.to)) {
+        setTx({ step: "approving" });
+        await sendTx(provider, from, quote.txs.approve);
+      }
       setTx({ step: "filling" });
-      const fillHash = (await provider.request({
-        method: "eth_sendTransaction",
-        params: [{ from, to: quote.txs.fill.to, data: quote.txs.fill.data }],
-      })) as string;
-      await waitForReceipt(provider, fillHash);
+      const fillHash = await sendTx(provider, from, quote.txs.fill);
       setTx({ step: "done", hash: fillHash });
     } catch (e) {
       const message =
@@ -138,6 +200,100 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
             ? e.message
             : "transaction failed";
       setTx({ step: "error", message });
+    }
+  };
+
+  // Custom-expiry path: submit a sealed-bid RFQ, then poll for maker offers.
+  const requestRfq = async () => {
+    if (!validAmount) return;
+    try {
+      setRfq({ step: "connecting" });
+      const { provider, from } = await connectWallet();
+      rfqAddress.current = from;
+      const prepared = await rfqApi<RfqPrepared>({
+        action: "prepare",
+        address: from,
+        asset,
+        side,
+        contracts: amount,
+        period,
+      });
+      if (await needsApproval(provider, from, prepared.approve, prepared.tx.to)) {
+        setRfq({ step: "approving" });
+        await sendTx(provider, from, prepared.approve);
+      }
+      setRfq({ step: "requesting" });
+      await sendTx(provider, from, prepared.tx);
+      setRfq({ step: "auction", status: null, deadline: prepared.offerDeadlineTs });
+    } catch (e) {
+      const message =
+        (e as { code?: number })?.code === 4001
+          ? "Transaction rejected in wallet."
+          : e instanceof Error
+            ? e.message
+            : "RFQ request failed";
+      setRfq({ step: "error", message });
+    }
+  };
+
+  // Poll the auction for decrypted maker offers.
+  useEffect(() => {
+    if (rfq.step !== "auction" || !rfqAddress.current) return;
+    const address = rfqAddress.current;
+    let stale = false;
+    const poll = async () => {
+      try {
+        const { rfq: status } = await rfqApi<{ rfq: RfqStatus | null }>({
+          action: "status",
+          address,
+        });
+        if (stale || !status) return;
+        setRfq((cur) => (cur.step === "auction" ? { ...cur, status } : cur));
+      } catch {
+        /* transient poll failure — keep trying */
+      }
+    };
+    poll();
+    const timer = setInterval(poll, 5_000);
+    return () => {
+      stale = true;
+      clearInterval(timer);
+    };
+  }, [rfq.step]);
+
+  const acceptOffer = async () => {
+    if (rfq.step !== "auction" || !rfq.status?.best || !rfqAddress.current) return;
+    const status = rfq.status;
+    try {
+      setRfq({ step: "accepting", status });
+      const { provider, from } = await connectWallet();
+      const txs = await rfqApi<{ approve: { to: string; data: string }; settle: { to: string; data: string } }>({
+        action: "settle",
+        address: from,
+        id: status.id,
+        offeror: status.best!.offeror,
+      });
+      if (await needsApproval(provider, from, txs.approve, txs.settle.to)) {
+        await sendTx(provider, from, txs.approve);
+      }
+      const hash = await sendTx(provider, from, txs.settle);
+      let optionAddress: string | null = null;
+      try {
+        const { rfq: settled } = await rfqApi<{ rfq: RfqStatus | null }>({
+          action: "status",
+          address: from,
+        });
+        optionAddress = settled?.optionAddress ?? null;
+      } catch {}
+      setRfq({ step: "done", hash, optionAddress });
+    } catch (e) {
+      const message =
+        (e as { code?: number })?.code === 4001
+          ? "Transaction rejected in wallet."
+          : e instanceof Error
+            ? e.message
+            : "settle failed";
+      setRfq({ step: "error", message });
     }
   };
 
@@ -154,15 +310,14 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
   }
 
   const expiries = quote?.expiries ?? [];
-  // The slider is plain whole days (1–90) and reacts instantly; the quote
-  // catches up in the background so dragging never waits on the network.
+  const selectedEntry = expiries.find((e) => e.period === period) ?? null;
   const fillableExpiries = expiries.filter((e) => e.fillable);
-  const selFillable = fillableExpiries.some((e) => Math.abs(e.days - days) <= 0.55);
+  const selFillable = !!selectedEntry?.fillable;
   const nearestFillable = fillableExpiries.reduce<(typeof expiries)[number] | null>(
-    (best, e) => (!best || Math.abs(e.days - days) < Math.abs(best.days - days) ? e : best),
+    (best, e) => (!best || Math.abs(e.period - period) < Math.abs(best.period - period) ? e : best),
     null,
   );
-  const quoteInSync = !!quote && quote.requestedDays === days;
+  const quoteInSync = !!quote && quote.requestedPeriod === period;
   const configured = validAmount && !!quote && quote.contracts > 0;
   const impact = configured && quoteInSync ? quote.impact : null;
   const busy = tx.step === "connecting" || tx.step === "approving" || tx.step === "filling";
@@ -226,53 +381,46 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
         </div>
       </div>
 
-      {/* Duration — any whole day from 1 to 90 */}
+      {/* Duration — the SDK's own tenor grid: weekly / bi-weekly / 4-week */}
       <div>
         <div className="flex items-center justify-between text-[11px] text-muted mb-1.5">
-          <span>
-            Period: <span className="text-fg font-medium">{days} days</span>
-          </span>
+          <span>Period</span>
           <span>
             Expires{" "}
             <span className="text-fg">
               {quoteInSync && quote
                 ? fmtExpiryDate(quote.expiryTs)
-                : fmtExpiryDate(mountedSec + days * 86400)}
+                : selectedEntry
+                  ? fmtExpiryDate(selectedEntry.ts)
+                  : fmtExpiryDate(mountedSec + period * 86400)}
             </span>
           </span>
         </div>
-        <input
-          type="range"
-          min={1}
-          max={90}
-          step={1}
-          value={days}
-          onChange={(e) => setDays(Number(e.target.value))}
-          aria-label="Option duration in days"
-          className="trade-range"
-        />
-        <div className="flex items-center justify-between text-[10px] text-faint mt-1">
-          <span>1d</span>
-          <span>90d</span>
-        </div>
-        {fillableExpiries.length > 0 && (
-          <div className="flex items-center gap-1.5 flex-wrap mt-1.5 text-[10px] text-faint">
-            <span>Instant fill:</span>
-            {fillableExpiries.map((e) => (
+        <div className="grid grid-cols-3 gap-1 rounded-lg bg-panel2 p-1">
+          {TRADE_PERIODS.map((p) => {
+            const entry = expiries.find((e) => e.period === p);
+            return (
               <button
-                key={e.ts}
-                onClick={() => setDays(Math.round(e.days))}
-                className={`px-1.5 py-0.5 rounded-md border transition ${
-                  Math.abs(e.days - days) <= 0.55
-                    ? "border-blue bg-bluesoft text-fg"
-                    : "border-edge text-muted hover:text-fg"
+                key={p}
+                onClick={() => setPeriod(p)}
+                aria-pressed={period === p}
+                className={`h-11 rounded-md text-[12px] font-semibold transition flex flex-col items-center justify-center gap-0.5 ${
+                  period === p ? "bg-panel text-fg shadow-sm" : "text-muted hover:text-fg"
                 }`}
               >
-                {fmtDays(e.days)}
+                <span>{periodLabel(p)}</span>
+                {entry && (
+                  <span className="text-[10px] font-normal text-faint flex items-center gap-1">
+                    {entry.fillable && (
+                      <span className="size-1 rounded-full bg-calm inline-block" />
+                    )}
+                    {fmtDays(entry.days)}
+                  </span>
+                )}
               </button>
-            ))}
-          </div>
-        )}
+            );
+          })}
+        </div>
       </div>
 
       {/* Quote */}
@@ -347,13 +495,89 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
       )}
 
       {/* Action */}
-      {!selFillable && nearestFillable ? (
-        <button
-          onClick={() => setDays(Math.round(nearestFillable.days))}
-          className="h-10 rounded-lg border border-blue text-blue text-[13px] font-semibold hover:bg-bluesoft transition"
-        >
-          Jump to instant fill · {fmtDays(nearestFillable.days)}
-        </button>
+      {rfq.step === "connecting" ||
+      rfq.step === "approving" ||
+      rfq.step === "requesting" ||
+      rfq.step === "auction" ||
+      rfq.step === "accepting" ? (
+        <div className="rounded-lg border border-blue/40 bg-bluesoft/40 p-3 flex flex-col gap-2 text-[12px]">
+          <div className="flex items-center justify-between">
+            <span className="font-semibold text-fg">
+              {rfq.step === "connecting"
+                ? "Connecting wallet…"
+                : rfq.step === "approving"
+                  ? `Approving ${side === "put" ? "USDC" : asset === "ETH" ? "WETH" : "cbBTC"}…`
+                  : rfq.step === "requesting"
+                    ? "Submitting RFQ…"
+                    : rfq.step === "accepting"
+                      ? "Accepting best offer…"
+                      : "RFQ auction live"}
+            </span>
+            {rfq.step === "auction" && (
+              <button className="text-faint hover:text-fg" onClick={() => setRfq({ step: "idle" })}>
+                dismiss
+              </button>
+            )}
+          </div>
+          {rfq.step === "auction" && (
+            <>
+              <p className="text-muted leading-relaxed">
+                {rfq.status
+                  ? `${rfq.status.offersCount} maker offer${rfq.status.offersCount === 1 ? "" : "s"} so far`
+                  : "Broadcast to market makers"}{" "}
+                — sealed bids, only you can see prices. Offers usually arrive within a couple of
+                minutes.
+              </p>
+              {rfq.status?.best ? (
+                <button
+                  onClick={acceptOffer}
+                  className="h-9 rounded-lg bg-blue text-white text-[13px] font-semibold hover:brightness-110 transition"
+                >
+                  Accept best offer · {fmtUsd(rfq.status.best.totalPremiumUsd, false)} total
+                </button>
+              ) : (
+                <div className="h-9 rounded-lg border border-edge text-muted flex items-center justify-center">
+                  Waiting for maker offers…
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      ) : rfq.step === "done" ? (
+        <p className="text-[12px] text-calm">
+          Option created via RFQ auction.{" "}
+          <a
+            href={`${process.env.NEXT_PUBLIC_BASE_EXPLORER_URL ?? "https://basescan.org"}/tx/${rfq.hash}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline"
+          >
+            View transaction
+          </a>{" "}
+          <button className="text-faint underline" onClick={() => setRfq({ step: "idle" })}>
+            trade again
+          </button>
+        </p>
+      ) : quote && !selFillable ? (
+        <div className="flex flex-col gap-1.5">
+          <button
+            onClick={requestRfq}
+            disabled={!validAmount}
+            className="h-10 rounded-lg bg-blue text-white text-[13px] font-semibold hover:brightness-110 transition disabled:opacity-50"
+          >
+            {validAmount
+              ? `Request quotes · ${periodLabel(period)} via RFQ auction`
+              : "Enter an amount to trade"}
+          </button>
+          {nearestFillable && (
+            <button
+              onClick={() => setPeriod(nearestFillable.period)}
+              className="text-[11px] text-muted hover:text-fg transition self-center"
+            >
+              or jump to instant fill · {periodLabel(nearestFillable.period)}
+            </button>
+          )}
+        </div>
       ) : (
         <button
           onClick={buy}
@@ -390,11 +614,19 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
         </p>
       )}
       {tx.step === "error" && <p className="text-[12px] text-crit">{tx.message}</p>}
+      {rfq.step === "error" && (
+        <p className="text-[12px] text-crit">
+          {rfq.message}{" "}
+          <button className="underline" onClick={() => setRfq({ step: "idle" })}>
+            retry
+          </button>
+        </p>
+      )}
 
       <p className="text-[11px] text-faint leading-relaxed">
-        Expiries come from live market-maker pricing; ones marked instant-fill have a listed
-        maker order on the Thetanuts book. Premium is paid in the maker&apos;s collateral token;
-        fills settle on Base.
+        Periods with a listed maker order fill instantly from the Thetanuts book; otherwise the
+        period trades through the Thetanuts RFQ auction at the real expiry. Premium is paid in
+        the option&apos;s collateral token; everything settles on Base.
       </p>
     </section>
   );

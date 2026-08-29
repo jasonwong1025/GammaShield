@@ -40,7 +40,8 @@ Data flows in one direction: **exchange/chain → server (lib/ + app/api/) → c
 ### API routes (`app/api/`)
 
 - `market` — full `MarketSnapshot` (book + risk + feed), `cache-control: no-store`.
-- `quote` — trade quote for buying a call/put off the live book (`lib/trade.ts`): best ATM maker order for the requested expiry, premium, amplification impact, and approve+fill calldata for the browser wallet to sign. The SDK stays read-only server-side; only the user's wallet signs.
+- `quote` — trade quote for buying a call/put (`lib/trade.ts`): any whole day 1–90. Days with a listed maker order quote that real order (premium + approve/fill calldata = instant fill); other days get an MM-ask estimate interpolated between the surrounding tenors. The SDK stays read-only server-side; only the user's wallet signs.
+- `rfq` — custom-expiry execution via the Thetanuts RFQ auction (`lib/rfq.ts`): prepare (encode requestForQuotation for the wallet), status (poll + decrypt sealed maker offers with the server-held ECDH key in `.thetanuts-keys/`, gitignored — it unlocks offer prices only, never funds), settle (approve + settleQuotationEarly calldata).
 - `stream` — SSE price ticks (init snapshot, then `price` events, 15s heartbeats).
 - `klines` — OHLCV proxy: Coinbase first, Binance fallback, staleness guard, aggregates finer candles for non-native intervals.
 - `price` — lightweight spot ticker.

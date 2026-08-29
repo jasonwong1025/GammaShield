@@ -37,8 +37,38 @@ export const BASE_CHAIN = {
 
 const LAST_WALLET_KEY = "gs-wallet";
 
-export function getProvider(key: WalletKey): Eip1193Provider | null {
+export // --- EIP-6963 wallet discovery ---
+// Each installed wallet announces itself with a unique rdns, which is the
+// only reliable way to find MetaMask when Phantom (or another wallet) has
+// taken over window.ethereum and spoofed isMetaMask.
+const RDNS: Record<WalletKey, string> = {
+  metamask: "io.metamask",
+  phantom: "app.phantom",
+};
+const discovered = new Map<string, Eip1193Provider>();
+let discoveryStarted = false;
+
+export function ensureWalletDiscovery(onAnnounce?: () => void) {
+  if (typeof window === "undefined") return;
+  if (!discoveryStarted) {
+    discoveryStarted = true;
+    window.addEventListener("eip6963:announceProvider", (e) => {
+      const detail = (e as CustomEvent<{ info?: { rdns?: string }; provider?: Eip1193Provider }>)
+        .detail;
+      if (detail?.info?.rdns && detail.provider) {
+        discovered.set(detail.info.rdns, detail.provider);
+        onAnnounce?.();
+      }
+    });
+  }
+  window.dispatchEvent(new Event("eip6963:requestProvider"));
+}
+
+function getProvider(key: WalletKey): Eip1193Provider | null {
   if (typeof window === "undefined") return null;
+  const announced = discovered.get(RDNS[key]);
+  if (announced) return announced;
+  // Legacy fallback for wallets that don't implement EIP-6963.
   const w = window as unknown as {
     ethereum?: Eip1193Provider;
     phantom?: { ethereum?: Eip1193Provider };
@@ -60,6 +90,7 @@ function shortAddress(addr: string) {
 
 /** The provider to use for transactions: last-connected wallet first. */
 export function getActiveProvider(): Eip1193Provider | null {
+  ensureWalletDiscovery();
   let saved: string | null = null;
   try {
     saved = localStorage.getItem(LAST_WALLET_KEY);
@@ -94,7 +125,14 @@ export function WalletConnect() {
   const [busy, setBusy] = useState<WalletKey | null>(null);
   const [connected, setConnected] = useState<{ wallet: WalletKey; address: string } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [detectTick, setDetectTick] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
+
+  // Discover installed wallets (EIP-6963); re-render as each one announces
+  // so the menu's detected/Install labels are accurate.
+  useEffect(() => {
+    ensureWalletDiscovery(() => setDetectTick((t) => t + 1));
+  }, []);
 
   // Close the menu on outside click / Escape.
   useEffect(() => {
@@ -149,7 +187,8 @@ export function WalletConnect() {
     return () => {
       stale = true;
     };
-  }, [bindAccountEvents]);
+    // detectTick: retry once wallets announce themselves via EIP-6963.
+  }, [bindAccountEvents, detectTick]);
 
   const connect = async (key: WalletKey) => {
     const wallet = WALLETS.find((w) => w.key === key)!;

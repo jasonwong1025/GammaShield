@@ -1,12 +1,14 @@
 // Server-side trade quoting.
-// The duration axis comes from the MM pricing grid (client.mmPricing) — every
-// expiry market makers currently price (~13 tenors from <1d to ~300d), far
-// finer than the listed book. For the chosen expiry we quote the ATM strike:
-//   • if a listed maker order exists there ("fillable"), the quote is that
-//     order's real price and we prepare approve + fill calldata — instant fill;
-//   • otherwise the quote is the MM ask (an executable-size estimate; filling
-//     it would go through the OptionFactory RFQ auction, not built yet).
-// Longer duration ⇒ more time value ⇒ higher premium, straight from live data.
+// Thetanuts prices a fixed tenor grid (client.mmPricing), not a continuous
+// range — real, Friday-anchored expiries like ~weekly/~biweekly/~4-week that
+// count down day by day (today's "weekly" might read as 6d, not 7d). We offer
+// the three standard periods (7/14/28d) and, for each, quote the real grid
+// tenor nearest to it — never an interpolated day that doesn't exist:
+//   • if a listed maker order exists at that exact expiry ("fillable"), the
+//     quote is that order's real price and we prepare approve + fill calldata
+//     — instant fill;
+//   • otherwise the quote is the MM ask at that real tenor (an executable-size
+//     estimate; filling it goes through the OptionFactory RFQ auction).
 // The SDK stays read-only here: only the user's browser wallet ever signs.
 
 import { OPTION_BOOK_ABI, type ThetanutsClient } from "@thetanuts-finance/thetanuts-client";
@@ -15,6 +17,9 @@ import { getClient, getMarketSnapshot, getLastNormalizedOrders } from "./snapsho
 import { computeAssetSnapshot, type NormalizedOrder } from "./engine";
 import { bsGreeks } from "./modelBook";
 import { isOptionsAsset, type Asset, type OptionsAsset } from "./assets";
+import { TRADE_PERIODS, type TradePeriod } from "./tradePeriods";
+
+export { TRADE_PERIODS, type TradePeriod } from "./tradePeriods";
 
 type SdkOrder = Awaited<ReturnType<ThetanutsClient["api"]["fetchOrders"]>>[number];
 type MmRow = Awaited<ReturnType<ThetanutsClient["mmPricing"]["getPricingArray"]>>[number];
@@ -25,10 +30,10 @@ export type TradeQuote = {
   asset: Asset;
   side: TradeSide;
   spot: number;
-  /** MM-priced expiries for this side, soonest first. `fillable` = listed maker order exists. */
-  expiries: { ts: number; days: number; fillable: boolean }[];
-  /** Echo of the (clamped, whole-day) duration this quote answers. */
-  requestedDays: number;
+  /** The 3 standard periods resolved to their real grid tenor. `fillable` = listed maker order exists there. */
+  expiries: { period: TradePeriod; ts: number; days: number; fillable: boolean }[];
+  /** Echo of the requested standard period this quote answers. */
+  requestedPeriod: TradePeriod;
   expiryTs: number;
   strike: number;
   /** "book" = live maker order (instant fill) · "mm" = MM ask estimate (RFQ-only expiry). */
@@ -82,12 +87,12 @@ async function getMmPricing(c: ThetanutsClient, asset: OptionsAsset): Promise<Mm
 }
 
 // Max fillable contracts in 6-decimal units. The SDK's calculateMaxContracts
-// mis-scales physically-settled calls with <18-decimal collateral (cbBTC), so
-// compute it directly: calls are collateralized in the underlying (1 contract
-// locks 1 unit), puts in stables (1 contract locks `strike`).
-function maxContracts6(order: SdkOrder, tokenDecimals: number): bigint {
+// mis-scales calls with <18-decimal underlying collateral (cbBTC), so compute
+// it directly: underlying-collateralized (inverse/physical) calls lock 1 unit
+// per contract; USD-collateralized legs (puts, linear calls) lock `strike`.
+function maxContracts6(order: SdkOrder, tokenDecimals: number, tokenSymbol: string): bigint {
   const raw = order.rawApiData!;
-  if (raw.isCall) {
+  if (raw.isCall && !tokenSymbol.includes("USD")) {
     const shift = tokenDecimals - 6;
     return shift >= 0
       ? order.availableAmount / 10n ** BigInt(shift)
@@ -127,7 +132,7 @@ export async function getTradeQuote(
   asset: Asset,
   side: TradeSide,
   contracts: number,
-  days: number,
+  period: TradePeriod,
 ): Promise<TradeQuote> {
   if (!isOptionsAsset(asset)) {
     throw new Error(`${asset} has no live Thetanuts market to trade`);
@@ -148,11 +153,14 @@ export async function getTradeQuote(
   const isCall = side === "call";
 
   // Buyable book orders = vanilla, maker is selling (taker goes long).
+  // raw.isLong is the MAKER's side — maker sells when it is false (verified
+  // on a mainnet fork; filling an isLong=true order makes the taker the
+  // seller: they post collateral and receive the premium).
   const buyable = orders.filter((o) => {
     const raw = o.rawApiData;
     return (
       raw &&
-      raw.isLong &&
+      !raw.isLong &&
       raw.isCall === isCall &&
       raw.strikes?.length === 1 &&
       raw.priceFeed?.toLowerCase() === feed &&
@@ -163,46 +171,40 @@ export async function getTradeQuote(
   });
   const fillableTs = new Set(buyable.map((o) => Number(o.order.expiry)));
 
-  // Duration axis: every MM-priced expiry with rows for this side.
+  // Duration axis: the SDK's own tenor grid, not an arbitrary day count. MM
+  // pricing only exists at fixed, Friday-anchored expiries (today's "weekly"
+  // reads as however many days remain until that Friday, not exactly 7) —
+  // there is nothing to interpolate between them for a day that isn't listed.
   const sideRows = pricing.filter((r) => r.isCall === isCall && r.expiry > nowSec);
   if (!sideRows.length && !buyable.length) {
     throw new Error(`no live ${asset} ${side} pricing right now`);
   }
-  const gridTs = [...new Set([...sideRows.map((r) => r.expiry), ...fillableTs])].sort(
-    (a, b) => a - b,
-  );
-  // Tradable window: 1–90 days (a stop within a day past 90 still counts).
-  const expiries = gridTs
-    .map((ts) => ({
-      ts,
-      days: (ts - nowSec) / 86400,
-      fillable: fillableTs.has(ts),
-    }))
-    .filter((e) => e.days >= 1 && e.days <= 91);
-  if (!expiries.length) throw new Error(`no ${asset} ${side} expiries inside 1–90 days`);
+  const mmTenors = [...new Set(sideRows.map((r) => r.expiry))];
+  // For each standard period, resolve the real grid tenor nearest to it —
+  // preferring the MM grid, falling back to a listed book expiry if the MM
+  // hasn't quoted anything yet.
+  const nearestTenor = (targetDays: number): number | null => {
+    const candidates = mmTenors.length ? mmTenors : [...fillableTs];
+    if (!candidates.length) return null;
+    return candidates.reduce((best, ts) =>
+      Math.abs((ts - nowSec) / 86400 - targetDays) < Math.abs((best - nowSec) / 86400 - targetDays)
+        ? ts
+        : best,
+    );
+  };
+  const expiries = TRADE_PERIODS.map((p) => {
+    const ts = nearestTenor(p);
+    return ts == null ? null : { period: p, ts, days: (ts - nowSec) / 86400, fillable: fillableTs.has(ts) };
+  }).filter((e): e is NonNullable<typeof e> => e != null);
+  if (!expiries.length) throw new Error(`no ${asset} ${side} expiries available`);
 
-  // Any whole day 1–90 is selectable. A listed book expiry within half a day
-  // of the request becomes an instant fill; anything else is an MM estimate
-  // (interpolated between the surrounding MM tenors — executing there would
-  // go through the OptionFactory RFQ auction, which prices any expiry).
-  const reqDays = Math.min(90, Math.max(1, Math.round(days)));
-  const bookMatch =
-    [...fillableTs]
-      .filter((ts) => {
-        const d = (ts - nowSec) / 86400;
-        return d >= 0.5 && d <= 91;
-      })
-      .sort(
-        (a, b) =>
-          Math.abs((a - nowSec) / 86400 - reqDays) - Math.abs((b - nowSec) / 86400 - reqDays),
-      )
-      .find((ts) => Math.abs((ts - nowSec) / 86400 - reqDays) <= 0.55) ?? null;
-  const targetTs = bookMatch ?? nowSec + reqDays * 86400;
+  const targetEntry = expiries.find((e) => e.period === period) ?? expiries[0];
+  const targetTs = targetEntry.ts;
 
   // Best listed maker order at the matched expiry: ATM first, cheaper on ties.
-  const bookBest = bookMatch
+  const bookBest = targetEntry.fillable
     ? buyable
-        .filter((o) => Number(o.order.expiry) === bookMatch)
+        .filter((o) => Number(o.order.expiry) === targetTs)
         .sort((a, b) => {
           const sa = Number(a.rawApiData!.strikes[0]) / 1e8;
           const sb = Number(b.rawApiData!.strikes[0]) / 1e8;
@@ -249,7 +251,7 @@ export async function getTradeQuote(
 
     premiumPerContractToken = Number(price) / 1e8;
     premiumPerContractUsd = premiumPerContractToken * tokenUsd;
-    const max6 = maxContracts6(bookBest, tokenDecimals);
+    const max6 = maxContracts6(bookBest, tokenDecimals, tokenSymbol);
     maxContracts = Number(max6) / 1e6;
     filled = Math.max(0, Math.min(contracts, maxContracts));
     iv = raw.greeks?.iv ?? null;
@@ -268,32 +270,16 @@ export async function getTradeQuote(
       txs = { chainId: "0x2105", approve, fill };
     }
   } else {
-    // MM ask for the ATM strike, linearly interpolated in time between the
-    // two surrounding MM tenors — an estimate; no listed order to fill.
-    if (!sideRows.length) throw new Error(`no ${asset} ${side} pricing right now`);
-    const tenors = [...new Set(sideRows.map((r) => r.expiry))].sort((a, b) => a - b);
-    const atmAt = (ts: number) => {
-      const rows = sideRows.filter((r) => r.expiry === ts);
-      return rows.reduce((best, r) =>
-        Math.abs(r.strike - spot) < Math.abs(best.strike - spot) ? r : best,
-      );
-    };
-    const lower = [...tenors].reverse().find((t) => t <= targetTs);
-    const upper = tenors.find((t) => t >= targetTs);
-    let askUnderlying: number;
-    if (lower != null && upper != null && upper !== lower) {
-      const lo = atmAt(lower);
-      const hi = atmAt(upper);
-      const w = (targetTs - lower) / (upper - lower);
-      askUnderlying = lo.rawAskPrice * (1 - w) + hi.rawAskPrice * w;
-      strike = (w < 0.5 ? lo : hi).strike;
-    } else {
-      const atm = atmAt((lower ?? upper)!);
-      askUnderlying = atm.rawAskPrice;
-      strike = atm.strike;
-    }
-    premiumPerContractToken = askUnderlying; // in underlying units
-    premiumPerContractUsd = askUnderlying * spot;
+    // MM ask for the ATM strike at this real grid tenor — no listed order to
+    // fill; executing would go through the OptionFactory RFQ auction.
+    const rows = sideRows.filter((r) => r.expiry === targetTs);
+    if (!rows.length) throw new Error(`no ${asset} ${side} pricing at this expiry`);
+    const atm = rows.reduce((best, r) =>
+      Math.abs(r.strike - spot) < Math.abs(best.strike - spot) ? r : best,
+    );
+    strike = atm.strike;
+    premiumPerContractToken = atm.rawAskPrice; // in underlying units
+    premiumPerContractUsd = atm.rawAskPrice * spot;
     tokenSymbol = asset;
     maxContracts = null;
     filled = Math.max(0, contracts);
@@ -350,7 +336,7 @@ export async function getTradeQuote(
     side,
     spot,
     expiries,
-    requestedDays: reqDays,
+    requestedPeriod: targetEntry.period,
     expiryTs: targetTs,
     strike,
     source,

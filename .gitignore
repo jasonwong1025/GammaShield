@@ -34,6 +34,9 @@ yarn-error.log*
 .env*
 !.env.example
 
+# RFQ ECDH keys (decrypt sealed-bid offers) — never commit
+.thetanuts-keys/
+
 # vercel
 .vercel
 

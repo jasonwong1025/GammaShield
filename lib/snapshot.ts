@@ -135,7 +135,10 @@ export async function getMarketSnapshot(): Promise<MarketSnapshot> {
               : "PUT"
             : `${raw.isCall ? "CALL" : "PUT"} ${STRUCTURE_BY_LEGS[strikes.length] ?? "MULTI"}`,
         isCall: raw.isCall,
-        takerIsLong: raw.isLong,
+        // raw.isLong is the MAKER's side (verified empirically on a mainnet
+        // fork: filling an isLong=true order pays the taker premium — the
+        // maker is buying). The taker is long only when the maker sells.
+        takerIsLong: !raw.isLong,
         strike: strikes[0],
         strikes,
         expiryTs: Number(o.order.expiry),
