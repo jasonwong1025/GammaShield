@@ -622,7 +622,12 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
         <p className="text-[12px] text-faint">{loading ? "Quoting the live book…" : ""}</p>
       )}
 
-      {/* Amplification impact — only once the trade is fully configured */}
+      {/* Amplification impact — only once the trade is fully configured. One
+          card: the always-on heuristic (lib/engine.ts) up top, then an
+          optional AI second opinion (GonkaRouter, manual — see fetchAiRisk)
+          below a divider. Kept in one card, not two, so it reads as "one
+          risk readout, with an optional AI annotation" rather than two
+          competing scores. */}
       {impact && (
         <div className="rounded-lg border border-edge p-3 text-[12px] flex flex-col gap-1.5">
           <div className="flex items-center justify-between">
@@ -640,17 +645,12 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
               ? ` — regime flips to ${impact.regimeAfter}.`
               : ` (${impact.regimeAfter} regime).`}
           </p>
-        </div>
-      )}
 
-      {/* AI second opinion — GonkaRouter, manual only (see fetchAiRisk).
-          Purely supplementary: the heuristic above never depends on this and
-          keeps working whether or not the user asks for a read. */}
-      {impact && (
-        <div className="rounded-lg border border-edge p-3 text-[12px] flex flex-col gap-1.5">
+          <div className="border-t border-edge/60 my-0.5" />
+
           <div className="flex items-center justify-between">
             <span className="text-muted">
-              AI risk read <span className="text-faint">(GonkaRouter)</span>
+              AI second opinion <span className="text-faint">(GonkaRouter)</span>
             </span>
             {aiRiskCurrent && (
               <span className="num font-semibold" style={{ color: riskColor(aiRiskCurrent.score) }}>

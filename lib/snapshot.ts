@@ -33,8 +33,24 @@ export type FeedRow = {
   iv: number | null;
   delta: number | null;
   gamma: number | null;
+  theta: number | null;
+  vega: number | null;
+  /** Not in the Thetanuts pricing API — Black-Scholes-derived; see lib/modelBook.ts. */
+  rho: number | null;
   pricePerContractUsd: number | null;
   maker: string;
+  /** What buying this order's full listed size would do to market-structure
+   * risk (lib/engine.ts, deterministic). Null when the order carries no
+   * greeks to price the hypothetical fill. Feeds the per-row risk drill-down
+   * in components/BookFeed.tsx. */
+  impact: {
+    scoreBefore: number;
+    scoreAfter: number;
+    netGexBefore: number;
+    netGexAfter: number;
+    regimeBefore: string;
+    regimeAfter: string;
+  } | null;
 };
 
 const RPC_URL = process.env.THETANUTS_RPC_URL ?? "https://mainnet.base.org";
@@ -169,37 +185,67 @@ export async function getMarketSnapshot(): Promise<MarketSnapshot> {
       normalized.push(...buildModelBook(symbol, market.prices[symbol], nowSec));
     }
 
+    const assetsBefore = Object.fromEntries(
+      ALL_ASSETS.map((symbol) => [
+        symbol,
+        computeAssetSnapshot(symbol, market.prices[symbol] ?? 0, normalized, nowSec),
+      ]),
+    ) as Record<Asset, AssetSnapshot>;
+
     const snapshot: MarketSnapshot = {
       ts: now,
       prices,
       ticker: ALL_ASSETS
         .map((symbol) => ({ symbol, price: market.prices[symbol] }))
         .filter((t) => Number.isFinite(t.price) && t.price > 0),
-      assets: Object.fromEntries(
-        ALL_ASSETS.map((symbol) => [
-          symbol,
-          computeAssetSnapshot(symbol, market.prices[symbol] ?? 0, normalized, nowSec),
-        ]),
-      ) as Record<Asset, AssetSnapshot>,
+      assets: assetsBefore,
       feed: normalized
         .filter((o) => o.expiryTs > nowSec)
         .sort((a, b) => a.expiryTs - b.expiryTs)
         .slice(0, 200)
-        .map((o) => ({
-          asset: o.asset,
-          structure: o.structure,
-          isCall: o.isCall,
-          takerIsLong: o.takerIsLong,
-          strike: o.strike,
-          strikes: o.strikes,
-          expiryTs: o.expiryTs,
-          collateralUsd: o.collateralUsd,
-          iv: o.greeks?.iv ?? null,
-          delta: o.greeks?.delta ?? null,
-          gamma: o.greeks?.gamma ?? null,
-          pricePerContractUsd: o.pricePerContractUsd,
-          maker: o.maker,
-        })),
+        .map((o) => {
+          const before = assetsBefore[o.asset];
+          // Precomputed here (deterministic, free — lib/engine.ts) so a click
+          // in the UI reveals it instantly with no round trip: "if this
+          // order's full listed size gets bought, how does market-structure
+          // risk move." Same what-if math as the trade-quote impact block.
+          let impact: FeedRow["impact"] = null;
+          if (o.greeks && o.collateralUsd > 0) {
+            const after = computeAssetSnapshot(
+              o.asset,
+              market.prices[o.asset] ?? 0,
+              [...normalized, { ...o, takerIsLong: true }],
+              nowSec,
+            );
+            impact = {
+              scoreBefore: before.score,
+              scoreAfter: after.score,
+              netGexBefore: before.netGexUsd,
+              netGexAfter: after.netGexUsd,
+              regimeBefore: before.regime,
+              regimeAfter: after.regime,
+            };
+          }
+          return {
+            asset: o.asset,
+            structure: o.structure,
+            isCall: o.isCall,
+            takerIsLong: o.takerIsLong,
+            strike: o.strike,
+            strikes: o.strikes,
+            expiryTs: o.expiryTs,
+            collateralUsd: o.collateralUsd,
+            iv: o.greeks?.iv ?? null,
+            delta: o.greeks?.delta ?? null,
+            gamma: o.greeks?.gamma ?? null,
+            theta: o.greeks?.theta ?? null,
+            vega: o.greeks?.vega ?? null,
+            rho: o.greeks?.rho ?? null,
+            pricePerContractUsd: o.pricePerContractUsd,
+            maker: o.maker,
+            impact,
+          };
+        }),
       book: {
         totalOrders: orders.length,
         withGreeks: orders.filter((o) => o.rawApiData?.greeks).length,

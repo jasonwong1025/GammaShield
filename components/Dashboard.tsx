@@ -163,7 +163,7 @@ export function Dashboard() {
                       as two views of the same strike axis). */}
                   <div className="flex flex-col gap-px min-w-0">
                     <PriceChart asset={asset} flip={a.flipStrike} livePrice={livePrice} />
-                    <BookCard rows={snap.feed} snap={a} asset={asset} live={live} />
+                    <BookCard rows={snap.feed} snap={a} asset={asset} live={live} spot={livePrice} />
                     <RiskView snap={a} />
                   </div>
 
