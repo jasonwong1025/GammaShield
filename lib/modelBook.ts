@@ -61,11 +61,26 @@ function normCdf(x: number) {
 export function bsGreeks(spot: number, strike: number, iv: number, yearsToExpiry: number, isCall: boolean) {
   const T = Math.max(yearsToExpiry, 1 / 365 / 24);
   const d1 = (Math.log(spot / strike) + 0.5 * iv * iv * T) / (iv * Math.sqrt(T));
+  const d2 = d1 - iv * Math.sqrt(T);
   const delta = isCall ? normCdf(d1) : normCdf(d1) - 1;
   const gamma = normPdf(d1) / (spot * iv * Math.sqrt(T));
   const theta = (-spot * normPdf(d1) * iv) / (2 * Math.sqrt(T)) / 365;
   const vega = (spot * normPdf(d1) * Math.sqrt(T)) / 100;
-  return { delta, gamma, iv, theta, vega };
+  // Rho isn't part of the Thetanuts pricing API response — it's derived here
+  // the same way theta/vega are, at zero risk-free rate (consistent with d1
+  // above, which also omits an r*T term).
+  const rho = isCall ? (strike * T * normCdf(d2)) / 100 : (-strike * T * normCdf(-d2)) / 100;
+  return { delta, gamma, iv, theta, vega, rho };
+}
+
+// Rho for a book order whose live greeks (delta/gamma/theta/vega) came from
+// the Thetanuts pricing API but don't include rho — computed standalone so
+// callers don't have to re-derive the other four via Black-Scholes.
+export function bsRho(spot: number, strike: number, iv: number, yearsToExpiry: number, isCall: boolean) {
+  const T = Math.max(yearsToExpiry, 1 / 365 / 24);
+  const d1 = (Math.log(spot / strike) + 0.5 * iv * iv * T) / (iv * Math.sqrt(T));
+  const d2 = d1 - iv * Math.sqrt(T);
+  return isCall ? (strike * T * normCdf(d2)) / 100 : (-strike * T * normCdf(-d2)) / 100;
 }
 
 // Round strikes to a friendly grid: 1/2.5/5 × 10^n near 2.5% of spot.

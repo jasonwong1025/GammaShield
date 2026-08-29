@@ -9,7 +9,7 @@ import {
   type NormalizedOrder,
 } from "./engine";
 import { ALL_ASSETS, isOptionsAsset, type Asset } from "./assets";
-import { buildModelBook } from "./modelBook";
+import { buildModelBook, bsRho } from "./modelBook";
 
 export type MarketSnapshot = {
   ts: number;
@@ -127,6 +127,16 @@ export async function getMarketSnapshot(): Promise<MarketSnapshot> {
       const strikes = (raw.strikes ?? []).map((s) => Number(s) / 1e8);
       if (!strikes.length) continue;
 
+      const expiryTs = Number(o.order.expiry);
+      const spot = market.prices[asset];
+      // The pricing API's greeks cover delta/gamma/theta/vega but not rho —
+      // derive it via Black-Scholes at the same IV, consistent with the
+      // modeled book's greeks.
+      const greeks =
+        raw.greeks && spot > 0
+          ? { ...raw.greeks, rho: bsRho(spot, strikes[0], raw.greeks.iv, (expiryTs - now / 1000) / (365 * 86400), raw.isCall) }
+          : null;
+
       normalized.push({
         asset,
         structure:
@@ -142,10 +152,10 @@ export async function getMarketSnapshot(): Promise<MarketSnapshot> {
         takerIsLong: !raw.isLong,
         strike: strikes[0],
         strikes,
-        expiryTs: Number(o.order.expiry),
+        expiryTs,
         collateralUsd,
         maker: o.makerAddress,
-        greeks: raw.greeks ?? null,
+        greeks,
         pricePerContractUsd: (Number(o.order.price) / 1e8) * tokenUsd(token.symbol),
       });
     }

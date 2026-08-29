@@ -15,7 +15,7 @@ import { OPTION_BOOK_ABI, type ThetanutsClient } from "@thetanuts-finance/thetan
 import { ethers } from "ethers";
 import { getClient, getMarketSnapshot, getLastNormalizedOrders } from "./snapshot";
 import { computeAssetSnapshot, type NormalizedOrder } from "./engine";
-import { bsGreeks } from "./modelBook";
+import { bsGreeks, bsRho } from "./modelBook";
 import { isOptionsAsset, type Asset, type OptionsAsset } from "./assets";
 import { TRADE_PERIODS, type TradePeriod } from "./tradePeriods";
 
@@ -49,6 +49,10 @@ export type TradeQuote = {
   breakEven: number;
   iv: number | null;
   maker: string | null;
+  /** Full per-contract greeks for this quote — real (book) or Black-Scholes
+   * fallback (MM/RFQ or missing pricing-API data); rho is always derived,
+   * see lib/modelBook.ts. Feeds the AI risk read (lib/aiRisk.ts). */
+  greeks: NormalizedOrder["greeks"];
   /** How filling this trade would move the market-structure risk. */
   impact: {
     scoreBefore: number;
@@ -256,7 +260,14 @@ export async function getTradeQuote(
     filled = Math.max(0, Math.min(contracts, maxContracts));
     iv = raw.greeks?.iv ?? null;
     maker = bookBest.makerAddress;
-    greeks = raw.greeks ?? null;
+    // The pricing API's greeks cover delta/gamma/theta/vega but not rho —
+    // derive it via Black-Scholes at the same IV, same as lib/snapshot.ts.
+    greeks = raw.greeks
+      ? {
+          ...raw.greeks,
+          rho: bsRho(spot, strike, raw.greeks.iv, (targetTs - nowSec) / (365 * 86400), isCall),
+        }
+      : null;
 
     if (filled > 0) {
       const contracts6 = BigInt(Math.round(filled * 1e6));
@@ -351,6 +362,7 @@ export async function getTradeQuote(
     breakEven,
     iv,
     maker,
+    greeks,
     impact,
     txs,
   };

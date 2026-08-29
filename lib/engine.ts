@@ -16,7 +16,7 @@ export type NormalizedOrder = {
   expiryTs: number; // unix seconds
   collateralUsd: number;
   maker: string;
-  greeks: { delta: number; gamma: number; iv: number; theta: number; vega: number } | null;
+  greeks: { delta: number; gamma: number; iv: number; theta: number; vega: number; rho: number } | null;
   /** Ask premium per contract, USD. Null for modeled books — no pricing model backs them yet. */
   pricePerContractUsd: number | null;
 };

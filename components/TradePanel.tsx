@@ -15,6 +15,7 @@ import type { TradeQuote, TradeSide } from "@/lib/trade";
 import { TRADE_PERIODS, type TradePeriod } from "@/lib/tradePeriods";
 import { COLLATERAL_TOKENS, RESERVE_BUFFER, collateralFor, decimalsForTokenSymbol } from "@/lib/collateral";
 import type { RfqPrepared, RfqStatus } from "@/lib/rfq";
+import type { AiRiskAssessment } from "@/lib/aiRisk";
 import { fmtExpiryDate, fmtIv, fmtStrike, fmtUsd, riskColor } from "@/lib/format";
 import {
   getActiveProvider,
@@ -138,7 +139,15 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [tokenBalance, setTokenBalance] = useState<number | null>(null);
   const [ethBalance, setEthBalance] = useState<number | null>(null);
+  const [aiRisk, setAiRisk] = useState<AiRiskAssessment | null>(null);
+  // Trade signature the current aiRisk was computed for — lets the render
+  // detect a config change since the last click and hide the stale read
+  // rather than show a read for a trade that's no longer on screen.
+  const [aiRiskKey, setAiRiskKey] = useState<string | null>(null);
+  const [aiRiskLoading, setAiRiskLoading] = useState(false);
+  const [aiRiskError, setAiRiskError] = useState<string | null>(null);
   const seq = useRef(0);
+  const aiSeq = useRef(0);
   const rfqAddress = useRef<string | null>(null);
 
   const amount = Number(amountStr);
@@ -252,6 +261,52 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
       clearInterval(refresh);
     };
   }, [asset, side, amount, validAmount, period, live]);
+
+  // AI second opinion on the same fill, via GonkaRouter (lib/aiRisk.ts).
+  // Manual only — the user clicks "Get AI read"; nothing here auto-fires on
+  // quote refresh or input changes, so GonkaRouter is only ever called when
+  // asked. Reuses the impact block /api/quote already computed.
+  const fetchAiRisk = async () => {
+    const configuredNow = validAmount && !!quote && quote.contracts > 0;
+    const inSync = !!quote && quote.requestedPeriod === period;
+    const impactNow = configuredNow && inSync ? quote!.impact : null;
+    if (!impactNow || !quote) return;
+    const key = `${asset}:${side}:${quote.strike}:${quote.expiryTs}:${quote.contracts}`;
+    const id = ++aiSeq.current;
+    setAiRiskLoading(true);
+    setAiRiskError(null);
+    try {
+      const res = await fetch("/api/risk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          asset,
+          side,
+          strike: quote.strike,
+          expiryTs: quote.expiryTs,
+          contracts: quote.contracts,
+          spot: quote.spot,
+          greeks: quote.greeks,
+          scoreBefore: impactNow.scoreBefore,
+          scoreAfter: impactNow.scoreAfter,
+          netGexBefore: impactNow.netGexBefore,
+          netGexAfter: impactNow.netGexAfter,
+          regimeBefore: impactNow.regimeBefore,
+          regimeAfter: impactNow.regimeAfter,
+        }),
+      });
+      const data = await res.json();
+      if (aiSeq.current !== id) return;
+      if (!res.ok) throw new Error(data.error ?? `risk ${res.status}`);
+      setAiRisk(data);
+      setAiRiskKey(key);
+    } catch (e) {
+      if (aiSeq.current !== id) return;
+      setAiRiskError(e instanceof Error ? e.message : "AI risk read failed");
+    } finally {
+      if (aiSeq.current === id) setAiRiskLoading(false);
+    }
+  };
 
   const buy = async () => {
     if (!quote?.txs) return;
@@ -393,6 +448,8 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
   const quoteInSync = !!quote && quote.requestedPeriod === period;
   const configured = validAmount && !!quote && quote.contracts > 0;
   const impact = configured && quoteInSync ? quote.impact : null;
+  const currentTradeKey = quote ? `${asset}:${side}:${quote.strike}:${quote.expiryTs}:${quote.contracts}` : null;
+  const aiRiskCurrent = aiRisk && aiRiskKey === currentTradeKey ? aiRisk : null;
   const busy = tx.step === "connecting" || tx.step === "approving" || tx.step === "filling";
 
   // Required collateral for this quote: the padded approve amount for a book
@@ -583,6 +640,47 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
               ? ` — regime flips to ${impact.regimeAfter}.`
               : ` (${impact.regimeAfter} regime).`}
           </p>
+        </div>
+      )}
+
+      {/* AI second opinion — GonkaRouter, manual only (see fetchAiRisk).
+          Purely supplementary: the heuristic above never depends on this and
+          keeps working whether or not the user asks for a read. */}
+      {impact && (
+        <div className="rounded-lg border border-edge p-3 text-[12px] flex flex-col gap-1.5">
+          <div className="flex items-center justify-between">
+            <span className="text-muted">
+              AI risk read <span className="text-faint">(GonkaRouter)</span>
+            </span>
+            {aiRiskCurrent && (
+              <span className="num font-semibold" style={{ color: riskColor(aiRiskCurrent.score) }}>
+                {aiRiskCurrent.score}
+              </span>
+            )}
+          </div>
+          {aiRiskCurrent ? (
+            <>
+              <p className="text-faint leading-relaxed">{aiRiskCurrent.rationale}</p>
+              <p className="text-faint text-[11px]">
+                {aiRiskCurrent.label} · {Math.round(aiRiskCurrent.confidence * 100)}% confidence · read at{" "}
+                {new Date(aiRiskCurrent.generatedAt).toLocaleTimeString([], { hour12: false })}
+              </p>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={fetchAiRisk}
+                disabled={aiRiskLoading}
+                className="self-start rounded-md border border-edge px-2.5 py-1 text-[12px] font-medium text-fg hover:bg-panel2 disabled:opacity-60"
+              >
+                {aiRiskLoading ? "Asking the model…" : "Get AI read"}
+              </button>
+              {aiRiskError && !aiRiskLoading && (
+                <p className="text-crit text-[11px]">Unavailable — {aiRiskError}</p>
+              )}
+            </>
+          )}
         </div>
       )}
 
