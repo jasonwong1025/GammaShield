@@ -68,6 +68,19 @@ async function fetchWithBackoff(
 }
 
 /**
+ * Extracts and parses JSON from model output, stripping thinking tags (<think>...</think>) if present.
+ */
+function extractJson<T>(raw: string): T {
+  let cleaned = raw.replace(/<think[\s\S]*?<\/think>/gi, "").trim();
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start !== -1 && end !== -1 && end > start) {
+    cleaned = cleaned.slice(start, end + 1);
+  }
+  return JSON.parse(cleaned);
+}
+
+/**
  * Analyze a market rumor or viral news headline against real-time options GEX positioning.
  */
 export async function analyzeMarketRumor(params: FactCheckRequest): Promise<GonkaResponse> {
@@ -142,7 +155,7 @@ Market Rumor / Headline to Fact-Check:
 
     const json = await res.json();
     const rawContent = json.choices?.[0]?.message?.content || "{}";
-    const parsedData: FactCheckResult = JSON.parse(rawContent);
+    const parsedData: FactCheckResult = extractJson<FactCheckResult>(rawContent);
 
     return {
       success: true,
