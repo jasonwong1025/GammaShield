@@ -10,9 +10,10 @@
 // amount, and duration are all set.
 
 import { useEffect, useRef, useState } from "react";
-import type { Asset } from "@/lib/assets";
+import { isOptionsAsset, type Asset } from "@/lib/assets";
 import type { TradeQuote, TradeSide } from "@/lib/trade";
 import { TRADE_PERIODS, type TradePeriod } from "@/lib/tradePeriods";
+import { COLLATERAL_TOKENS, RESERVE_BUFFER, collateralFor, decimalsForTokenSymbol } from "@/lib/collateral";
 import type { RfqPrepared, RfqStatus } from "@/lib/rfq";
 import { fmtExpiryDate, fmtIv, fmtStrike, fmtUsd, riskColor } from "@/lib/format";
 import {
@@ -134,11 +135,83 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
   const [tx, setTx] = useState<TxPhase>({ step: "idle" });
   const [rfq, setRfq] = useState<RfqPhase>({ step: "idle" });
   const [mountedSec] = useState(() => Math.floor(Date.now() / 1000));
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const [tokenBalance, setTokenBalance] = useState<number | null>(null);
+  const [ethBalance, setEthBalance] = useState<number | null>(null);
   const seq = useRef(0);
   const rfqAddress = useRef<string | null>(null);
 
   const amount = Number(amountStr);
   const validAmount = Number.isFinite(amount) && amount > 0;
+
+  // Silent lookup of whichever wallet is already connected (no popup) — lets
+  // us warn about insufficient balance before the user even clicks buy.
+  useEffect(() => {
+    const provider = getActiveProvider();
+    if (!provider) return;
+    let stale = false;
+    provider
+      .request({ method: "eth_accounts" })
+      .then((accounts) => {
+        if (!stale) setWalletAddress((accounts as string[])[0] ?? null);
+      })
+      .catch(() => {});
+    const onAccountsChanged = ((accounts: string[]) => {
+      setWalletAddress(accounts[0] ?? null);
+    }) as never;
+    provider.on?.("accountsChanged", onAccountsChanged);
+    return () => {
+      stale = true;
+      provider.removeListener?.("accountsChanged", onAccountsChanged);
+    };
+  }, []);
+
+  // Whichever collateral token this trade would actually pull from: the
+  // exact maker's token for a book fill, else the standard RFQ collateral.
+  const collateralInfo =
+    quote?.source === "book" && quote.txs
+      ? {
+          address: quote.txs.approve.to,
+          decimals: decimalsForTokenSymbol(quote.premiumToken),
+          symbol: quote.premiumToken,
+        }
+      : isOptionsAsset(asset)
+        ? {
+            address: COLLATERAL_TOKENS[collateralFor(asset, side)].address,
+            decimals: COLLATERAL_TOKENS[collateralFor(asset, side)].decimals,
+            symbol: collateralFor(asset, side),
+          }
+        : null;
+
+  // Balance check — a wallet-side warning, not a substitute for the real
+  // approve/fill math, so plain floats are fine here.
+  useEffect(() => {
+    if (!walletAddress || !collateralInfo) return;
+    const provider = getActiveProvider();
+    if (!provider) return;
+    let stale = false;
+    const balanceOfData = "0x70a08231" + walletAddress.slice(2).toLowerCase().padStart(64, "0");
+    provider
+      .request({ method: "eth_call", params: [{ to: collateralInfo.address, data: balanceOfData }, "latest"] })
+      .then((res) => {
+        if (stale) return;
+        setTokenBalance(Number(BigInt(res as string)) / 10 ** collateralInfo.decimals);
+      })
+      .catch(() => {
+        if (!stale) setTokenBalance(null);
+      });
+    provider
+      .request({ method: "eth_getBalance", params: [walletAddress, "latest"] })
+      .then((res) => {
+        if (!stale) setEthBalance(Number(BigInt(res as string)) / 1e18);
+      })
+      .catch(() => {
+        if (!stale) setEthBalance(null);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [walletAddress, collateralInfo?.address, collateralInfo?.decimals]);
 
   // Reset stale quote/tx state when the market or direction changes.
   const [prevKey, setPrevKey] = useState(`${asset}:${side}`);
@@ -322,6 +395,25 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
   const impact = configured && quoteInSync ? quote.impact : null;
   const busy = tx.step === "connecting" || tx.step === "approving" || tx.step === "filling";
 
+  // Required collateral for this quote: the padded approve amount for a book
+  // fill, or contracts × reservePrice (the RFQ escrow) otherwise — same math
+  // as lib/trade.ts / lib/rfq.ts, just in plain floats for a UI-only check.
+  const requiredCollateral =
+    quote && configured
+      ? quote.source === "book"
+        ? quote.totalCostToken * 1.01
+        : quote.contracts *
+          (side === "put" ? quote.premiumPerContractUsd : quote.premiumPerContractUsd / quote.spot) *
+          RESERVE_BUFFER
+      : null;
+  const insufficientToken =
+    !!walletAddress &&
+    !!collateralInfo &&
+    requiredCollateral != null &&
+    tokenBalance != null &&
+    tokenBalance < requiredCollateral;
+  const insufficientGas = !!walletAddress && ethBalance != null && ethBalance < 0.0003;
+
   return (
     <section className="card p-5 flex flex-col gap-4" aria-label="Trade options">
       <div className="flex items-center justify-between">
@@ -494,6 +586,17 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
         </div>
       )}
 
+      {/* Insufficient-balance warning — checked against whichever wallet is
+          already connected, before the user hits an on-chain revert. */}
+      {(insufficientToken || insufficientGas) && (
+        <p className="text-[12px] text-crit leading-relaxed">
+          {insufficientToken &&
+            `Insufficient ${collateralInfo ? displayToken(collateralInfo.symbol) : "token"} balance — need ~${requiredCollateral?.toPrecision(3)}, have ${tokenBalance?.toPrecision(3)}.`}
+          {insufficientToken && insufficientGas && " "}
+          {insufficientGas && "Insufficient ETH for gas."}
+        </p>
+      )}
+
       {/* Action */}
       {rfq.step === "connecting" ||
       rfq.step === "approving" ||
@@ -562,12 +665,14 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
         <div className="flex flex-col gap-1.5">
           <button
             onClick={requestRfq}
-            disabled={!validAmount}
+            disabled={!validAmount || insufficientToken || insufficientGas}
             className="h-10 rounded-lg bg-blue text-white text-[13px] font-semibold hover:brightness-110 transition disabled:opacity-50"
           >
-            {validAmount
-              ? `Request quotes · ${periodLabel(period)} via RFQ auction`
-              : "Enter an amount to trade"}
+            {insufficientToken || insufficientGas
+              ? "Insufficient balance"
+              : validAmount
+                ? `Request quotes · ${periodLabel(period)} via RFQ auction`
+                : "Enter an amount to trade"}
           </button>
           {nearestFillable && (
             <button
@@ -581,7 +686,7 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
       ) : (
         <button
           onClick={buy}
-          disabled={!configured || !quoteInSync || !quote?.txs || busy}
+          disabled={!configured || !quoteInSync || !quote?.txs || busy || insufficientToken || insufficientGas}
           className="h-10 rounded-lg bg-blue text-white text-[13px] font-semibold hover:brightness-110 transition disabled:opacity-50"
         >
           {busy
@@ -590,13 +695,15 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
               : tx.step === "approving"
                 ? `Approving ${displayToken(quote?.premiumToken ?? "")}…`
                 : "Filling order…"
-            : !validAmount
-              ? "Enter an amount to trade"
-              : !quoteInSync || !quote
-                ? "Quoting…"
-                : configured && quote.txs
-                  ? `Buy ${quote.contracts.toFixed(2)} ${asset} ${side}${quote.contracts === 1 ? "" : "s"}`
-                  : "No listed makers right now"}
+            : insufficientToken || insufficientGas
+              ? "Insufficient balance"
+              : !validAmount
+                ? "Enter an amount to trade"
+                : !quoteInSync || !quote
+                  ? "Quoting…"
+                  : configured && quote.txs
+                    ? `Buy ${quote.contracts.toFixed(2)} ${asset} ${side}${quote.contracts === 1 ? "" : "s"}`
+                    : "No listed makers right now"}
         </button>
       )}
 

@@ -21,9 +21,9 @@
 import { getClient } from "./snapshot";
 import { getTradeQuote, type TradePeriod, type TradeSide } from "./trade";
 import { isOptionsAsset, type Asset } from "./assets";
+import { RESERVE_BUFFER, collateralFor } from "./collateral";
 
 const OFFER_DEADLINE_MINUTES = 15;
-const RESERVE_BUFFER = 1.15; // cap makers at ~15% over the interpolated MM ask
 
 export type RfqPrepared = {
   tx: { chainId: string; to: string; data: string };
@@ -58,11 +58,6 @@ export type RfqStatus = {
   best: RfqOfferView | null;
   optionAddress: string | null;
 };
-
-function collateralFor(asset: Asset, side: TradeSide): "USDC" | "WETH" | "cbBTC" {
-  if (side === "put") return "USDC";
-  return asset === "ETH" ? "WETH" : "cbBTC";
-}
 
 export async function prepareRfq(
   asset: Asset,
