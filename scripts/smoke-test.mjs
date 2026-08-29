@@ -4,10 +4,10 @@
 import fs from "fs";
 import path from "path";
 
-// Load environment variables from .env if present
+// Load .env.local first, then .env.
 try {
-  const envPath = path.resolve(process.cwd(), ".env");
-  if (fs.existsSync(envPath)) {
+  const envPath = [".env.local", ".env"].map((name) => path.resolve(process.cwd(), name)).find(fs.existsSync);
+  if (envPath) {
     const envContent = fs.readFileSync(envPath, "utf-8");
     envContent.split("\n").forEach((line) => {
       const trimmed = line.trim();
@@ -21,8 +21,8 @@ try {
   // Ignore env read failure
 }
 
-const key = process.env.GONKA_API_KEY;
-const baseUrl = (process.env.GONKA_BASE_URL || "https://api.gonkarouter.io/v1").replace(/\/$/, "");
+const key = process.env.GONKAROUTER_API_KEY;
+const baseUrl = (process.env.GONKAROUTER_BASE_URL || "https://api.gonkarouter.io/v1").replace(/\/$/, "");
 
 console.log("==================================================");
 console.log("🛡️  GammaShield: GonkaRouter 30-Second Smoke Test");
@@ -32,8 +32,8 @@ console.log(`Model:    MiniMaxAI/MiniMax-M2.7`);
 console.log(`API Key:  ${key ? (key.startsWith("sk-") ? key.slice(0, 7) + "..." : "Configured") : "MISSING"}`);
 console.log("--------------------------------------------------");
 
-if (!key || key === "sk-your-gonkarouter-api-key-here") {
-  console.error("❌ Error: GONKA_API_KEY is not set in .env. Please set your GonkaRouter key first.");
+if (!key || /^(your_|sk-your)/i.test(key)) {
+  console.error("❌ Error: GONKAROUTER_API_KEY is not configured.");
   process.exit(1);
 }
 

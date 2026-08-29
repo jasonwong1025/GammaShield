@@ -48,7 +48,7 @@ GammaShield is a **Real-Time Crypto Options Market Fragility Engine & Autonomous
 Verify endpoint connectivity using `DeepSeek-V4-Flash`:
 ```bash
 curl -s https://api.gonkarouter.io/v1/messages \
-  -H "x-api-key: $GONKA_API_KEY" \
+  -H "x-api-key: $GONKAROUTER_API_KEY" \
   -H "anthropic-version: 2023-06-01" \
   -H "content-type: application/json" \
   -d '{
@@ -86,7 +86,7 @@ Implement the AI Verification and Fact-Checking Engine using `openai` or `anthro
 import OpenAI from "openai";
 
 const gonka = new OpenAI({
-  apiKey: process.env.GONKA_API_KEY,
+  apiKey: process.env.GONKAROUTER_API_KEY,
   baseURL: "https://api.gonkarouter.io/v1", // Gonka unified endpoint
 });
 

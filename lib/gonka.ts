@@ -2,6 +2,8 @@
 // Interfaces directly with GonkaRouter (https://api.gonkarouter.io/v1)
 // using zero external dependencies (native fetch).
 
+import { gonkaApiKey, gonkaBaseUrl } from "./gonkaConfig";
+
 export const GONKA_MODELS = {
   PRIMARY: "MiniMaxAI/MiniMax-M2.7", // Recommended agent & reasoning model (200k context)
   KIMI: "moonshotai/Kimi-K2.6",      // High accuracy factual verification
@@ -44,8 +46,6 @@ export type GonkaResponse = {
   timestamp: number;
 };
 
-const DEFAULT_BASE_URL = "https://api.gonkarouter.io/v1";
-
 /**
  * Executes a call with exponential backoff on HTTP 429 rate limits.
  */
@@ -85,12 +85,12 @@ function extractJson<T>(raw: string): T {
  * Analyze a market rumor or viral news headline against real-time options GEX positioning.
  */
 export async function analyzeMarketRumor(params: FactCheckRequest): Promise<GonkaResponse> {
-  const apiKey = process.env.GONKAROUTER_API_KEY || process.env.GONKA_API_KEY;
+  const apiKey = gonkaApiKey;
   if (!apiKey || apiKey === "sk-your-gonkarouter-api-key-here") {
     throw new Error("GonkaRouter API key is not configured");
   }
 
-  const baseUrl = (process.env.GONKAROUTER_BASE_URL || process.env.GONKA_BASE_URL || DEFAULT_BASE_URL).replace(/\/$/, "");
+  const baseUrl = gonkaBaseUrl;
   const selectedModel = params.model || GONKA_MODELS.PRIMARY;
 
   const systemPrompt = `You are a Senior Quantitative Crypto Derivatives Risk Verifier and Autonomous Hedging Agent for GammaShield on Base Mainnet.
@@ -172,12 +172,12 @@ Headline to Fact-Check: "${params.headline}"`;
  * 30-Second Smoke Test against GonkaRouter API
  */
 export async function smokeTestGonka(apiKey?: string): Promise<{ ok: boolean; message: string; id?: string }> {
-  const key = apiKey || process.env.GONKAROUTER_API_KEY || process.env.GONKA_API_KEY;
+  const key = apiKey || gonkaApiKey;
   if (!key || key === "sk-your-gonkarouter-api-key-here") {
-    return { ok: false, message: "GONKA_API_KEY not configured in .env" };
+    return { ok: false, message: "GONKAROUTER_API_KEY not configured" };
   }
 
-  const baseUrl = (process.env.GONKAROUTER_BASE_URL || process.env.GONKA_BASE_URL || DEFAULT_BASE_URL).replace(/\/$/, "");
+  const baseUrl = gonkaBaseUrl;
 
   try {
     const res = await fetch(`${baseUrl}/chat/completions`, {
@@ -237,8 +237,8 @@ export type WhatIfResult = {
  * Natural language "What-If" Scenario Simulator for trade impact & dealer feedback.
  */
 export async function simulateWhatIfQuery(params: WhatIfRequest): Promise<WhatIfResult> {
-  const apiKey = process.env.GONKAROUTER_API_KEY || process.env.GONKA_API_KEY;
-  const baseUrl = (process.env.GONKAROUTER_BASE_URL || process.env.GONKA_BASE_URL || DEFAULT_BASE_URL).replace(/\/$/, "");
+  const apiKey = gonkaApiKey;
+  const baseUrl = gonkaBaseUrl;
   const selectedModel = params.model || GONKA_MODELS.FLASH;
 
   // 1. Coarse heuristic extraction as fallback
