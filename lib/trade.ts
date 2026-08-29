@@ -312,6 +312,7 @@ export async function getTradeQuote(
       strikes: [strike],
       expiryTs: targetTs,
       collateralUsd: filled * (isCall ? spot : strike),
+      pricePerContractUsd: premiumPerContractUsd,
       maker: maker ?? "rfq",
       greeks,
     };

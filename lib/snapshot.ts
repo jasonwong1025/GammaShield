@@ -33,6 +33,7 @@ export type FeedRow = {
   iv: number | null;
   delta: number | null;
   gamma: number | null;
+  pricePerContractUsd: number | null;
   maker: string;
 };
 
@@ -145,6 +146,7 @@ export async function getMarketSnapshot(): Promise<MarketSnapshot> {
         collateralUsd,
         maker: o.makerAddress,
         greeks: raw.greeks ?? null,
+        pricePerContractUsd: (Number(o.order.price) / 1e8) * tokenUsd(token.symbol),
       });
     }
 
@@ -185,6 +187,7 @@ export async function getMarketSnapshot(): Promise<MarketSnapshot> {
           iv: o.greeks?.iv ?? null,
           delta: o.greeks?.delta ?? null,
           gamma: o.greeks?.gamma ?? null,
+          pricePerContractUsd: o.pricePerContractUsd,
           maker: o.maker,
         })),
       book: {

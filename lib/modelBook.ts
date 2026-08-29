@@ -126,6 +126,7 @@ export function buildModelBook(asset: Asset, spot: number, nowSec: number): Norm
       collateralUsd,
       maker,
       greeks: bsGreeks(spot, strike, iv, (expiryTs - nowSec) / (365 * 86400), isCall),
+      pricePerContractUsd: null,
     });
   }
   return orders;

@@ -61,15 +61,32 @@ export function BookCard({
   );
 }
 
+function fmtDaysOut(ts: number, now: number) {
+  const d = (ts - now) / 86400;
+  return d < 1 ? `${Math.max(0, Math.round(d * 24))}h` : `${Math.round(d)}d`;
+}
+
+function fmtDelta(v: number | null) {
+  return v === null ? "—" : v.toFixed(2);
+}
+
 function BookTable({ rows, asset }: { rows: FeedRow[]; asset: string }) {
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    const id = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 30_000);
+    return () => clearInterval(id);
+  }, []);
+
   return (
-    <div className="feed-scroll overflow-y-auto grow min-h-0 max-h-[430px]">
-      <table className="w-full text-[12px]">
+    <div className="feed-scroll overflow-auto grow min-h-0 max-h-[430px]">
+      <table className="w-full min-w-[560px] text-[12px]">
         <thead className="sticky top-0 bg-panel z-10">
           <tr className="text-[10px] text-faint">
             <th className="text-left font-medium px-4 py-1.5">Type</th>
             <th className="text-right font-medium px-2 py-1.5">Strike</th>
             <th className="text-right font-medium px-2 py-1.5">Expiry</th>
+            <th className="text-right font-medium px-2 py-1.5">Premium</th>
+            <th className="text-right font-medium px-2 py-1.5">Delta</th>
             <th className="text-right font-medium px-2 py-1.5">IV</th>
             <th className="text-right font-medium px-4 py-1.5">Size</th>
           </tr>
@@ -99,14 +116,20 @@ function BookTable({ rows, asset }: { rows: FeedRow[]; asset: string }) {
                   {r.strikes.length > 1 ? r.strikes.map(fmtStrike).join("/") : fmtStrike(r.strike)}
                 </span>
               </td>
-              <td className="px-2 py-1.5 text-right text-muted">{fmtExpiryDate(r.expiryTs)}</td>
+              <td className="px-2 py-1.5 text-right text-muted whitespace-nowrap">
+                {fmtExpiryDate(r.expiryTs)} <span className="text-faint">· {fmtDaysOut(r.expiryTs, now)}</span>
+              </td>
+              <td className="px-2 py-1.5 text-right num text-fg">
+                {r.pricePerContractUsd === null ? "—" : fmtUsd(r.pricePerContractUsd, false)}
+              </td>
+              <td className="px-2 py-1.5 text-right num text-muted">{fmtDelta(r.delta)}</td>
               <td className="px-2 py-1.5 text-right num text-muted">{fmtIv(r.iv)}</td>
               <td className="px-4 py-1.5 text-right num text-fg">{fmtUsd(r.collateralUsd)}</td>
             </tr>
           ))}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={5} className="px-5 py-10 text-center text-faint font-sans">
+              <td colSpan={7} className="px-5 py-10 text-center text-faint font-sans">
                 No live {asset} orders on the book right now.
               </td>
             </tr>

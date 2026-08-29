@@ -17,6 +17,8 @@ export type NormalizedOrder = {
   collateralUsd: number;
   maker: string;
   greeks: { delta: number; gamma: number; iv: number; theta: number; vega: number } | null;
+  /** Ask premium per contract, USD. Null for modeled books — no pricing model backs them yet. */
+  pricePerContractUsd: number | null;
 };
 
 export type StrikeGex = { strike: number; gex: number; notionalUsd: number };
