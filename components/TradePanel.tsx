@@ -371,6 +371,9 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
       if (await needsApproval(provider, from, prepared.txs.approve, prepared.txs.fill.to)) {
         setShadowTx({ step: "approving" });
         await sendTx(provider, from, prepared.txs.approve);
+        if (await needsApproval(provider, from, prepared.txs.approve, prepared.txs.fill.to)) {
+          throw new Error("Circle test USDC approval is still insufficient; retry the approval before filling");
+        }
       }
       setShadowTx({ step: "filling" });
       const hash = await sendTx(provider, from, prepared.txs.fill);
