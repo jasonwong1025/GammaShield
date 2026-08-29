@@ -58,6 +58,16 @@ function normCdf(x: number) {
   return x >= 0 ? p : 1 - p;
 }
 
+export function bsOptionPrice(spot: number, strike: number, iv: number, yearsToExpiry: number, isCall: boolean) {
+  const intrinsic = Math.max(isCall ? spot - strike : strike - spot, 0);
+  if (!Number.isFinite(spot) || !Number.isFinite(strike) || spot <= 0 || strike <= 0) return NaN;
+  if (yearsToExpiry <= 0 || !Number.isFinite(iv) || iv <= 0) return intrinsic;
+  const rootT = Math.sqrt(yearsToExpiry);
+  const d1 = (Math.log(spot / strike) + 0.5 * iv * iv * yearsToExpiry) / (iv * rootT);
+  const d2 = d1 - iv * rootT;
+  return isCall ? spot * normCdf(d1) - strike * normCdf(d2) : strike * normCdf(-d2) - spot * normCdf(-d1);
+}
+
 export function bsGreeks(spot: number, strike: number, iv: number, yearsToExpiry: number, isCall: boolean) {
   const T = Math.max(yearsToExpiry, 1 / 365 / 24);
   const d1 = (Math.log(spot / strike) + 0.5 * iv * iv * T) / (iv * Math.sqrt(T));

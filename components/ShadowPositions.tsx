@@ -71,6 +71,7 @@ export function ShadowPositions({ asset }: { asset: Asset }) {
             <th className="text-right font-medium px-2 py-1.5">Strike</th>
             <th className="text-right font-medium px-2 py-1.5">Expiry</th>
             <th className="text-right font-medium px-2 py-1.5">Premium</th>
+            <th className="text-right font-medium px-2 py-1.5">Est. PnL</th>
             <th className="text-right font-medium px-2 py-1.5">Contracts</th>
             <th className="text-right font-medium px-4 py-1.5">Receipt</th>
           </tr>
@@ -82,12 +83,16 @@ export function ShadowPositions({ asset }: { asset: Asset }) {
               <td className="px-2 py-2 text-right num text-fg">{fmtStrike(position.strike)}</td>
               <td className="px-2 py-2 text-right text-muted whitespace-nowrap">{fmtExpiryDate(position.expiryTs)} <span className="text-faint">· {fmtCountdown(position.expiryTs, now)}</span></td>
               <td className="px-2 py-2 text-right num text-fg">{fmtUsd(position.premiumUsd, false, 6)} USDC</td>
+              <td className="px-2 py-2 text-right num" title={position.mark ? `Modeled from ${position.mark.source}; not a fillable Thetanuts price or settlement.` : "No live IV mark is available."}>
+                {position.mark ? <><span style={{ color: position.mark.pnlUsd >= 0 ? "var(--calm)" : "var(--crit)" }}>{position.mark.pnlUsd >= 0 ? "+" : "−"}{fmtUsd(Math.abs(position.mark.pnlUsd), false, 6)}</span><span className="block text-[10px] text-faint">{position.mark.source}</span></> : <span className="text-faint">No live mark</span>}
+              </td>
               <td className="px-2 py-2 text-right num text-fg">{position.contracts.toFixed(3)}</td>
               <td className="px-4 py-2 text-right">{position.txHash && process.env.NEXT_PUBLIC_BASE_SEPOLIA_EXPLORER_URL ? <a href={`${process.env.NEXT_PUBLIC_BASE_SEPOLIA_EXPLORER_URL}/tx/${position.txHash}`} target="_blank" rel="noopener noreferrer" className="text-blue hover:underline">View receipt</a> : <span className="text-muted">#{position.id}</span>}</td>
             </tr>
           ))}
         </tbody>
       </table>
+      <p className="px-4 py-2 text-[10px] text-faint">Estimated PnL uses live spot and current Thetanuts IV; it is not a fillable price or settlement.</p>
     </div>
   );
 }

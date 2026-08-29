@@ -5,6 +5,8 @@ import { ethers } from "ethers";
 import { isOptionsAsset, type OptionsAsset } from "@/lib/assets";
 import { getTradeQuote, type TradeQuote, type TradeSide } from "@/lib/trade";
 import { TRADE_PERIODS, type TradePeriod } from "@/lib/tradePeriods";
+import { bsOptionPrice } from "@/lib/modelBook";
+import { getMarketSnapshot, type MarketSnapshot } from "@/lib/snapshot";
 
 const QUOTE_LIFETIME_SECONDS = 60;
 const MAX_CONTRACTS = 5;
@@ -66,6 +68,11 @@ export type ShadowPosition = {
   contracts: number;
   premiumUsd: number;
   txHash: string | null;
+  mark: {
+    valueUsd: number;
+    pnlUsd: number;
+    source: "nearest listed IV" | "book-average IV" | "current intrinsic value";
+  } | null;
 };
 
 function contracts(): ContractConfig {
@@ -207,7 +214,7 @@ export async function getShadowPositions(buyer: string): Promise<ShadowPosition[
     });
     for (const log of logs) txHashes.set(Number(BigInt(log.topics[1])), log.transactionHash);
   }
-  return entries.flatMap((entry, id) => {
+  const positions = entries.flatMap((entry, id) => {
     if (entry.buyer.toLowerCase() !== buyer.toLowerCase()) return [];
     const asset = ethers.decodeBytes32String(entry.asset) as OptionsAsset;
     return [{
@@ -219,6 +226,31 @@ export async function getShadowPositions(buyer: string): Promise<ShadowPosition[
       contracts: Number(entry.contractsE6) / 1e6,
       premiumUsd: Number(entry.premiumUsdc) / 1e6,
       txHash: txHashes.get(id) ?? null,
+      mark: null,
     }];
   });
+  if (!positions.length) return positions;
+
+  const snapshot = await getMarketSnapshot().catch(() => null);
+  return snapshot ? positions.map((position) => ({ ...position, mark: markPosition(position, snapshot) })) : positions;
+}
+
+function markPosition(position: ShadowPosition, snapshot: MarketSnapshot): ShadowPosition["mark"] {
+  const spot = snapshot.prices[position.asset];
+  const now = Math.floor(Date.now() / 1000);
+  if (!Number.isFinite(spot) || spot <= 0) return null;
+  if (position.expiryTs <= now) {
+    const valueUsd = Math.max(position.isCall ? spot - position.strike : position.strike - spot, 0) * position.contracts;
+    return { valueUsd, pnlUsd: valueUsd - position.premiumUsd, source: "current intrinsic value" };
+  }
+
+  const candidates = snapshot.feed.filter((row) => row.asset === position.asset && row.isCall === position.isCall && row.iv != null);
+  const nearest = candidates.reduce<typeof candidates[number] | null>(
+    (best, row) => !best || Math.abs(row.expiryTs - position.expiryTs) + Math.abs(row.strike - position.strike) < Math.abs(best.expiryTs - position.expiryTs) + Math.abs(best.strike - position.strike) ? row : best,
+    null,
+  );
+  const iv = nearest?.iv ?? snapshot.assets[position.asset].avgIv;
+  if (iv == null || iv <= 0) return null;
+  const valueUsd = bsOptionPrice(spot, position.strike, iv, (position.expiryTs - now) / (365 * 86400), position.isCall) * position.contracts;
+  return { valueUsd, pnlUsd: valueUsd - position.premiumUsd, source: nearest ? "nearest listed IV" : "book-average IV" };
 }
