@@ -112,22 +112,20 @@ You MUST output ONLY a valid JSON object matching this schema without any markdo
   "truthScore": <number 0-100>,
   "urgency": "<LOW | MEDIUM | HIGH | CRITICAL>",
   "verdict": "<1-sentence executive summary>",
-  "reasoning": "<2-3 concise paragraphs detailing narrative cross-check and mathematical dealer flow>",
-  "marketRegimeAssessment": "<Analysis of whether dealer hedging dampens or amplifies this rumor>",
+  "reasoning": "<1 concise paragraph detailing narrative cross-check and dealer hedging flow>",
+  "marketRegimeAssessment": "<1 concise sentence on whether dealer hedging dampens or amplifies this rumor>",
   "shouldHedge": <boolean>,
   "strikeSuggestion": <number>,
-  "actionRationale": "<1-2 sentences explaining why this strike protects capital>"
+  "actionRationale": "<1 sentence explaining why this strike protects capital>"
 }`;
 
-  const userPrompt = `Asset: ${params.asset}
-Current Spot Price: $${params.spotPrice.toLocaleString("en-US", { maximumFractionDigits: 2 })}
-Dealer Amplification Risk Score: ${params.gexScore}/100
+  const userPrompt = `Asset: ${params.asset} (Spot: $${params.spotPrice.toLocaleString("en-US", { maximumFractionDigits: 2 })})
+Dealer Fragility Score: ${params.gexScore}/100
 Net Dealer GEX: ${params.netGexUsd ? `${params.netGexUsd.toLocaleString()} USD/1% move` : "N/A"}
 Market Regime: ${params.regime || "neutral"}
 Gamma Flip Level: ${params.flipStrike ? `$${params.flipStrike}` : "None"}
 
-Market Rumor / Headline to Fact-Check:
-"${params.headline}"`;
+Headline to Fact-Check: "${params.headline}"`;
 
   try {
     const res = await fetchWithBackoff(`${baseUrl}/chat/completions`, {
@@ -138,13 +136,12 @@ Market Rumor / Headline to Fact-Check:
       },
       body: JSON.stringify({
         model: selectedModel,
-        max_tokens: 1500, // Safe headroom for reasoning tokens (< 4096 cap)
-        temperature: 0.2,
+        max_tokens: 600,
+        temperature: 0.1,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
         ],
-        response_format: { type: "json_object" },
       }),
     });
 
@@ -252,4 +249,144 @@ export async function smokeTestGonka(apiKey?: string): Promise<{ ok: boolean; me
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : "Network error" };
   }
+}
+
+export type WhatIfRequest = {
+  question: string;
+  asset: string;
+  spotPrice: number;
+  score: number;
+  netGexUsd: number;
+  regime: "dampening" | "amplifying" | "neutral";
+  model?: GonkaModelId;
+};
+
+export type WhatIfResult = {
+  parsedAction: "BUY" | "SELL";
+  parsedSizeM: number;
+  initialMovePct: number;
+  hedgeFlowUsd: number;
+  totalMovePct: number;
+  amplification: number;
+  conversationalAnswer: string;
+  strategicAdvice: string;
+  gonkaRequestId: string;
+  modelUsed: string;
+};
+
+/**
+ * Natural language "What-If" Scenario Simulator for trade impact & dealer feedback.
+ */
+export async function simulateWhatIfQuery(params: WhatIfRequest): Promise<WhatIfResult> {
+  const apiKey = process.env.GONKA_API_KEY;
+  const baseUrl = (process.env.GONKA_BASE_URL || DEFAULT_BASE_URL).replace(/\/$/, "");
+  const selectedModel = params.model || GONKA_MODELS.FLASH;
+
+  // 1. Coarse heuristic extraction as fallback
+  let parsedAction: "BUY" | "SELL" = params.question.toLowerCase().includes("buy") ? "BUY" : "SELL";
+  let parsedSizeM = 10;
+  const numMatch = params.question.match(/\$?(\d+(?:\.\d+)?)\s*(?:m|million|k|thousand|b|billion)?/i);
+  if (numMatch) {
+    let rawNum = parseFloat(numMatch[1]);
+    if (params.question.toLowerCase().includes("k") || params.question.toLowerCase().includes("thousand")) {
+      rawNum /= 1000;
+    } else if (params.question.toLowerCase().includes("b") || params.question.toLowerCase().includes("billion")) {
+      rawNum *= 1000;
+    }
+    parsedSizeM = Math.max(1, Math.min(1000, Math.round(rawNum)));
+  }
+
+  // 2. Compute first-order deterministic market impact
+  const MARKET_ADV: Record<string, number> = {
+    BTC: 25_000_000_000,
+    ETH: 12_000_000_000,
+    SOL: 3_000_000_000,
+    XRP: 2_500_000_000,
+    BNB: 1_500_000_000,
+    AVAX: 500_000_000,
+  };
+  const adv = MARKET_ADV[params.asset] || 5_000_000_000;
+  const sizeUsd = parsedSizeM * 1_000_000;
+  const dailyVolPct = 3.5;
+  const impactPct = dailyVolPct * Math.sqrt(sizeUsd / adv);
+  const initialMovePct = impactPct * (parsedAction === "BUY" ? 1 : -1);
+  const hedgeFlowUsd = -params.netGexUsd * initialMovePct;
+  const sameDirection = Math.sign(hedgeFlowUsd) === Math.sign(initialMovePct);
+  const feedbackMovePct = Math.sign(hedgeFlowUsd || 0) * (dailyVolPct * Math.sqrt(Math.abs(hedgeFlowUsd) / adv));
+  const totalMovePct = initialMovePct + feedbackMovePct;
+  const amplification = initialMovePct !== 0 ? totalMovePct / initialMovePct : 1;
+
+  // 3. If API Key is configured, generate rich conversational AI explanation via GonkaRouter
+  if (apiKey && apiKey !== "sk-your-gonkarouter-api-key-here") {
+    try {
+      const systemPrompt = `You are a quantitative market risk copilot in GammaShield. Be concise. Output ONLY a valid JSON object with keys "conversationalAnswer" (2 short, friendly sentences in plain English) and "strategicAdvice" (1 short sentence). Do not output markdown wrapping.`;
+
+      const userPrompt = `User question: "${params.question}"
+Context:
+- Asset: ${params.asset} (Spot: $${params.spotPrice})
+- Order: ${parsedAction} $${parsedSizeM}M
+- Direct Impact: ${initialMovePct > 0 ? "+" : ""}${initialMovePct.toFixed(2)}%
+- Dealer Net GEX: $${params.netGexUsd.toLocaleString()} (Regime: ${params.regime.toUpperCase()}, Fragility Score: ${params.score}/100)
+- Estimated Total Move: ${totalMovePct > 0 ? "+" : ""}${totalMovePct.toFixed(2)}% (Amplification: ${amplification.toFixed(2)}x)
+
+JSON schema:
+{
+  "conversationalAnswer": "<2 concise sentences explaining price slippage and dealer flow>",
+  "strategicAdvice": "<1 sentence actionable recommendation>"
+}`;
+
+      const res = await fetchWithBackoff(`${baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: selectedModel,
+          max_tokens: 350,
+          temperature: 0.1,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+        }),
+      });
+
+      if (res.ok) {
+        const json = await res.json();
+        const rawContent = json.choices?.[0]?.message?.content || "{}";
+        const parsed = extractJson<{ conversationalAnswer: string; strategicAdvice: string }>(rawContent);
+        return {
+          parsedAction,
+          parsedSizeM,
+          initialMovePct,
+          hedgeFlowUsd,
+          totalMovePct,
+          amplification,
+          conversationalAnswer: parsed.conversationalAnswer || `A $${parsedSizeM}M ${parsedAction.toLowerCase()} in ${params.asset} will trigger an estimated ${totalMovePct.toFixed(2)}% total price move.`,
+          strategicAdvice: parsed.strategicAdvice || "Consider using a TWAP algorithm or staging entries to minimize adverse dealer hedging impact.",
+          gonkaRequestId: json.id || `req_whatif_${Date.now().toString(36)}`,
+          modelUsed: selectedModel,
+        };
+      }
+    } catch (e) {
+      console.warn("[GonkaRouter WhatIf] AI inference fallback:", e);
+    }
+  }
+
+  // Fallback if offline
+  return {
+    parsedAction,
+    parsedSizeM,
+    initialMovePct,
+    hedgeFlowUsd,
+    totalMovePct,
+    amplification,
+    conversationalAnswer: `A $${parsedSizeM}M ${parsedAction.toLowerCase()} order in ${params.asset} would directly move the market by ${initialMovePct.toFixed(2)}%. Because dealers are in ${params.regime} mode, their delta-hedging will ${sameDirection ? "chase the move with an extra $" + Math.abs(Math.round(hedgeFlowUsd)).toLocaleString() : "absorb the move"}, resulting in an estimated net ${totalMovePct.toFixed(2)}% price change (${amplification.toFixed(2)}x amplification).`,
+    strategicAdvice: amplification > 1.1
+      ? `Due to elevated dealer fragility (Risk Score: ${params.score}/100), execute in smaller algorithmic slices or hedge downside tail risk.`
+      : `Market depth is currently stable. Direct market execution has low secondary feedback.`,
+    gonkaRequestId: `whatif_local_${Date.now().toString(36)}`,
+    modelUsed: selectedModel,
+  };
 }

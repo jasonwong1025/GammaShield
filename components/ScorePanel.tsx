@@ -1,76 +1,167 @@
 "use client";
 
+import { useState } from "react";
 import type { AssetSnapshot } from "@/lib/engine";
 import { fmtSignedUsd, fmtStrike, riskColor, riskLabel } from "@/lib/format";
 
-const FACTOR_ROWS: { key: keyof AssetSnapshot["factors"]; label: string; hint: string }[] = [
-  { key: "gamma", label: "Dealer positioning", hint: "Net hedging direction and size" },
-  { key: "liquidity", label: "Book depth", hint: "How far a dollar moves price" },
-  { key: "concentration", label: "Strike crowding", hint: "Share of OI in the top 3 strikes" },
-  { key: "iv", label: "Implied volatility", hint: "Hedging fragility regime" },
-  { key: "expiry", label: "Expiry pressure", hint: "Weight of near-dated open interest" },
+type FactorMeta = {
+  key: keyof AssetSnapshot["factors"];
+  label: string;
+  simpleSubtitle: string;
+  tooltip: string;
+};
+
+const FACTOR_ROWS: FactorMeta[] = [
+  {
+    key: "gamma",
+    label: "Dealer Positioning",
+    simpleSubtitle: "Market-maker reaction",
+    tooltip: "When dealers are net short gamma, their automated delta-hedging chases price drops, creating cascading flash selloffs.",
+  },
+  {
+    key: "liquidity",
+    label: "Book Depth",
+    simpleSubtitle: "Liquidity thickness",
+    tooltip: "Thinner books move further per dollar traded. Higher scores mean the market is more vulnerable to large orders.",
+  },
+  {
+    key: "concentration",
+    label: "Strike Crowding",
+    simpleSubtitle: "Cluster risk in top 3 strikes",
+    tooltip: "Percentage of open interest locked in just 3 price levels. High concentration creates sudden liquidity vacuums.",
+  },
+  {
+    key: "iv",
+    label: "Implied Volatility",
+    simpleSubtitle: "Options market turbulence",
+    tooltip: "Elevated implied vol indicates traders expect turbulence, making hedging feedback more erratic.",
+  },
+  {
+    key: "expiry",
+    label: "Expiry Pressure",
+    simpleSubtitle: "Near-dated options urgency",
+    tooltip: "Options expiring this week exert strong gravitational pin or unclench pressure as expiration approaches.",
+  },
 ];
 
 export function ScorePanel({ snap }: { snap: AssetSnapshot }) {
+  const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
   const color = riskColor(snap.score);
-  const verdict =
-    snap.regime === "amplifying"
-      ? "Dealers are net short gamma — their hedging would chase a shock and amplify it."
-      : "Dealers are net long gamma — their hedging would push back against a shock.";
+
+  // User-facing actionable guidance
+  const actionSummary =
+    snap.score < 35
+      ? {
+          status: "Market is Stable",
+          advice: "Dealers are absorbing price moves. Safe to execute trades normally without severe slippage feedback.",
+          badgeBg: "bg-emerald-50 text-emerald-700 border-emerald-200",
+        }
+      : snap.score <= 70
+      ? {
+          status: "Moderate Friction",
+          advice: "Price is near dealer transition levels. Use limit orders or split large market orders to minimize slippage.",
+          badgeBg: "bg-amber-50 text-amber-700 border-amber-200",
+        }
+      : {
+          status: "High Fragility Alert",
+          advice: "Dealers are in amplifier mode. Consider buying a protective Put option or hedging downside before trading.",
+          badgeBg: "bg-rose-50 text-rose-700 border-rose-200",
+        };
 
   return (
-    <section className="card p-5" aria-label="Amplification risk score">
+    <section className="bg-white rounded-2xl p-6 shadow-xs border border-slate-100/80 flex flex-col gap-5" aria-label="Market Fragility Risk Score">
+      {/* Header */}
       <div className="flex items-center justify-between">
-        <h2 className="text-[14px] font-semibold">Amplification risk</h2>
+        <div>
+          <h2 className="text-[15px] font-semibold text-slate-900 tracking-tight">Market Fragility Score</h2>
+          <p className="text-[12px] text-slate-500">Real-time dealer amplification risk</p>
+        </div>
         <span
-          className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
-          style={{ color, background: `color-mix(in srgb, ${color} 14%, transparent)` }}
+          className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border ${actionSummary.badgeBg}`}
         >
           {riskLabel(snap.score)}
         </span>
       </div>
 
-      <div className="mt-4 flex items-center gap-5">
+      {/* Ring Gauge + Actionable Advice */}
+      <div className="flex items-center gap-5 p-4 rounded-xl bg-slate-50/70 border border-slate-100">
         <Ring score={snap.score} color={color} />
-        <p className="text-[12.5px] leading-5 text-muted">{verdict}</p>
+        <div className="flex flex-col gap-1">
+          <span className="text-[13px] font-bold text-slate-800">{actionSummary.status}</span>
+          <p className="text-[12px] leading-relaxed text-slate-600">{actionSummary.advice}</p>
+        </div>
       </div>
 
-      <div className="mt-5 flex flex-col gap-3">
-        {FACTOR_ROWS.map(({ key, label, hint }) => {
+      {/* Factor Breakdown with Plain English Tooltips */}
+      <div className="flex flex-col gap-3.5">
+        <div className="flex items-center justify-between text-[11px] font-medium text-slate-400 uppercase tracking-wider">
+          <span>Risk Factor Breakdown</span>
+          <span>Weight</span>
+        </div>
+
+        {FACTOR_ROWS.map(({ key, label, simpleSubtitle, tooltip }) => {
           const v = snap.factors[key];
+          const isTooltipActive = activeTooltip === key;
+
           return (
-            <div key={key} title={hint}>
+            <div key={key} className="flex flex-col gap-1 relative">
               <div className="flex items-baseline justify-between text-[12px]">
-                <span className="text-muted">{label}</span>
-                <span className="num text-fg font-medium">{v}</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="font-medium text-slate-800">{label}</span>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTooltip(isTooltipActive ? null : key)}
+                    onMouseEnter={() => setActiveTooltip(key)}
+                    onMouseLeave={() => setActiveTooltip(null)}
+                    className="text-slate-400 hover:text-slate-600 text-[12px] transition focus:outline-none"
+                    aria-label={`Info about ${label}`}
+                  >
+                    ℹ️
+                  </button>
+                  <span className="text-[11px] text-slate-400 hidden sm:inline">· {simpleSubtitle}</span>
+                </div>
+                <span className="num font-semibold text-slate-700">{v}%</span>
               </div>
-              <div className="mt-1.5 h-1.5 rounded-full bg-panel3 overflow-hidden">
+
+              {/* Progress bar */}
+              <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
                 <div
                   className="h-full rounded-full transition-[width] duration-700"
                   style={{ width: `${v}%`, background: riskColor(v) }}
                 />
               </div>
+
+              {/* Interactive Tooltip Card */}
+              {isTooltipActive && (
+                <div className="absolute z-20 top-7 left-0 right-0 p-3 rounded-lg bg-slate-900 text-white text-[11.5px] leading-relaxed shadow-lg animate-fade-in">
+                  <span className="font-semibold text-slate-200 block mb-0.5">{label}</span>
+                  {tooltip}
+                </div>
+              )}
             </div>
           );
         })}
       </div>
 
-      <div className="mt-5 pt-4 border-t border-edge grid grid-cols-2 gap-3 text-[12px]">
-        <div>
-          <div className="text-faint">Net dealer GEX</div>
+      {/* Net Dealer GEX & Flip Level */}
+      <div className="pt-4 border-t border-slate-100 grid grid-cols-2 gap-4 text-[12px]">
+        <div className="p-3 rounded-xl bg-slate-50/60 border border-slate-100 flex flex-col gap-0.5">
+          <span className="text-slate-400 text-[11px] font-medium uppercase">Net Dealer Flow</span>
           <div
-            className="num font-medium mt-0.5"
+            className="num font-bold text-[14px]"
             style={{ color: snap.netGexUsd < 0 ? "var(--crit)" : "var(--calm)" }}
           >
             {fmtSignedUsd(snap.netGexUsd)}
-            <span className="text-faint font-normal"> per 1% move</span>
           </div>
+          <span className="text-slate-400 text-[10.5px]">Expected move per 1% shock</span>
         </div>
-        <div>
-          <div className="text-faint">Gamma flip level</div>
-          <div className="num font-medium mt-0.5 text-fg">
+
+        <div className="p-3 rounded-xl bg-slate-50/60 border border-slate-100 flex flex-col gap-0.5">
+          <span className="text-slate-400 text-[11px] font-medium uppercase">Gamma Flip Level</span>
+          <div className="num font-bold text-[14px] text-slate-800">
             {snap.flipStrike ? `$${fmtStrike(snap.flipStrike)}` : "None on book"}
           </div>
+          <span className="text-slate-400 text-[10.5px]">Regime transition price</span>
         </div>
       </div>
     </section>
@@ -78,31 +169,31 @@ export function ScorePanel({ snap }: { snap: AssetSnapshot }) {
 }
 
 function Ring({ score, color }: { score: number; color: string }) {
-  const r = 40;
+  const r = 38;
   const c = 2 * Math.PI * r;
   const filled = (score / 100) * c;
   return (
     <div className="relative shrink-0" role="img" aria-label={`Risk score ${score} of 100`}>
-      <svg width="104" height="104" viewBox="0 0 104 104">
-        <circle cx="52" cy="52" r={r} fill="none" stroke="var(--panel-3)" strokeWidth="9" />
+      <svg width="96" height="96" viewBox="0 0 96 96">
+        <circle cx="48" cy="48" r={r} fill="none" stroke="#f1f5f9" strokeWidth="8" />
         <circle
-          cx="52"
-          cy="52"
+          cx="48"
+          cy="48"
           r={r}
           fill="none"
           stroke={color}
-          strokeWidth="9"
+          strokeWidth="8"
           strokeLinecap="round"
           strokeDasharray={`${filled} ${c - filled}`}
-          transform="rotate(-90 52 52)"
+          transform="rotate(-90 48 48)"
           style={{ transition: "stroke-dasharray 0.7s ease" }}
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="num text-[30px] font-semibold leading-none" style={{ color }}>
+        <span className="num text-[26px] font-bold leading-none" style={{ color }}>
           {score}
         </span>
-        <span className="text-[10px] text-faint mt-0.5">of 100</span>
+        <span className="text-[9px] text-slate-400 font-medium mt-0.5 uppercase">of 100</span>
       </div>
     </div>
   );

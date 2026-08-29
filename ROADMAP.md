@@ -193,11 +193,13 @@ export async function executeLiveHedge(strikePrice: number, amountUSDC: number) 
 | **5. Interactive Whale Scenario Simulator** | Phase 2/5 | **✅ Completed** | Implemented in `lib/engine.ts` (`simulateWhale`) & `components/WhaleSim.tsx`. Square-root market impact model and dealer hedge feedback loop. |
 | **6. GEX & Depth Visualizers** | Phase 5 | **✅ Completed** | Implemented in `components/GexChart.tsx`, `components/Heatmap.tsx`, `components/PriceChart.tsx`, `components/BookFeed.tsx`. |
 | **7. Environment & Config Setup** | Phase 1 | **✅ Completed** | `.env` and `.env.example` created with `GONKA_API_KEY`, `GONKA_BASE_URL`, `BASE_RPC_URL`, `THETANUTS_RPC_URL`, and `BURNER_PRIVATE_KEY` configuration. |
-| **8. Thetanuts V4 SDK Live On-Chain Hedging** | Phase 4 | **🟡 Partial** | SDK installed and client initialized in `lib/snapshot.ts` for reading data. Write/order execution function (`executeLiveHedge` / `client.api.createMarketOrder`) with burner wallet needs to be implemented. |
-| **9. GonkaRouter Multi-Model Verification Layer** | Phase 3 | **✅ Completed** | Implemented in `lib/gonka.ts` & `app/api/factcheck/route.ts`. Native fetch client, `MiniMaxAI/MiniMax-M2.7` primary reasoning model with multi-model fallback, 429 exponential backoff, Truth Score (0–100%) computation, and Gonka Request ID output. |
-| **10. Gonka AI Fact-Checker UI Box** | Phase 5 | **✅ Completed** | Implemented in `components/FactChecker.tsx` and integrated into `components/Dashboard.tsx`. Live rumor verification, Truth Score meter, urgency badge, quantitative reasoning trace, and Gonka Request ID display with one-click copy. |
-| **11. Autonomous Execution Terminal UI** | Phase 5 | **🔴 Not Done** | Real-time console interface showcasing automated AI-to-onchain execution with clickable Basescan TxHash link. |
+| **8. Thetanuts V4 SDK Live On-Chain Hedging** | Phase 4 | **✅ Completed** | Implemented in `lib/hedge.ts` & `app/api/hedge/route.ts`. Connects to Thetanuts OptionBook on Base Mainnet (Chain ID 8453), previews order fills with `previewFillOrder`, enforces `ensureAllowance`, and executes live ~1 USDC protective Long Put orders. |
+| **9. GonkaRouter Multi-Model Verification Layer** | Phase 3 | **✅ Completed** | Implemented in `lib/gonka.ts` & `app/api/factcheck/route.ts` & `app/api/whatif/route.ts`. Native fetch client, `MiniMaxAI/MiniMax-M2.7` primary reasoning model with multi-model fallback, 429 exponential backoff, Truth Score (0–100%) computation, and Gonka Request ID output. |
+| **10. Gonka AI Fact-Checker UI Box** | Phase 5 | **✅ Completed** | Implemented in `components/FactChecker.tsx` and integrated into `CopilotView.tsx` / `Dashboard.tsx`. Live rumor verification, Truth Score meter, urgency badge, quantitative reasoning trace, and Gonka Request ID display with one-click copy. |
+| **11. Autonomous Execution Terminal UI** | Phase 5 | **✅ Completed** | Implemented in `components/ExecutionTerminal.tsx` and `components/HedgeView.tsx`. Real-time console interface showcasing automated AI-to-onchain execution, 1-click hedge trigger, and clickable Basescan TxHash link. |
 | **12. Gonka Smoke Test Script** | Phase 1 | **✅ Completed** | Implemented in `scripts/smoke-test.mjs`. 30-second automated API connectivity and pong verification against `https://api.gonkarouter.io/v1`. |
+| **13. "What-If" Conversational Copilot** | Phase 5 | **✅ Completed** | Implemented in `components/WhatIfChat.tsx`. Natural language trade scenario questioning powered by Gonka + deterministic `simulateWhale` feedback. |
+| **14. Tabbed Multi-View UX Navigation** | Phase 5 | **✅ Completed** | Implemented in `components/TopBar.tsx`, `components/Dashboard.tsx`, `components/CopilotView.tsx`, and `components/HedgeView.tsx`. |
 
 ---
 
@@ -208,8 +210,9 @@ export async function executeLiveHedge(strikePrice: number, amountUSDC: number) 
 - [x] **Create `.env` & `.env.example`** with GonkaRouter API Key, Base RPC, and Burner Private Key variables
 - [x] **Build GonkaRouter API Service** (`lib/gonka.ts` & `/api/factcheck/route.ts`)
 - [x] **Build Frontend Gonka Fact-Checker Box Component** (`components/FactChecker.tsx`)
-- [x] **Integrate AI & Execution components into Dashboard** (`components/Dashboard.tsx`)
+- [x] **Build "What-If" Conversational Scenario Copilot** (`components/WhatIfChat.tsx` & `/api/whatif/route.ts`)
+- [x] **Build Live Hedging Execution Service** (`lib/hedge.ts` & `/api/hedge/route.ts`)
+- [x] **Build Autonomous Execution Terminal Component** (`components/ExecutionTerminal.tsx`)
+- [x] **Build Multi-View Tab Navigation** (`components/TopBar.tsx`, `components/CopilotView.tsx`, `components/HedgeView.tsx`, `components/Dashboard.tsx`)
 - [x] **Create Gonka Smoke Test Script** (`scripts/smoke-test.mjs`)
-- [ ] **Build Live Hedging Execution Service** (`lib/hedge.ts` & `/api/hedge/route.ts`)
-- [ ] **Build Autonomous Execution Terminal Component** (`components/ExecutionTerminal.tsx`)
-- [ ] **Update `ROADMAP.md` as modules are completed**
+- [x] **Verify End-to-End Type Safety & Live API Routes**
