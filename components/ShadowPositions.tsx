@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { Asset } from "@/lib/assets";
 import type { ShadowPosition } from "@/lib/shadow";
 import { fmtCountdown, fmtExpiryDate, fmtStrike, fmtUsd } from "@/lib/format";
@@ -10,7 +10,8 @@ export function ShadowPositions({ asset }: { asset: Asset }) {
   const [address, setAddress] = useState<string | null>(null);
   const [positions, setPositions] = useState<ShadowPosition[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
 
   useEffect(() => {
@@ -18,8 +19,8 @@ export function ShadowPositions({ asset }: { asset: Asset }) {
     return () => clearInterval(id);
   }, []);
 
-  const load = async (buyer: string) => {
-    setLoading(true);
+  const load = useCallback(async (buyer: string) => {
+    setRefreshing(true);
     setError(null);
     try {
       const res = await fetch(`/api/shadow/positions?buyer=${buyer}`, { cache: "no-store" });
@@ -29,21 +30,29 @@ export function ShadowPositions({ asset }: { asset: Asset }) {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load shadow positions");
     } finally {
-      setLoading(false);
+      setLoaded(true);
+      setRefreshing(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     const provider = getActiveProvider();
     if (!provider) return;
     provider.request({ method: "eth_accounts" }).then((accounts) => {
       const buyer = (accounts as string[])[0];
-      if (buyer) {
-        setAddress(buyer);
-        void load(buyer);
-      }
+      if (buyer) setAddress(buyer);
     }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!address) return;
+    const initial = setTimeout(() => void load(address), 0);
+    const id = setInterval(() => void load(address), 10_000);
+    return () => {
+      clearTimeout(initial);
+      clearInterval(id);
+    };
+  }, [address, load]);
 
   const connect = async () => {
     const provider = getActiveProvider();
@@ -51,19 +60,22 @@ export function ShadowPositions({ asset }: { asset: Asset }) {
     const buyer = ((await provider.request({ method: "eth_requestAccounts" })) as string[])[0];
     if (!buyer) return;
     setAddress(buyer);
-    await load(buyer);
   };
 
   const filtered = positions.filter((position) => position.asset === asset);
   if (!address) {
     return <Empty action={connect} label="Connect wallet to view Base Sepolia shadow positions." />;
   }
-  if (loading) return <p className="px-5 py-10 text-center text-[12px] text-faint">Reading shadow positions…</p>;
+  if (!loaded) return <p className="px-5 py-10 text-center text-[12px] text-faint">Reading shadow positions…</p>;
   if (error) return <Empty action={() => void load(address)} label={error} />;
   if (!filtered.length) return <Empty action={() => void load(address)} label={`No ${asset} shadow positions for this wallet.`} />;
 
   return (
     <div className="feed-scroll overflow-auto grow min-h-0 max-h-[430px]">
+      <div className="flex items-center justify-end gap-2 px-4 pt-2 text-[10px] text-faint">
+        <span>{refreshing ? "Refreshing…" : "Auto-refreshes every 10s"}</span>
+        <button onClick={() => void load(address)} disabled={refreshing} aria-label="Refresh shadow positions" title="Refresh shadow positions" className="text-blue hover:text-fg disabled:opacity-50">↻</button>
+      </div>
       <table className="w-full min-w-[560px] text-[12px]">
         <thead className="sticky top-0 bg-panel z-10 text-[10px] text-faint">
           <tr>
