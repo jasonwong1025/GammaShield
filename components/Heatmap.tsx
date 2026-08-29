@@ -9,29 +9,16 @@ import { EChart } from "./EChart";
 const MAX_STRIKE_ROWS = 12;
 const MAX_EXPIRY_COLS = 8;
 
-export function Heatmap({ snap }: { snap: AssetSnapshot }) {
+/** Chart only, no card/header chrome — composed into RiskView alongside GexChart. */
+export function HeatmapBody({ snap }: { snap: AssetSnapshot }) {
   const { option, empty } = useMemo(() => buildOption(snap), [snap]);
 
-  return (
-    <section className="card p-5 pb-2" aria-label="Open interest concentration heatmap">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-[14px] font-semibold">Where open interest sits</h2>
-          <p className="text-[12px] text-muted mt-0.5">
-            Collateral on the live book by strike and expiry — brighter is more crowded.
-          </p>
-        </div>
-        <span className="text-[12px] text-muted num shrink-0">{fmtUsd(snap.depthUsd)} on book</span>
-      </div>
-
-      {empty ? (
-        <div className="h-[200px] flex items-center justify-center text-[12px] text-faint">
-          No live open interest for this asset.
-        </div>
-      ) : (
-        <EChart option={option} height={280} ariaLabel="Open interest by strike and expiry" />
-      )}
-    </section>
+  return empty ? (
+    <div className="h-[200px] flex items-center justify-center text-[12px] text-faint">
+      No live open interest for this asset.
+    </div>
+  ) : (
+    <EChart option={option} height={280} ariaLabel="Open interest by strike and expiry" />
   );
 }
 

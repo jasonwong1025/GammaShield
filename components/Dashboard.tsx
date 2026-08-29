@@ -6,8 +6,7 @@ import { TopBar } from "./TopBar";
 import { AssetRail } from "./AssetRail";
 import { TradePanel } from "./TradePanel";
 import { PriceChart } from "./PriceChart";
-import { GexChart } from "./GexChart";
-import { Heatmap } from "./Heatmap";
+import { RiskView } from "./RiskView";
 import { BookCard } from "./BookFeed";
 import { LivePrice } from "./LivePrice";
 import { ASSET_META, isOptionsAsset, type Asset } from "@/lib/assets";
@@ -155,16 +154,21 @@ export function Dashboard() {
 
               {a && (
                 <div className="grid grow grid-cols-1 xl:grid-cols-[1fr_380px] gap-px bg-edge">
+                  {/* Wide column: an options chain is a wide table by nature,
+                      so it sits with the charts, not squeezed into the 380px
+                      ticket column (that forced a horizontal scroll just to
+                      see Premium/Delta/IV/Size). Placed right after price so
+                      it reads price → the live book behind it → risk derived
+                      from that book (gamma / open interest, tabbed together
+                      as two views of the same strike axis). */}
                   <div className="flex flex-col gap-px min-w-0">
                     <PriceChart asset={asset} flip={a.flipStrike} livePrice={livePrice} />
-                    <GexChart snap={a} />
-                    <Heatmap snap={a} />
-                    <div className="grow bg-panel" />
+                    <BookCard rows={snap.feed} snap={a} asset={asset} live={live} />
+                    <RiskView snap={a} />
                   </div>
 
                   <div className="flex flex-col gap-px min-w-0">
                     <TradePanel asset={asset} live={live} />
-                    <BookCard rows={snap.feed} snap={a} asset={asset} live={live} />
                     <div className="grow bg-panel" />
                   </div>
                 </div>

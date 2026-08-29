@@ -6,33 +6,17 @@ import type { AssetSnapshot } from "@/lib/engine";
 import { fmtStrike, fmtUsd } from "@/lib/format";
 import { EChart } from "./EChart";
 
-export function GexChart({ snap }: { snap: AssetSnapshot }) {
+/** Chart only, no card/header chrome — composed into RiskView alongside Heatmap. */
+export function GexChartBody({ snap }: { snap: AssetSnapshot }) {
   const option = useMemo(() => buildOption(snap), [snap]);
   const empty = snap.gexByStrike.length === 0;
 
-  return (
-    <section className="card p-5 pb-2" aria-label="Dealer gamma exposure by strike">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-[14px] font-semibold">Dealer gamma by strike</h2>
-          <p className="text-[12px] text-muted mt-0.5">
-            Green strikes absorb price moves; red strikes amplify them.
-          </p>
-        </div>
-        <div className="flex items-center gap-3 text-[11px] text-muted shrink-0">
-          <span><span className="text-calm">●</span> dampening</span>
-          <span><span className="text-crit">●</span> amplifying</span>
-        </div>
-      </div>
-
-      {empty ? (
-        <div className="h-[240px] flex items-center justify-center text-[12px] text-faint">
-          No live orders with Greeks for this asset right now.
-        </div>
-      ) : (
-        <EChart option={option} height={260} ariaLabel="Dealer gamma exposure across strikes" />
-      )}
-    </section>
+  return empty ? (
+    <div className="h-[240px] flex items-center justify-center text-[12px] text-faint">
+      No live orders with Greeks for this asset right now.
+    </div>
+  ) : (
+    <EChart option={option} height={260} ariaLabel="Dealer gamma exposure across strikes" />
   );
 }
 
