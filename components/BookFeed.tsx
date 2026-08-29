@@ -25,7 +25,7 @@ export function BookCard({
   live: boolean;
 }) {
   const [tab, setTab] = useState<"book" | "expiries">("book");
-  const filtered = rows.filter((r) => r.asset === asset).slice(0, 28);
+  const filtered = rows.filter((r) => r.asset === asset);
   const bookLabel = live ? "OptionBook (live)" : "Modeled book";
 
   return (
@@ -124,11 +124,11 @@ function Expiries({ snap }: { snap: AssetSnapshot }) {
     return () => clearInterval(id);
   }, []);
 
-  const top = snap.expiries.slice(0, 8);
+  const top = snap.expiries;
   const maxNotional = Math.max(...top.map((e) => e.notionalUsd), 1);
 
   return (
-    <div className="px-5 pb-4 flex flex-col gap-2.5">
+    <div className="feed-scroll overflow-y-auto grow min-h-0 max-h-[430px] px-5 pb-4 flex flex-col gap-2.5">
       {top.map((e) => {
         const urgent = e.daysOut < 2;
         return (
