@@ -13,6 +13,8 @@
 # testing
 /coverage
 /cache/
+/contracts/cache/
+/contracts/out/
 
 # next.js
 /.next/
