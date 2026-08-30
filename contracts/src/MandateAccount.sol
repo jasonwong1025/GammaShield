@@ -98,6 +98,7 @@ contract MandateAccount {
     mapping(bytes32 => MandateControl) public controls;
     mapping(bytes32 => Mandate) private mandates;
     mapping(bytes32 => bool) public isMandateRegistered;
+    bytes32 public activeMandateHash;
 
     event MandateRegistered(bytes32 indexed mandateHash, uint64 expiresAt);
     event MandatePaused(bytes32 indexed mandateHash);
@@ -195,8 +196,13 @@ contract MandateAccount {
     function registerMandate(Mandate calldata mandate, bytes calldata signature) external onlyOwner returns (bytes32 hash) {
         hash = _requireMandate(mandate, signature);
         require(!isMandateRegistered[hash], "mandate registered");
+        if (activeMandateHash != bytes32(0)) {
+            controls[activeMandateHash].revoked = true;
+            emit MandateRevoked(activeMandateHash);
+        }
         mandates[hash] = mandate;
         isMandateRegistered[hash] = true;
+        activeMandateHash = hash;
         emit MandateRegistered(hash, mandate.expiresAt);
     }
 
@@ -206,14 +212,14 @@ contract MandateAccount {
     }
 
     function pauseMandate(bytes32 hash) external onlyOwner {
-        require(isMandateRegistered[hash], "mandate unavailable");
+        require(hash == activeMandateHash, "mandate inactive");
         require(!controls[hash].revoked, "mandate revoked");
         controls[hash].paused = true;
         emit MandatePaused(hash);
     }
 
     function resumeMandate(bytes32 hash) external onlyOwner {
-        require(isMandateRegistered[hash], "mandate unavailable");
+        require(hash == activeMandateHash, "mandate inactive");
         MandateControl storage control = controls[hash];
         require(!control.revoked && block.timestamp < mandates[hash].expiresAt, "mandate inactive");
         control.paused = false;
@@ -221,8 +227,9 @@ contract MandateAccount {
     }
 
     function revokeMandate(bytes32 hash) external onlyOwner {
-        require(isMandateRegistered[hash], "mandate unavailable");
+        require(hash == activeMandateHash, "mandate inactive");
         controls[hash].revoked = true;
+        activeMandateHash = bytes32(0);
         emit MandateRevoked(hash);
     }
 
@@ -263,7 +270,7 @@ contract MandateAccount {
         bytes32 userOpHash,
         bytes calldata agentSignature
     ) private view returns (bool valid, uint64 validUntil) {
-        if (!isMandateRegistered[hash]) return (false, 0);
+        if (hash == bytes32(0) || hash != activeMandateHash) return (false, 0);
         Mandate memory mandate = mandates[hash];
         if (_recover(userOpHash, agentSignature) != mandate.agent) return (false, 0);
         if (!_isRiskValid(hash, mandate, risk, riskSignature) || !_isQuoteValid(mandate, quote)) {

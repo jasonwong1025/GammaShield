@@ -80,6 +80,25 @@ contract MandateAccountTest {
         require(_validateAgent(mandate, risk, riskSignature, quote, _signQuote(quote), keccak256("revoked")) == 1, "revoked mandate accepted");
     }
 
+    function testReplacementMandateSupersedesThePreviousPolicy() public {
+        MandateAccount.Mandate memory first = _mandate(3e6, 5e6);
+        bytes memory firstSignature = _sign(OWNER_KEY, _typed(account.mandateDomainSeparator(), account.mandateHash(first)));
+        vm.prank(owner);
+        account.registerMandate(first, firstSignature);
+
+        MandateAccount.Mandate memory replacement = _mandate(3e6, 5e6);
+        replacement.nonce = 2;
+        bytes memory replacementSignature = _sign(OWNER_KEY, _typed(account.mandateDomainSeparator(), account.mandateHash(replacement)));
+        vm.prank(owner);
+        account.registerMandate(replacement, replacementSignature);
+
+        IShadowFill.ShadowQuote memory quote = _quote(2e6, 1e6);
+        MandateAccount.RiskAttestation memory risk = _risk(account.mandateHash(first));
+        bytes memory riskSignature = _sign(RISK_KEY, _typed(account.riskDomainSeparator(), _riskHash(risk)));
+        require(_validateAgent(first, risk, riskSignature, quote, _signQuote(quote), keccak256("superseded")) == 1, "superseded mandate accepted");
+        require(account.activeMandateHash() == account.mandateHash(replacement), "replacement not active");
+    }
+
     function testMandateHashMatchesViemEip712Encoding() public view {
         MandateAccount.Mandate memory mandate = _mandate(3e6, 5e6);
         mandate.owner = address(1);
