@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { MarketSnapshot } from "@/lib/snapshot";
 import { TopBar, type NavTab } from "./TopBar";
 import { AssetRail } from "./AssetRail";
-import { TradePanel } from "./TradePanel";
+import { TradePanel, type HedgeIntent } from "./TradePanel";
 import { PriceChart } from "./PriceChart";
 import { RiskView } from "./RiskView";
 import { BookCard } from "./BookFeed";
@@ -24,6 +24,7 @@ export function Dashboard() {
   const [snap, setSnap] = useState<MarketSnapshot | null>(null);
   const [ticker, setTicker] = useState<Ticker | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [hedgeIntent, setHedgeIntent] = useState<HedgeIntent | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
@@ -173,7 +174,7 @@ export function Dashboard() {
                       </div>
 
                       <div className="flex flex-col gap-px min-w-0">
-                        <TradePanel asset={asset} live={live} />
+                        <TradePanel key={`${asset}:${hedgeIntent?.nonce ?? "manual"}`} asset={asset} live={live} hedgeIntent={hedgeIntent} />
                         <div className="grow bg-panel" />
                       </div>
                     </div>
@@ -197,7 +198,11 @@ export function Dashboard() {
                       asset={asset}
                       live={live}
                       spot={livePrice}
-                      onOpenDashboard={() => setActiveTab("dashboard")}
+                      onOpenDashboard={(intent) => {
+                        setHedgeIntent(intent);
+                        setAsset(intent.asset);
+                        setActiveTab("dashboard");
+                      }}
                     />
                   )}
                 </>

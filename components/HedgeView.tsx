@@ -4,6 +4,7 @@ import type { AssetSnapshot } from "@/lib/engine";
 import type { FeedRow } from "@/lib/snapshot";
 import type { Asset } from "@/lib/assets";
 import { ExecutionTerminal } from "./ExecutionTerminal";
+import type { HedgeIntent } from "./TradePanel";
 import { ScorePanel } from "./ScorePanel";
 import { BookCard } from "./BookFeed";
 
@@ -13,7 +14,7 @@ type Props = {
   asset: Asset;
   live: boolean;
   spot: number;
-  onOpenDashboard: () => void;
+  onOpenDashboard: (intent: HedgeIntent) => void;
 };
 
 export function HedgeView({ snap, feed, asset, live, spot, onOpenDashboard }: Props) {

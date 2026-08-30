@@ -30,6 +30,14 @@ const QUOTE_REFRESH_MS = 15_000;
 const rfqExecutionEnabled = process.env.NEXT_PUBLIC_ENABLE_RFQ_EXECUTION === "true";
 type GammaShieldChainId = typeof base.id | typeof baseSepolia.id;
 
+export type HedgeIntent = {
+  asset: Asset;
+  contracts: string;
+  period: TradePeriod;
+  maxPremiumUsd: number;
+  nonce: number;
+};
+
 type TxPhase =
   | { step: "idle" }
   | { step: "connecting" | "preparing" | "approving" | "ready" | "preflighting" | "filling" }
@@ -132,14 +140,15 @@ function periodLabel(p: TradePeriod) {
   return p === 7 ? "1 Week" : p === 14 ? "2 Weeks" : "4 Weeks";
 }
 
-export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
+export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: boolean; hedgeIntent: HedgeIntent | null }) {
   const { address: walletAddress, chainId } = useAccount();
   const { switchChainAsync } = useSwitchChain();
   const { sendTransactionAsync } = useSendTransaction();
-  const [side, setSide] = useState<TradeSide>("call");
+  const initialHedge = hedgeIntent?.asset === asset ? hedgeIntent : null;
+  const [side, setSide] = useState<TradeSide>(initialHedge ? "put" : "call");
   const [executionMode, setExecutionMode] = useState<"mainnet" | "shadow">("mainnet");
-  const [amountStr, setAmountStr] = useState("1");
-  const [period, setPeriod] = useState<TradePeriod>(7);
+  const [amountStr, setAmountStr] = useState(initialHedge?.contracts ?? "1");
+  const [period, setPeriod] = useState<TradePeriod>(initialHedge?.period ?? 7);
   const [quote, setQuote] = useState<TradeQuote | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -553,6 +562,14 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
     tokenBalance != null &&
     tokenBalance < requiredCollateral;
   const insufficientGas = !!walletAddress && ethBalance != null && ethBalance < 0.0003;
+  const overHedgeBudget =
+    hedgeIntent?.asset === asset &&
+    side === "put" &&
+    quote?.source === "book" &&
+    quote.totalCostUsd > hedgeIntent.maxPremiumUsd;
+  const protectedValueAtExpiry = quote && side === "put" ? quote.strike * quote.contracts : null;
+  const protectedFloorAfterPremium =
+    protectedValueAtExpiry !== null && quote ? protectedValueAtExpiry - quote.totalCostUsd : null;
 
   return (
     <section className="card p-5 flex flex-col gap-4" aria-label="Trade options">
@@ -715,6 +732,25 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
         </div>
       ) : (
         <p className="text-[12px] text-faint">{loading ? "Quoting the live book…" : ""}</p>
+      )}
+
+      {hedgeIntent?.asset === asset && side === "put" && (
+        <div className="rounded-lg border border-blue/25 bg-bluesoft/30 p-3 text-[12px] leading-relaxed">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-blue">Protective-put plan</p>
+          <p className="mt-1 text-muted">
+            Protecting {fmtContracts(amount)} {asset} through {quote ? fmtExpiryDate(quote.expiryTs) : periodLabel(period)}. Your premium cap is {fmtUsd(hedgeIntent.maxPremiumUsd, false, 2)}.
+          </p>
+          {quote && protectedFloorAfterPremium !== null && (
+            <p className="mt-1 text-fg">
+              If you hold that amount to expiry and it settles below {fmtStrike(quote.strike)}, the holding plus cash payout is about {fmtUsd(protectedFloorAfterPremium, false, 2)} before network fees.
+            </p>
+          )}
+          {overHedgeBudget && (
+            <p className="mt-1 text-crit">
+              This live listed put costs {fmtUsd(quote.totalCostUsd, false, 2)}, above your cap. Reduce protected exposure or choose another expiry.
+            </p>
+          )}
+        </div>
       )}
 
       {executionMode === "shadow" ? (
@@ -923,7 +959,7 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
       ) : (
         <button
           onClick={buy}
-          disabled={!configured || !quoteInSync || !quote?.txs || busy || insufficientToken || insufficientGas}
+          disabled={!configured || !quoteInSync || !quote?.txs || busy || insufficientToken || insufficientGas || overHedgeBudget}
           className="h-10 rounded-lg bg-blue text-white text-[13px] font-semibold hover:brightness-110 transition disabled:opacity-50"
         >
           {busy
@@ -938,6 +974,8 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
                 : "Filling order…"
             : insufficientToken || insufficientGas
               ? "Insufficient balance"
+              : overHedgeBudget
+                ? "Live put exceeds premium cap"
                 : !validAmount
                   ? "Enter an amount to trade"
                   : tx.step === "ready"
