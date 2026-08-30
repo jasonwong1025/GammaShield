@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useAccount } from "wagmi";
 import type { Asset } from "@/lib/assets";
 import type { ThetanutsPosition } from "@/lib/positions";
-import { fmtCountdown, fmtExpiryDate, fmtStrike, fmtUsd } from "@/lib/format";
+import { fmtContracts, fmtCountdown, fmtExpiryDate, fmtStrike, fmtUsd } from "@/lib/format";
 
 export function ThetanutsPositions({ asset }: { asset: Asset }) {
   const { address } = useAccount();
@@ -62,7 +62,7 @@ export function ThetanutsPositions({ asset }: { asset: Asset }) {
           <td className="px-2 py-2 text-right num text-fg">{fmtStrike(position.strike)}</td>
           <td className="px-2 py-2 text-right text-muted whitespace-nowrap">{fmtExpiryDate(position.expiryTs)} <span className="text-faint">· {fmtCountdown(position.expiryTs, now)}</span></td>
           <td className="px-2 py-2 text-right num" title="Reported by the Thetanuts indexer.">{position.pnlUsd == null ? <span className="text-faint">—</span> : <span style={{ color: position.pnlUsd >= 0 ? "var(--calm)" : "var(--crit)" }}>{position.pnlUsd >= 0 ? "+" : "−"}{fmtUsd(Math.abs(position.pnlUsd), false, 6)}</span>}</td>
-          <td className="px-2 py-2 text-right num text-fg">{position.contracts.toFixed(3)}</td>
+          <td className="px-2 py-2 text-right num text-fg">{fmtContracts(position.contracts)}</td>
           <td className="px-4 py-2 text-right">{position.entryTxHash ? <a href={`${process.env.NEXT_PUBLIC_BASE_EXPLORER_URL ?? "https://basescan.org"}/tx/${position.entryTxHash}`} target="_blank" rel="noopener noreferrer" className="text-blue hover:underline">View fill</a> : <span className="text-faint">—</span>}</td>
         </tr>)}</tbody>
       </table>

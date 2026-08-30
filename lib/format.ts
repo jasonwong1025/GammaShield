@@ -22,6 +22,11 @@ export function fmtStrike(v: number): string {
   return v.toLocaleString("en-US", { maximumFractionDigits: 0 });
 }
 
+export function fmtContracts(v: number): string {
+  if (!Number.isFinite(v)) return "—";
+  return v.toLocaleString("en-US", { maximumFractionDigits: 6 });
+}
+
 export function fmtPct(v: number, digits = 2): string {
   if (!Number.isFinite(v)) return "—";
   return `${v >= 0 ? "+" : ""}${v.toFixed(digits)}%`;

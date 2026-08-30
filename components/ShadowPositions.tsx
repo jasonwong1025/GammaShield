@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useAccount } from "wagmi";
 import type { Asset } from "@/lib/assets";
 import type { ShadowPosition } from "@/lib/shadow";
-import { fmtCountdown, fmtExpiryDate, fmtStrike, fmtUsd } from "@/lib/format";
+import { fmtContracts, fmtCountdown, fmtExpiryDate, fmtStrike, fmtUsd } from "@/lib/format";
 
 export function ShadowPositions({ asset }: { asset: Asset }) {
   const { address } = useAccount();
@@ -81,7 +81,7 @@ export function ShadowPositions({ asset }: { asset: Asset }) {
               <td className="px-2 py-2 text-right num" title={position.mark ? `Modeled from ${position.mark.source}; not a fillable Thetanuts price or settlement.` : "No live IV mark is available."}>
                 {position.mark ? <><span style={{ color: position.mark.pnlUsd >= 0 ? "var(--calm)" : "var(--crit)" }}>{position.mark.pnlUsd >= 0 ? "+" : "−"}{fmtUsd(Math.abs(position.mark.pnlUsd), false, 6)}</span><span className="block text-[10px] text-faint">{position.mark.source}</span></> : <span className="text-faint">No live mark</span>}
               </td>
-              <td className="px-2 py-2 text-right num text-fg">{position.contracts.toFixed(3)}</td>
+              <td className="px-2 py-2 text-right num text-fg">{fmtContracts(position.contracts)}</td>
               <td className="px-4 py-2 text-right">{position.txHash && process.env.NEXT_PUBLIC_BASE_SEPOLIA_EXPLORER_URL ? <a href={`${process.env.NEXT_PUBLIC_BASE_SEPOLIA_EXPLORER_URL}/tx/${position.txHash}`} target="_blank" rel="noopener noreferrer" className="text-blue hover:underline">View receipt</a> : <span className="text-muted">#{position.id}</span>}</td>
             </tr>
           ))}

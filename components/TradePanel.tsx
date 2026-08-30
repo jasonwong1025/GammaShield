@@ -23,7 +23,7 @@ import type { AiRiskAssessment } from "@/lib/aiRisk";
 import type { ShadowQuote } from "@/lib/shadow";
 import { wagmiConfig } from "@/lib/wagmi";
 import { erc20Abi, useReadErc20BalanceOf } from "@/lib/generated/contracts";
-import { fmtExpiryDate, fmtIv, fmtStrike, fmtUsd, riskColor } from "@/lib/format";
+import { fmtContracts, fmtExpiryDate, fmtIv, fmtStrike, fmtUsd, riskColor } from "@/lib/format";
 
 const QUOTE_DEBOUNCE_MS = 250;
 const QUOTE_REFRESH_MS = 15_000;
@@ -568,9 +568,9 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
           {quote?.maxContracts != null && (
             <button
               className="text-blue hover:underline"
-              onClick={() => setAmountStr(quote.maxContracts!.toFixed(2))}
+              onClick={() => setAmountStr(fmtContracts(quote.maxContracts!))}
             >
-              Max {quote.maxContracts.toFixed(2)}
+              Max {fmtContracts(quote.maxContracts)}
             </button>
           )}
         </div>
@@ -671,7 +671,7 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
             label="Total cost"
             value={
               <span className="font-semibold text-fg">
-                {configured ? fmtUsd(quote.totalCostUsd, false) : "—"}
+                {configured ? fmtUsd(quote.totalCostUsd, false, 2) : "—"}
               </span>
             }
           />
@@ -782,7 +782,7 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
               ? "Enter an amount to trade"
               : !quoteInSync || !quote
                 ? "Quoting…"
-                : `Mirror ${quote.contracts.toFixed(3)} ${asset} ${side} on Sepolia`}
+              : `Mirror ${fmtContracts(quote.contracts)} ${asset} ${side} on Sepolia`}
         </button>
       ) : rfq.step === "connecting" ||
       rfq.step === "approving" ||
@@ -892,7 +892,7 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
                 : !quoteInSync || !quote
                   ? "Quoting…"
                   : configured && quote.txs
-                    ? `Buy ${quote.contracts.toFixed(2)} ${asset} ${side}${quote.contracts === 1 ? "" : "s"}`
+                    ? `Buy ${fmtContracts(quote.contracts)} ${asset} ${side}${quote.contracts === 1 ? "" : "s"}`
                     : "No listed makers right now"}
         </button>
       )}
