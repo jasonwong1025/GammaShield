@@ -1,36 +1,64 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# GammaShield
 
-## Getting Started
+GammaShield is a hackathon prototype for reading the live Thetanuts BTC/ETH OptionBook on Base, estimating dealer-gamma market fragility, and helping a user review a hedge trade. It also includes GonkaRouter-powered AI explanations and a clearly separate Base Sepolia shadow demo.
 
-First, run the development server:
+## What it does
+
+- Reads live Thetanuts OptionBook data for BTC and ETH on Base.
+- Calculates a deterministic market-fragility score from dealer gamma, book depth, strike crowding, expiry pressure, and implied volatility.
+- Displays live options, modeled non-options markets, charts, and indexed Thetanuts positions.
+- Uses GonkaRouter for optional AI risk explanations and market discussion.
+- Prepares user-signed, listed OptionBook fills through the official `@thetanuts-finance/thetanuts-client` SDK.
+
+## Execution boundaries
+
+Mainnet execution is user-controlled:
+
+- GammaShield does not store a user trading private key.
+- A listed order is refreshed and preflighted before submission.
+- Token approvals are capped to the SDK-previewed fill amount.
+- Approval and fill are separate wallet actions.
+- RFQ execution is disabled by default because it uses an escrow lifecycle.
+- Base Sepolia shadow positions are test receipts, not Thetanuts positions.
+
+Options trading has financial risk. This repository is a hackathon project and is not a claim of production readiness or investment advice.
+
+## Stack
+
+Next.js 16, React 19, TypeScript, Tailwind CSS, wagmi/viem, ethers, ECharts, lightweight-charts, the Thetanuts SDK, and GonkaRouter.
+
+## Local setup
 
 ```bash
+npm install
+cp .env.example .env.local
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Set `BASE_RPC_URL` to a Base mainnet RPC endpoint.
+`GONKAROUTER_API_KEY` is required only for AI features.
+Base Sepolia shadow mode additionally needs its shadow contract and quote-signer environment variables from `.env.example`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Keep these disabled unless the RFQ flow has been separately reviewed:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+ENABLE_RFQ_EXECUTION=false
+NEXT_PUBLIC_ENABLE_RFQ_EXECUTION=false
+```
 
-## Learn More
+## Checks
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npm run lint
+npm run build
+cd contracts && forge test
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Project structure
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- `lib/engine.ts` — deterministic market-fragility calculations.
+- `lib/snapshot.ts` and `lib/trade.ts` — server-side Thetanuts SDK reads and listed-order preparation.
+- `components/TradePanel.tsx` — wallet-reviewed Base mainnet and Sepolia shadow actions.
+- `lib/positions.ts` — indexed Base-mainnet Thetanuts positions.
+- `lib/shadow.ts` — Base Sepolia shadow receipts.
+- `app/api/` — server API routes for market, quote, positions, AI, and shadow data.
