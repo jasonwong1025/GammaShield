@@ -10,6 +10,7 @@
 // amount, and duration are all set.
 
 import { useEffect, useRef, useState } from "react";
+import { Interface } from "ethers";
 import { isOptionsAsset, type Asset } from "@/lib/assets";
 import type { TradeQuote, TradeSide } from "@/lib/trade";
 import { TRADE_PERIODS, type TradePeriod } from "@/lib/tradePeriods";
@@ -29,6 +30,11 @@ import {
 
 const QUOTE_DEBOUNCE_MS = 250;
 const QUOTE_REFRESH_MS = 15_000;
+const ERC20_INTERFACE = new Interface([
+  "function allowance(address owner,address spender) view returns (uint256)",
+  "function balanceOf(address account) view returns (uint256)",
+  "function approve(address spender,uint256 amount) returns (bool)",
+]);
 
 type TxPhase =
   | { step: "idle" }
@@ -98,16 +104,13 @@ async function needsApproval(
   spender: string,
 ): Promise<boolean> {
   try {
-    const needed = BigInt("0x" + approve.data.slice(-64));
-    const data =
-      "0xdd62ed3e" + // allowance(address,address)
-      owner.slice(2).toLowerCase().padStart(64, "0") +
-      spender.slice(2).toLowerCase().padStart(64, "0");
+    const needed = ERC20_INTERFACE.decodeFunctionData("approve", approve.data)[1] as bigint;
+    const data = ERC20_INTERFACE.encodeFunctionData("allowance", [owner, spender]);
     const res = (await provider.request({
       method: "eth_call",
       params: [{ to: approve.to, data }, "latest"],
     })) as string;
-    return BigInt(res) < needed;
+    return (ERC20_INTERFACE.decodeFunctionResult("allowance", res)[0] as bigint) < needed;
   } catch {
     return true; // can't verify — approve to be safe
   }
@@ -245,12 +248,13 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
     const provider = getActiveProvider();
     if (!provider) return;
     let stale = false;
-    const balanceOfData = "0x70a08231" + walletAddress.slice(2).toLowerCase().padStart(64, "0");
+    const balanceOfData = ERC20_INTERFACE.encodeFunctionData("balanceOf", [walletAddress]);
     provider
       .request({ method: "eth_call", params: [{ to: collateralAddress, data: balanceOfData }, "latest"] })
       .then((res) => {
         if (stale) return;
-        setTokenBalance(Number(BigInt(res as string)) / 10 ** collateralDecimals);
+        const balance = ERC20_INTERFACE.decodeFunctionResult("balanceOf", res as string)[0] as bigint;
+        setTokenBalance(Number(balance) / 10 ** collateralDecimals);
       })
       .catch(() => {
         if (!stale) setTokenBalance(null);
