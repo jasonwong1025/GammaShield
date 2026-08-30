@@ -6,6 +6,7 @@
     "dev": "next dev",
     "dev:https": "next dev --experimental-https --experimental-https-key ./certificates/localhost-key.pem --experimental-https-cert ./certificates/localhost.pem",
     "build": "next build",
+    "typecheck": "tsc --noEmit",
     "start": "next start",
     "lint": "eslint",
     "wagmi:generate": "wagmi generate"
