@@ -53,7 +53,6 @@ export type FeedRow = {
   } | null;
 };
 
-const RPC_URL = process.env.THETANUTS_RPC_URL ?? "https://mainnet.base.org";
 const CACHE_MS = 8_000;
 
 let client: ThetanutsClient | null = null;
@@ -69,9 +68,11 @@ export function getLastNormalizedOrders(): NormalizedOrder[] {
 
 export function getClient(): ThetanutsClient {
   if (!client) {
+    const rpcUrl = process.env.BASE_RPC_URL?.trim();
+    if (!rpcUrl) throw new Error("BASE_RPC_URL is not configured");
     client = new ThetanutsClient({
       chainId: 8453,
-      provider: new ethers.JsonRpcProvider(RPC_URL),
+      provider: new ethers.JsonRpcProvider(rpcUrl),
     });
   }
   return client;

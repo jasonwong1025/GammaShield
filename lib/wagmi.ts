@@ -6,8 +6,8 @@ export const wagmiConfig = createConfig({
   chains: [base, baseSepolia],
   connectors: [injected()],
   transports: {
-    [base.id]: http(process.env.NEXT_PUBLIC_BASE_RPC_URL),
-    [baseSepolia.id]: http(process.env.NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL),
+    [base.id]: http(),
+    [baseSepolia.id]: http(),
   },
   multiInjectedProviderDiscovery: true,
   ssr: true,

@@ -41,7 +41,7 @@ GammaShield is a **Real-Time Crypto Options Market Fragility Engine & Autonomous
 * **GonkaRouter Auth**: Register via Email/Google at [gonkarouter.io](https://gonkarouter.io) to claim initial credits.
   * `Base URL`: `https://api.gonkarouter.io/v1`
   * `Auth Header`: `Authorization: Bearer sk-...` or `x-api-key: sk-...`
-* **Base Mainnet RPC**: Set the server-only `THETANUTS_RPC_URL` to a dedicated Base endpoint or the public fallback (`https://mainnet.base.org`).
+* **Base Mainnet RPC**: Set the server-only `BASE_RPC_URL` to a dedicated Base endpoint.
 * **User wallet**: Fund the wallet that will review and sign the trade with the selected collateral token plus Base ETH for gas. GammaShield never stores a trading private key.
 
 #### 2. Gonka 30-Second Smoke Test

@@ -97,7 +97,7 @@ function signer() {
 }
 
 function rpcUrl() {
-  const value = process.env.BASE_SEPOLIA_RPC_URL ?? process.env.NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL;
+  const value = process.env.BASE_SEPOLIA_RPC_URL;
   if (!value) throw new Error("Base Sepolia RPC is not configured");
   return value;
 }
