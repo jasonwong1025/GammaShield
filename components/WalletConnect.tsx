@@ -10,6 +10,13 @@ function shortAddress(address: string) {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
+function walletIcon(name?: string) {
+  const wallet = name?.toLowerCase();
+  if (wallet?.includes("phantom")) return "/wallets/phantom.svg";
+  if (wallet?.includes("metamask")) return "/wallets/metamask.svg";
+  return null;
+}
+
 export function WalletConnect() {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -19,6 +26,7 @@ export function WalletConnect() {
   const { connectAsync, isPending } = useConnect();
   const { disconnect } = useDisconnect();
   const { switchChainAsync } = useSwitchChain();
+  const connectedIcon = walletIcon(connector?.name);
 
   useEffect(() => {
     if (!open) return;
@@ -67,7 +75,12 @@ export function WalletConnect() {
           aria-expanded={open}
           className="h-9 px-3 rounded-lg bg-panel2 border border-edge text-[13px] font-medium text-fg hover:bg-panel3 transition flex items-center gap-2"
         >
-          <span className="size-2 rounded-full bg-calm" aria-hidden />
+          {connectedIcon ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={connectedIcon} alt="" className="size-4.5 rounded" />
+          ) : (
+            <span className="size-2 rounded-full bg-calm" aria-hidden />
+          )}
           <span className="num">{shortAddress(address)}</span>
         </button>
       ) : (
@@ -103,8 +116,12 @@ export function WalletConnect() {
                   key={nextConnector.uid}
                   onClick={() => void connect(nextConnector)}
                   disabled={isPending}
-                  className="w-full px-4 py-2.5 flex items-center text-left text-[13px] text-fg hover:bg-panel2 transition disabled:opacity-60"
+                  className="w-full px-4 py-2.5 flex items-center gap-3 text-left text-[13px] text-fg hover:bg-panel2 transition disabled:opacity-60"
                 >
+                  {walletIcon(nextConnector.name) && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={walletIcon(nextConnector.name)!} alt="" className="size-5 rounded" />
+                  )}
                   <span className="font-medium">{nextConnector.name}</span>
                   {isPending && <span className="ml-auto text-[11px] text-faint">Connecting…</span>}
                 </button>
