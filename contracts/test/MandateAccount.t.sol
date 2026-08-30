@@ -42,12 +42,12 @@ contract MandateAccountTest {
         bytes memory riskSignature = _sign(RISK_KEY, _typed(account.riskDomainSeparator(), _riskHash(risk)));
         IShadowFill.ShadowQuote memory quote = _quote(2e6, 1e6);
 
-        require(_validateAgent(mandate, quote, _signQuote(quote), keccak256("unregistered mandate")) == 1, "unregistered mandate accepted");
+        require(_validateAgent(mandate, risk, riskSignature, quote, _signQuote(quote), keccak256("unregistered mandate")) == 1, "unregistered mandate accepted");
         vm.prank(owner);
         account.registerMandate(mandate, mandateSignature);
         require(_validateRiskRecord(mandate, risk, riskSignature, keccak256("risk observation")) != 1, "risk observation rejected");
         account.recordRisk(account.mandateHash(mandate), risk, riskSignature);
-        require(_validateAgent(mandate, quote, _signQuote(quote), keccak256("risk too new")) == 1, "risk persistence bypassed");
+        require(_validateAgent(mandate, risk, riskSignature, quote, _signQuote(quote), keccak256("risk too new")) == 1, "risk persistence bypassed");
         _renewRisk(mandate);
         _renewRisk(mandate);
         _renewRisk(mandate);
@@ -55,8 +55,14 @@ contract MandateAccountTest {
         _renewRisk(mandate);
         quote = _quote(2e6, 1e6);
         bytes memory quoteSignature = _signQuote(quote);
-        require(_validateAgent(mandate, quote, quoteSignature, keccak256("agent shadow fill")) != 1, "agent operation rejected");
-        uint256 positionId = account.executeShadow(account.mandateHash(mandate), quote, quoteSignature);
+        MandateAccount.RiskAttestation memory staleRisk = _risk(account.mandateHash(mandate));
+        staleRisk.observedAt = uint64(block.timestamp - 3 minutes - 1);
+        bytes memory staleRiskSignature = _sign(RISK_KEY, _typed(account.riskDomainSeparator(), _riskHash(staleRisk)));
+        require(_validateAgent(mandate, staleRisk, staleRiskSignature, quote, quoteSignature, keccak256("stale final risk")) == 1, "stale final risk accepted");
+        risk = _risk(account.mandateHash(mandate));
+        riskSignature = _sign(RISK_KEY, _typed(account.riskDomainSeparator(), _riskHash(risk)));
+        require(_validateAgent(mandate, risk, riskSignature, quote, quoteSignature, keccak256("agent shadow fill")) != 1, "agent operation rejected");
+        uint256 positionId = account.executeShadow(account.mandateHash(mandate), risk, riskSignature, quote, quoteSignature);
         (,, address buyer,,,,, uint128 premiumUsdc) = book.positions(positionId);
         (,, uint256 spent,) = account.controls(account.mandateHash(mandate));
         require(buyer == address(account), "wrong buyer");
@@ -78,7 +84,9 @@ contract MandateAccountTest {
         _renewRisk(mandate);
         _renewRisk(mandate);
         IShadowFill.ShadowQuote memory quote = _quote(2e6, 1e6);
-        require(_validateAgent(mandate, quote, _signQuote(quote), keccak256("too expensive")) == 1, "premium cap bypassed");
+        risk = _risk(account.mandateHash(mandate));
+        riskSignature = _sign(RISK_KEY, _typed(account.riskDomainSeparator(), _riskHash(risk)));
+        require(_validateAgent(mandate, risk, riskSignature, quote, _signQuote(quote), keccak256("too expensive")) == 1, "premium cap bypassed");
     }
 
     function testOwnerCanRevokeAndBlockAgentFill() public {
@@ -90,7 +98,9 @@ contract MandateAccountTest {
         vm.prank(owner);
         account.revokeMandate(mandateHash);
         IShadowFill.ShadowQuote memory quote = _quote(2e6, 1e6);
-        require(_validateAgent(mandate, quote, _signQuote(quote), keccak256("revoked")) == 1, "revoked mandate accepted");
+        MandateAccount.RiskAttestation memory risk = _risk(mandateHash);
+        bytes memory riskSignature = _sign(RISK_KEY, _typed(account.riskDomainSeparator(), _riskHash(risk)));
+        require(_validateAgent(mandate, risk, riskSignature, quote, _signQuote(quote), keccak256("revoked")) == 1, "revoked mandate accepted");
     }
 
     function testReplacementMandateSupersedesThePreviousPolicy() public {
@@ -106,7 +116,9 @@ contract MandateAccountTest {
         account.registerMandate(replacement, replacementSignature);
 
         IShadowFill.ShadowQuote memory quote = _quote(2e6, 1e6);
-        require(_validateAgent(first, quote, _signQuote(quote), keccak256("superseded")) == 1, "superseded mandate accepted");
+        MandateAccount.RiskAttestation memory risk = _risk(account.mandateHash(first));
+        bytes memory riskSignature = _sign(RISK_KEY, _typed(account.riskDomainSeparator(), _riskHash(risk)));
+        require(_validateAgent(first, risk, riskSignature, quote, _signQuote(quote), keccak256("superseded")) == 1, "superseded mandate accepted");
         require(account.activeMandateHash() == account.mandateHash(replacement), "replacement not active");
     }
 
@@ -125,7 +137,7 @@ contract MandateAccountTest {
         (, uint64 eligibleSince,,) = account.riskStates(mandateHash);
         require(eligibleSince == block.timestamp, "risk gap did not reset persistence");
         IShadowFill.ShadowQuote memory quote = _quote(2e6, 1e6);
-        require(_validateAgent(mandate, quote, _signQuote(quote), keccak256("risk gap")) == 1, "risk gap bypassed");
+        require(_validateAgent(mandate, second, _sign(RISK_KEY, _typed(account.riskDomainSeparator(), _riskHash(second))), quote, _signQuote(quote), keccak256("risk gap")) == 1, "risk gap bypassed");
     }
 
     function testMandateHashMatchesViemEip712Encoding() public view {
@@ -167,13 +179,15 @@ contract MandateAccountTest {
 
     function _validateAgent(
         MandateAccount.Mandate memory mandate,
+        MandateAccount.RiskAttestation memory risk,
+        bytes memory riskSignature,
         IShadowFill.ShadowQuote memory quote,
         bytes memory quoteSignature,
         bytes32 userOpHash
     ) private returns (uint256) {
         PackedUserOperation memory userOp = PackedUserOperation({
             sender: address(account), nonce: 0, initCode: "",
-            callData: abi.encodeCall(account.executeShadow, (account.mandateHash(mandate), quote, quoteSignature)),
+            callData: abi.encodeCall(account.executeShadow, (account.mandateHash(mandate), risk, riskSignature, quote, quoteSignature)),
             accountGasLimits: bytes32(0), preVerificationGas: 0, gasFees: bytes32(0), paymasterAndData: "",
             signature: _sign(AGENT_KEY, userOpHash)
         });

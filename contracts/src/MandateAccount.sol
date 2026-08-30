@@ -193,10 +193,10 @@ contract MandateAccount {
         view
         returns (bool valid, uint64 validUntil)
     {
-        (bytes32 mandateHash_, IShadowFill.ShadowQuote memory quote,) = abi.decode(
-            encodedCall, (bytes32, IShadowFill.ShadowQuote, bytes)
+        (bytes32 mandateHash_, RiskAttestation memory risk, bytes memory riskSignature, IShadowFill.ShadowQuote memory quote,) = abi.decode(
+            encodedCall, (bytes32, RiskAttestation, bytes, IShadowFill.ShadowQuote, bytes)
         );
-        return _validAgentExecution(mandateHash_, quote, userOpHash, agentSignature);
+        return _validAgentExecution(mandateHash_, risk, riskSignature, quote, userOpHash, agentSignature);
     }
 
     function _validateAgentRiskRecord(bytes calldata encodedCall, bytes32 userOpHash, bytes calldata agentSignature)
@@ -274,11 +274,14 @@ contract MandateAccount {
 
     function executeShadow(
         bytes32 hash,
+        RiskAttestation calldata risk,
+        bytes calldata riskSignature,
         IShadowFill.ShadowQuote calldata quote,
         bytes calldata quoteSignature
     ) external onlyEntryPoint returns (uint256 positionId) {
         Mandate memory mandate = _requireActiveMandate(hash);
         _requirePersistentRisk(hash, mandate);
+        _requireRisk(hash, mandate, risk, riskSignature);
         _requireQuote(mandate, quote);
 
         MandateControl storage control = controls[hash];
@@ -301,6 +304,8 @@ contract MandateAccount {
 
     function _validAgentExecution(
         bytes32 hash,
+        RiskAttestation memory risk,
+        bytes memory riskSignature,
         IShadowFill.ShadowQuote memory quote,
         bytes32 userOpHash,
         bytes calldata agentSignature
@@ -308,8 +313,8 @@ contract MandateAccount {
         if (hash == bytes32(0) || hash != activeMandateHash) return (false, 0);
         Mandate memory mandate = mandates[hash];
         if (_recover(userOpHash, agentSignature) != mandate.agent) return (false, 0);
-        RiskState memory risk = riskStates[hash];
-        if (!_isPersistentRisk(risk, mandate) || !_isQuoteValid(mandate, quote)) {
+        RiskState memory persistedRisk = riskStates[hash];
+        if (!_isPersistentRisk(persistedRisk, mandate) || !_isRiskValid(hash, mandate, risk, riskSignature) || !_isQuoteValid(mandate, quote)) {
             return (false, 0);
         }
         MandateControl storage control = controls[hash];

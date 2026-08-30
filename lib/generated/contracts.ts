@@ -62,6 +62,23 @@ export const mandateAccountAbi = [
     inputs: [
       { name: 'hash', internalType: 'bytes32', type: 'bytes32' },
       {
+        name: 'risk',
+        internalType: 'struct MandateAccount.RiskAttestation',
+        type: 'tuple',
+        components: [
+          { name: 'mandateHash', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'riskScoreBps', internalType: 'uint16', type: 'uint16' },
+          { name: 'observedAt', internalType: 'uint64', type: 'uint64' },
+          { name: 'validUntil', internalType: 'uint64', type: 'uint64' },
+          {
+            name: 'persistenceSeconds',
+            internalType: 'uint64',
+            type: 'uint64',
+          },
+        ],
+      },
+      { name: 'riskSignature', internalType: 'bytes', type: 'bytes' },
+      {
         name: 'quote',
         internalType: 'struct IShadowFill.ShadowQuote',
         type: 'tuple',
