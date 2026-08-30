@@ -135,18 +135,16 @@ export async function getTradeQuote(
 
   // Duration axis: the SDK's own tenor grid, not an arbitrary day count. MM
   // pricing only exists at fixed, Friday-anchored expiries (today's "weekly"
-  // reads as however many days remain until that Friday, not exactly 7) —
-  // there is nothing to interpolate between them for a day that isn't listed.
+  // reads as however many days remain until that Friday, not exactly 7). A
+  // listed order is preferred over an RFQ estimate, even when its real expiry
+  // is the closest available tenor rather than the ideal grid date.
   const sideRows = pricing.filter((r) => r.isCall === isCall && r.expiry > nowSec);
   if (!sideRows.length && !buyable.length) {
     throw new Error(`no live ${asset} ${side} pricing right now`);
   }
   const mmTenors = [...new Set(sideRows.map((r) => r.expiry))];
-  // For each standard period, resolve the real grid tenor nearest to it —
-  // preferring the MM grid, falling back to a listed book expiry if the MM
-  // hasn't quoted anything yet.
-  const nearestTenor = (targetDays: number): number | null => {
-    const candidates = mmTenors.length ? mmTenors : [...fillableTs];
+  const bookTenors = [...fillableTs];
+  const nearestTenor = (targetDays: number, candidates: number[]): number | null => {
     if (!candidates.length) return null;
     return candidates.reduce((best, ts) =>
       Math.abs((ts - nowSec) / 86400 - targetDays) < Math.abs((best - nowSec) / 86400 - targetDays)
@@ -155,7 +153,7 @@ export async function getTradeQuote(
     );
   };
   const expiries = TRADE_PERIODS.map((p) => {
-    const ts = nearestTenor(p);
+    const ts = nearestTenor(p, bookTenors) ?? nearestTenor(p, mmTenors);
     return ts == null ? null : { period: p, ts, days: (ts - nowSec) / 86400, fillable: fillableTs.has(ts) };
   }).filter((e): e is NonNullable<typeof e> => e != null);
   if (!expiries.length) throw new Error(`no ${asset} ${side} expiries available`);
