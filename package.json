@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "start": "next start",
     "lint": "eslint",
+    "check:mandate": "node --experimental-strip-types scripts/mandate-self-check.mts",
     "wagmi:generate": "wagmi generate"
   },
   "dependencies": {
