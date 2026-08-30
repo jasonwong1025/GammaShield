@@ -35,7 +35,12 @@ function normalize(position: Position): ThetanutsPosition | null {
   return {
     id: position.id,
     asset,
-    isCall: position.option.optionType === 0,
+    // The OptionBook indexer exposes the implementation name (for example,
+    // LINEAR_CALL) as the authoritative product label. Its raw option-type
+    // value is not limited to the legacy CALL=0 / PUT=1 enum.
+    isCall: position.implementationName
+      ? position.implementationName.includes("CALL")
+      : position.option.optionType === 0,
     strike: Number(strike) / 1e8,
     expiryTs: position.option.expiry,
     contracts: Number(position.amount) / 1e6,
