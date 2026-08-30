@@ -8,7 +8,11 @@ export default defineConfig({
   plugins: [
     foundry({
       project: "./contracts",
-      include: ["ShadowOptionBook.sol/ShadowOptionBook.json"],
+      include: [
+        "ShadowOptionBook.sol/ShadowOptionBook.json",
+        "MandateAccount.sol/MandateAccount.json",
+        "MandateAccount.sol/MandateAccountFactory.json",
+      ],
     }),
     react(),
   ],
