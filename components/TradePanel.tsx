@@ -205,12 +205,27 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
   };
 
   const sendTx = async (targetChainId: GammaShieldChainId, tx: { to: string; data: string }): Promise<string> => {
-    const hash = await sendTransactionAsync({
-      chainId: targetChainId,
-      to: tx.to as Address,
-      data: tx.data as Hex,
-    });
-    const receipt = await waitForTransactionReceipt(wagmiConfig, { chainId: targetChainId, hash });
+    let hash: Hex;
+    try {
+      hash = await sendTransactionAsync({
+        chainId: targetChainId,
+        to: tx.to as Address,
+        data: tx.data as Hex,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (message.includes("An internal error was received") || message.includes("Unexpected error")) {
+        throw new Error("Your wallet did not submit the transaction, so no funds moved. Close any other Phantom confirmation, confirm Base Mainnet is selected, then retry once.");
+      }
+      throw error;
+    }
+
+    let receipt;
+    try {
+      receipt = await waitForTransactionReceipt(wagmiConfig, { chainId: targetChainId, hash });
+    } catch {
+      throw new Error(`Transaction was submitted but its receipt could not be read. Check BaseScan for ${hash} before retrying.`);
+    }
     if (receipt.status !== "success") throw new Error("Transaction reverted on-chain.");
     return hash;
   };
