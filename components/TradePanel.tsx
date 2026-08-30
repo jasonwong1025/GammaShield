@@ -195,7 +195,8 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
       to: tx.to as Address,
       data: tx.data as Hex,
     });
-    await waitForTransactionReceipt(wagmiConfig, { chainId: targetChainId, hash });
+    const receipt = await waitForTransactionReceipt(wagmiConfig, { chainId: targetChainId, hash });
+    if (receipt.status !== "success") throw new Error("Transaction reverted on-chain.");
     return hash;
   };
 
@@ -319,9 +320,6 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
       if (await needsApproval(from, prepared.txs.approve, prepared.txs.fill.to as Address, base.id)) {
         setTx({ step: "approving" });
         await sendTx(base.id, prepared.txs.approve);
-        if (await needsApproval(from, prepared.txs.approve, prepared.txs.fill.to as Address, base.id)) {
-          throw new Error("Collateral approval is still insufficient; retry the approval before filling.");
-        }
       }
       setTx({ step: "preflighting" });
       await preflightTx(from, prepared.txs.fill, base.id);
@@ -353,9 +351,6 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
       if (await needsApproval(from, prepared.txs.approve, prepared.txs.fill.to as Address, baseSepolia.id)) {
         setShadowTx({ step: "approving" });
         await sendTx(baseSepolia.id, prepared.txs.approve);
-        if (await needsApproval(from, prepared.txs.approve, prepared.txs.fill.to as Address, baseSepolia.id)) {
-          throw new Error("Circle test USDC approval is still insufficient; retry the approval before filling");
-        }
       }
       setShadowTx({ step: "filling" });
       const hash = await sendTx(baseSepolia.id, prepared.txs.fill);
