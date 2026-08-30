@@ -69,16 +69,31 @@ async function fetchWithBackoff(
 }
 
 /**
- * Extracts and parses JSON from model output, stripping thinking tags (<think>...</think>) if present.
+ * Extracts and parses JSON from model output, stripping thinking tags
+ * (<think>...</think>) if present.
+ *
+ * GonkaRouter can route a request to a reasoning model that opens a <think>
+ * block before answering. Two cases have to be handled separately: a complete
+ * block is removed outright, but a block that hit the token ceiling mid-thought
+ * never emits its closing tag — that one has to be cut from the opening tag to
+ * the end, or the leftover prose reaches JSON.parse and surfaces as
+ * `Unexpected token '<'`. Raising max_tokens (below) is the actual fix for the
+ * truncation; this keeps the failure legible if a model still runs long.
  */
 function extractJson<T>(raw: string): T {
-  let cleaned = raw.replace(/<think[\s\S]*?<\/think>/gi, "").trim();
+  let cleaned = raw.replace(/<think[\s\S]*?<\/think>/gi, "");
+  const danglingThink = cleaned.search(/<think\b/i);
+  if (danglingThink !== -1) cleaned = cleaned.slice(0, danglingThink);
+  cleaned = cleaned.trim();
+
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
-  if (start !== -1 && end !== -1 && end > start) {
-    cleaned = cleaned.slice(start, end + 1);
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error(
+      "[GonkaRouter] model returned no JSON object (likely truncated mid-reasoning — raise max_tokens)",
+    );
   }
-  return JSON.parse(cleaned);
+  return JSON.parse(cleaned.slice(start, end + 1));
 }
 
 /**
@@ -136,7 +151,10 @@ Headline to Fact-Check: "${params.headline}"`;
       },
       body: JSON.stringify({
         model: selectedModel,
-        max_tokens: 600,
+        // PRIMARY is a reasoning model: it spends part of its budget inside a
+        // <think> block before answering, and 600 truncated it mid-thought so
+        // no JSON was ever emitted (see extractJson above).
+        max_tokens: 1800,
         temperature: 0.1,
         messages: [
           { role: "system", content: systemPrompt },
@@ -302,7 +320,8 @@ JSON schema:
         },
         body: JSON.stringify({
           model: selectedModel,
-          max_tokens: 350,
+          // Headroom for a reasoning model's <think> preamble — see above.
+          max_tokens: 1200,
           temperature: 0.1,
           messages: [
             { role: "system", content: systemPrompt },
