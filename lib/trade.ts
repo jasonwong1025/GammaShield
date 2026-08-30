@@ -134,11 +134,10 @@ export async function getTradeQuote(
   });
   const fillableTs = new Set(buyable.map((o) => Number(o.order.expiry)));
 
-  // Duration axis: the SDK's own tenor grid, not an arbitrary day count. MM
-  // pricing only exists at fixed, Friday-anchored expiries (today's "weekly"
-  // reads as however many days remain until that Friday, not exactly 7). A
-  // listed order is preferred over an RFQ estimate, even when its real expiry
-  // is the closest available tenor rather than the ideal grid date.
+  // Duration axis: the SDK's own pricing tenor grid, not an arbitrary day
+  // count. A listed order only marks its matching grid expiry as fillable;
+  // otherwise one short-dated maker order would incorrectly become every
+  // period in the UI.
   const sideRows = pricing.filter((r) => r.isCall === isCall && r.expiry > nowSec);
   if (!sideRows.length && !buyable.length) {
     throw new Error(`no live ${asset} ${side} pricing right now`);
@@ -154,7 +153,7 @@ export async function getTradeQuote(
     );
   };
   const expiries = TRADE_PERIODS.map((p) => {
-    const ts = nearestTenor(p, bookTenors) ?? nearestTenor(p, mmTenors);
+    const ts = nearestTenor(p, mmTenors) ?? nearestTenor(p, bookTenors);
     return ts == null ? null : { period: p, ts, days: (ts - nowSec) / 86400, fillable: fillableTs.has(ts) };
   }).filter((e): e is NonNullable<typeof e> => e != null);
   if (!expiries.length) throw new Error(`no ${asset} ${side} expiries available`);
