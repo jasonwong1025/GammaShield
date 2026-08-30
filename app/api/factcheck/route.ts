@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { analyzeMarketRumor, GONKA_MODELS, type FactCheckRequest } from "@/lib/gonka";
-import { ALL_ASSETS } from "@/lib/assets";
+import { getOptimalPutHedge } from "@/lib/optimizer";
+import { ALL_ASSETS, type Asset } from "@/lib/assets";
 
 export async function POST(req: NextRequest) {
   try {
@@ -26,15 +27,25 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "unsupported model" }, { status: 400 });
     }
 
+    const currentAsset = (asset || "ETH") as Asset;
+    const currentSpot = Number(spotPrice) || 2500;
+
+    let optimalContract = null;
+    try {
+      const optRec = await getOptimalPutHedge(currentAsset, currentSpot);
+      optimalContract = optRec.optimalContract;
+    } catch {}
+
     const requestParams: FactCheckRequest = {
       headline: headline.trim(),
-      asset,
-      gexScore: gexScore ?? 50,
-      spotPrice: spotPrice ?? 0,
-      flipStrike: flipStrike ?? null,
-      netGexUsd: netGexUsd ?? undefined,
-      regime: regime ?? "neutral",
-      model: model ?? undefined,
+      asset: currentAsset,
+      gexScore: Number(gexScore) || 50,
+      spotPrice: currentSpot,
+      flipStrike: flipStrike ? Number(flipStrike) : null,
+      netGexUsd: netGexUsd ? Number(netGexUsd) : undefined,
+      regime: regime || "neutral",
+      model: model || undefined,
+      optimalContract,
     };
 
     const analysis = await analyzeMarketRumor(requestParams);

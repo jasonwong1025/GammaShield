@@ -49,7 +49,7 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
       id: "welcome",
       sender: "ai",
       mode: "simulate",
-      text: `👋 Hi! I'm your Gonka Quantitative Copilot. Select a mode above to test how large trades move ${snap.asset} or verify whether breaking market rumors are real.`,
+      text: `👋 Hi! I'm your Gonka Quantitative Copilot. Ask a "What-If" trade scenario on ${snap.asset} or paste a viral market rumor to verify whether dealer gamma will dampen or amplify the move.`,
       timestamp: Date.now(),
     },
   ]);
@@ -164,7 +164,7 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
             <h2 className="text-[15px] font-semibold text-fg tracking-tight">Gonka AI Copilot</h2>
           </div>
           <p className="text-[12px] text-muted mt-0.5">
-            Check if viral rumors are real or simulate how dealer hedging will react to your trades.
+            Test trade slippage and dealer feedback loops, or verify breaking market rumors against live Net GEX.
           </p>
         </div>
 
@@ -271,7 +271,7 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
                 </div>
 
                 <div className="text-[12px] text-muted leading-relaxed">
-                  <span className="font-semibold text-fg block mb-0.5">Reasoning Analysis:</span>
+                  <span className="font-semibold text-fg block mb-0.5">Quantitative AI Reasoning:</span>
                   <p>{m.rumorData.reasoning}</p>
                 </div>
 
@@ -352,7 +352,7 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
                   {m.whatIfData.amplification > 1.15 && onNavigateToHedge && (
                     <button
                       type="button"
-                      onClick={() => onNavigateToHedge()}
+                      onClick={() => onNavigateToHedge(m.whatIfData?.optimalContract?.strike)}
                       className="shrink-0 px-3 py-1 text-[11px] font-bold rounded-lg bg-crit text-white hover:brightness-110 transition"
                     >
                       Hedge Downside 🛡️
@@ -382,7 +382,7 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
         {loading && (
           <div className="flex items-center gap-2 p-3 rounded-xl bg-panel2 border border-edge text-[12px] text-muted self-start animate-pulse">
             <span className="size-3 rounded-full border-2 border-blue border-t-transparent animate-spin" />
-            <span>Analyzing scenario with GonkaRouter multi-model AI…</span>
+            <span>Analyzing market structure with GonkaRouter multi-model AI…</span>
           </div>
         )}
       </div>

@@ -4,7 +4,6 @@ import type { AssetSnapshot } from "@/lib/engine";
 import type { FeedRow } from "@/lib/snapshot";
 import type { Asset } from "@/lib/assets";
 import { ExecutionTerminal } from "./ExecutionTerminal";
-import type { HedgeIntent } from "./TradePanel";
 import { ScorePanel } from "./ScorePanel";
 import { BookCard } from "./BookFeed";
 
@@ -14,15 +13,15 @@ type Props = {
   asset: Asset;
   live: boolean;
   spot: number;
-  onOpenDashboard: (intent: HedgeIntent) => void;
+  initialStrike?: number;
 };
 
-export function HedgeView({ snap, feed, asset, live, spot, onOpenDashboard }: Props) {
+export function HedgeView({ snap, feed, asset, live, spot, initialStrike }: Props) {
   return (
     <div className="grid grow grid-cols-1 xl:grid-cols-[1fr_380px] gap-px bg-edge">
       {/* Main Column: Execution Terminal */}
       <div className="flex flex-col gap-px min-w-0">
-        <ExecutionTerminal snap={snap} onOpenDashboard={onOpenDashboard} />
+        <ExecutionTerminal snap={snap} initialStrike={initialStrike} />
         <div className="grow bg-panel" />
       </div>
 
