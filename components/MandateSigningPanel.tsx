@@ -1,0 +1,174 @@
+"use client";
+
+import { useState } from "react";
+import { useChainId, useSignTypedData, useSwitchChain } from "wagmi";
+import { baseSepolia } from "wagmi/chains";
+import { isAddress, parseUnits, type Address } from "viem";
+import { MANDATE_EIP712_TYPES, mandateDomain, mandateMessage, type Mandate } from "@/lib/mandate";
+import { shortAddr } from "@/lib/format";
+import type { OptionsAsset } from "@/lib/assets";
+import type { TradeSide } from "@/lib/trade";
+
+const optionBookFromEnv = process.env.NEXT_PUBLIC_BASE_SEPOLIA_SHADOW_OPTION_BOOK_ADDRESS;
+const collateralFromEnv = process.env.NEXT_PUBLIC_BASE_SEPOLIA_SHADOW_USDC_ADDRESS;
+const agentFromEnv = process.env.NEXT_PUBLIC_BASE_SEPOLIA_AGENT_ADDRESS;
+const OPTION_BOOK: Address | undefined = optionBookFromEnv && isAddress(optionBookFromEnv) ? optionBookFromEnv : undefined;
+const COLLATERAL: Address | undefined = collateralFromEnv && isAddress(collateralFromEnv) ? collateralFromEnv : undefined;
+const AGENT: Address | undefined = agentFromEnv && isAddress(agentFromEnv) ? agentFromEnv : undefined;
+
+type Terms = {
+  asset: OptionsAsset;
+  side: TradeSide;
+  premiumPerFill: string;
+  premiumTotal: string;
+  contracts: string;
+  minTenorDays: string;
+  maxTenorDays: string;
+  riskScore: string;
+  persistenceMinutes: string;
+  cooldownMinutes: string;
+  validityHours: string;
+};
+
+const DEFAULT_TERMS: Terms = {
+  asset: "ETH",
+  side: "put",
+  premiumPerFill: "2",
+  premiumTotal: "5",
+  contracts: "1",
+  minTenorDays: "1",
+  maxTenorDays: "14",
+  riskScore: "75",
+  persistenceMinutes: "10",
+  cooldownMinutes: "60",
+  validityHours: "24",
+};
+
+export function MandateSigningPanel({ owner, account }: { owner: Address; account: Address }) {
+  const [terms, setTerms] = useState<Terms>(DEFAULT_TERMS);
+  const [nonce] = useState(() => BigInt(Date.now()));
+  const [signature, setSignature] = useState<`0x${string}` | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const chainId = useChainId();
+  const { switchChainAsync, isPending: isSwitching } = useSwitchChain();
+  const { signTypedDataAsync, isPending: isSigning } = useSignTypedData();
+  const configured = Boolean(OPTION_BOOK && COLLATERAL && AGENT);
+
+  const signMandate = async () => {
+    if (!OPTION_BOOK || !COLLATERAL || !AGENT) return;
+    setError(null);
+    setSignature(null);
+    try {
+      if (chainId !== baseSepolia.id) await switchChainAsync({ chainId: baseSepolia.id });
+      const mandate = buildMandate(owner, account, terms, nonce, OPTION_BOOK, COLLATERAL, AGENT);
+      const signature = await signTypedDataAsync({
+        domain: mandateDomain(baseSepolia.id, account),
+        types: MANDATE_EIP712_TYPES,
+        primaryType: "Mandate",
+        message: mandateMessage(mandate),
+      });
+      setSignature(signature);
+    } catch {
+      setError("Mandate signing was not completed. No policy was activated.");
+    }
+  };
+
+  return (
+    <section className="mt-4 border-t border-edge pt-4" aria-label="Sign execution mandate">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-blue">Step 2 · EIP-712</p>
+          <h3 className="mt-1 text-[14px] font-bold text-fg">Sign execution mandate</h3>
+          <p className="mt-1 text-[12px] text-muted">Review the immutable limits below. Signing is off-chain and does not move funds or activate the agent yet.</p>
+        </div>
+        <span className="rounded-full bg-panel2 px-2.5 py-1 text-[10px] font-semibold text-muted">Revocable before every fill</span>
+      </div>
+
+      {!configured ? (
+        <p className="mt-3 rounded-lg border border-crit/30 bg-crit/10 p-3 text-[12px] text-crit">The Sepolia policy configuration is incomplete.</p>
+      ) : (
+        <>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <Select label="Asset" value={terms.asset} onChange={(asset) => setTerms((value) => ({ ...value, asset: asset as OptionsAsset }))} options={["BTC", "ETH"]} />
+            <Select label="Option side" value={terms.side} onChange={(side) => setTerms((value) => ({ ...value, side: side as TradeSide }))} options={["put", "call"]} />
+            <NumberField label="Max premium / fill" value={terms.premiumPerFill} suffix="test USDC" onChange={(premiumPerFill) => setTerms((value) => ({ ...value, premiumPerFill }))} />
+            <NumberField label="Max premium / mandate" value={terms.premiumTotal} suffix="test USDC" onChange={(premiumTotal) => setTerms((value) => ({ ...value, premiumTotal }))} />
+            <NumberField label="Contracts / fill" value={terms.contracts} suffix="contracts" onChange={(contracts) => setTerms((value) => ({ ...value, contracts }))} />
+            <NumberField label="Risk trigger" value={terms.riskScore} suffix="/ 100" onChange={(riskScore) => setTerms((value) => ({ ...value, riskScore }))} />
+            <NumberField label="Min tenor" value={terms.minTenorDays} suffix="days" onChange={(minTenorDays) => setTerms((value) => ({ ...value, minTenorDays }))} />
+            <NumberField label="Max tenor" value={terms.maxTenorDays} suffix="days" onChange={(maxTenorDays) => setTerms((value) => ({ ...value, maxTenorDays }))} />
+            <NumberField label="Risk persistence" value={terms.persistenceMinutes} suffix="minutes" onChange={(persistenceMinutes) => setTerms((value) => ({ ...value, persistenceMinutes }))} />
+            <NumberField label="Fill cooldown" value={terms.cooldownMinutes} suffix="minutes" onChange={(cooldownMinutes) => setTerms((value) => ({ ...value, cooldownMinutes }))} />
+            <NumberField label="Mandate validity" value={terms.validityHours} suffix="hours" onChange={(validityHours) => setTerms((value) => ({ ...value, validityHours }))} />
+          </div>
+
+          <div className="mt-3 grid gap-2 rounded-lg border border-edge bg-panel2 p-3 text-[11px] sm:grid-cols-[110px_1fr]">
+            <span className="text-faint">Policy account</span><span className="font-mono text-fg">{shortAddr(account)}</span>
+            <span className="text-faint">Demo agent</span><span className="font-mono text-fg">{shortAddr(AGENT!)}</span>
+            <span className="text-faint">Policy nonce</span><span className="font-mono text-fg">{nonce.toString()}</span>
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button type="button" onClick={() => void signMandate()} disabled={isSwitching || isSigning} className="h-9 rounded-lg bg-blue px-3 text-[12px] font-semibold text-white hover:brightness-110 disabled:cursor-wait disabled:opacity-60">
+              {isSwitching ? "Switching network…" : isSigning ? "Confirm in wallet…" : "Review and sign mandate"}
+            </button>
+            <span className="text-[11px] text-faint">The agent cannot change these terms.</span>
+          </div>
+        </>
+      )}
+
+      {signature && <p className="mt-3 rounded-lg border border-calm/30 bg-calm/10 p-3 text-[12px] text-calm">Mandate signed locally. It is not yet registered with the agent or funded.</p>}
+      {error && <p className="mt-3 rounded-lg border border-crit/30 bg-crit/10 p-3 text-[12px] text-crit">{error}</p>}
+    </section>
+  );
+}
+
+function buildMandate(owner: Address, account: Address, terms: Terms, nonce: bigint, optionBook: Address, collateral: Address, agent: Address): Mandate {
+  const perFill = units(terms.premiumPerFill, "premium per fill");
+  const total = units(terms.premiumTotal, "premium total");
+  const minTenorDays = whole(terms.minTenorDays, "minimum tenor", 1, 28);
+  const maxTenorDays = whole(terms.maxTenorDays, "maximum tenor", minTenorDays, 56);
+  const validityHours = whole(terms.validityHours, "mandate validity", 1, 168);
+  const persistenceMinutes = whole(terms.persistenceMinutes, "risk persistence", 0, validityHours * 60);
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    owner,
+    account,
+    agent,
+    optionBook,
+    collateral,
+    asset: terms.asset,
+    side: terms.side,
+    maxPremiumPerFill: perFill,
+    maxPremiumTotal: total,
+    maxContractsPerFill: units(terms.contracts, "contracts"),
+    minTenorSeconds: minTenorDays * 86400,
+    maxTenorSeconds: maxTenorDays * 86400,
+    riskThresholdBps: whole(terms.riskScore, "risk trigger", 0, 100) * 100,
+    persistenceSeconds: persistenceMinutes * 60,
+    minExecutionIntervalSeconds: whole(terms.cooldownMinutes, "fill cooldown", 0, validityHours * 60) * 60,
+    validAfter: now,
+    expiresAt: now + validityHours * 3600,
+    nonce,
+  };
+}
+
+function units(value: string, label: string): bigint {
+  if (!/^\d+(?:\.\d{1,6})?$/.test(value) || parseUnits(value, 6) <= 0n) throw new Error(`invalid ${label}`);
+  return parseUnits(value, 6);
+}
+
+function whole(value: string, label: string, min: number, max: number): number {
+  if (!/^\d+$/.test(value)) throw new Error(`invalid ${label}`);
+  const number = Number(value);
+  if (!Number.isSafeInteger(number) || number < min || number > max) throw new Error(`invalid ${label}`);
+  return number;
+}
+
+function NumberField({ label, value, suffix, onChange }: { label: string; value: string; suffix: string; onChange: (value: string) => void }) {
+  return <label className="rounded-lg border border-edge bg-panel2 p-2.5 text-[11px] text-faint"><span className="block">{label}</span><span className="mt-1 flex items-center gap-1"><input inputMode="decimal" value={value} onChange={(event) => onChange(event.target.value)} className="min-w-0 flex-1 bg-transparent text-[13px] font-semibold text-fg outline-none" /><span>{suffix}</span></span></label>;
+}
+
+function Select({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) {
+  return <label className="rounded-lg border border-edge bg-panel2 p-2.5 text-[11px] text-faint"><span className="block">{label}</span><select value={value} onChange={(event) => onChange(event.target.value)} className="mt-1 w-full bg-transparent text-[13px] font-semibold text-fg outline-none">{options.map((option) => <option key={option} value={option}>{option.toUpperCase()}</option>)}</select></label>;
+}

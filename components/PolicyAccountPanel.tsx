@@ -6,6 +6,7 @@ import { baseSepolia } from "wagmi/chains";
 import { isAddress, zeroHash, type Address } from "viem";
 import { mandateAccountFactoryAbi } from "@/lib/generated/contracts";
 import { shortAddr } from "@/lib/format";
+import { MandateSigningPanel } from "./MandateSigningPanel";
 
 const factoryFromEnv = process.env.NEXT_PUBLIC_BASE_SEPOLIA_MANDATE_FACTORY_ADDRESS;
 const FACTORY_ADDRESS: Address | undefined = factoryFromEnv && isAddress(factoryFromEnv) ? factoryFromEnv : undefined;
@@ -94,6 +95,7 @@ export function PolicyAccountPanel() {
             )}
             <span className="text-[11px] text-faint">This is a one-time wallet transaction; it does not enable autonomous trading.</span>
           </div>
+          {deployed && accountAddress && <MandateSigningPanel owner={address} account={accountAddress} />}
         </>
       )}
 
