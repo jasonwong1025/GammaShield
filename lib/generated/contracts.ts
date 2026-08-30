@@ -22,6 +22,13 @@ export const mandateAccountAbi = [
   { type: 'receive', stateMutability: 'payable' },
   {
     type: 'function',
+    inputs: [],
+    name: 'activeMandateHash',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     inputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
     name: 'controls',
     outputs: [
@@ -53,48 +60,7 @@ export const mandateAccountAbi = [
   {
     type: 'function',
     inputs: [
-      {
-        name: 'mandate',
-        internalType: 'struct MandateAccount.Mandate',
-        type: 'tuple',
-        components: [
-          { name: 'owner', internalType: 'address', type: 'address' },
-          { name: 'account', internalType: 'address', type: 'address' },
-          { name: 'agent', internalType: 'address', type: 'address' },
-          { name: 'optionBook', internalType: 'address', type: 'address' },
-          { name: 'collateral', internalType: 'address', type: 'address' },
-          { name: 'asset', internalType: 'bytes32', type: 'bytes32' },
-          { name: 'side', internalType: 'uint8', type: 'uint8' },
-          {
-            name: 'maxPremiumPerFill',
-            internalType: 'uint256',
-            type: 'uint256',
-          },
-          { name: 'maxPremiumTotal', internalType: 'uint256', type: 'uint256' },
-          {
-            name: 'maxContractsPerFill',
-            internalType: 'uint256',
-            type: 'uint256',
-          },
-          { name: 'minTenorSeconds', internalType: 'uint64', type: 'uint64' },
-          { name: 'maxTenorSeconds', internalType: 'uint64', type: 'uint64' },
-          { name: 'riskThresholdBps', internalType: 'uint16', type: 'uint16' },
-          {
-            name: 'persistenceSeconds',
-            internalType: 'uint64',
-            type: 'uint64',
-          },
-          {
-            name: 'minExecutionIntervalSeconds',
-            internalType: 'uint64',
-            type: 'uint64',
-          },
-          { name: 'validAfter', internalType: 'uint64', type: 'uint64' },
-          { name: 'expiresAt', internalType: 'uint64', type: 'uint64' },
-          { name: 'nonce', internalType: 'uint256', type: 'uint256' },
-        ],
-      },
-      { name: 'mandateSignature', internalType: 'bytes', type: 'bytes' },
+      { name: 'hash', internalType: 'bytes32', type: 'bytes32' },
       {
         name: 'risk',
         internalType: 'struct MandateAccount.RiskAttestation',
@@ -134,6 +100,62 @@ export const mandateAccountAbi = [
     name: 'executeShadow',
     outputs: [{ name: 'positionId', internalType: 'uint256', type: 'uint256' }],
     stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'hash', internalType: 'bytes32', type: 'bytes32' }],
+    name: 'getMandate',
+    outputs: [
+      {
+        name: '',
+        internalType: 'struct MandateAccount.Mandate',
+        type: 'tuple',
+        components: [
+          { name: 'owner', internalType: 'address', type: 'address' },
+          { name: 'account', internalType: 'address', type: 'address' },
+          { name: 'agent', internalType: 'address', type: 'address' },
+          { name: 'optionBook', internalType: 'address', type: 'address' },
+          { name: 'collateral', internalType: 'address', type: 'address' },
+          { name: 'asset', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'side', internalType: 'uint8', type: 'uint8' },
+          {
+            name: 'maxPremiumPerFill',
+            internalType: 'uint256',
+            type: 'uint256',
+          },
+          { name: 'maxPremiumTotal', internalType: 'uint256', type: 'uint256' },
+          {
+            name: 'maxContractsPerFill',
+            internalType: 'uint256',
+            type: 'uint256',
+          },
+          { name: 'minTenorSeconds', internalType: 'uint64', type: 'uint64' },
+          { name: 'maxTenorSeconds', internalType: 'uint64', type: 'uint64' },
+          { name: 'riskThresholdBps', internalType: 'uint16', type: 'uint16' },
+          {
+            name: 'persistenceSeconds',
+            internalType: 'uint64',
+            type: 'uint64',
+          },
+          {
+            name: 'minExecutionIntervalSeconds',
+            internalType: 'uint64',
+            type: 'uint64',
+          },
+          { name: 'validAfter', internalType: 'uint64', type: 'uint64' },
+          { name: 'expiresAt', internalType: 'uint64', type: 'uint64' },
+          { name: 'nonce', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    name: 'isMandateRegistered',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
   },
   {
     type: 'function',
@@ -200,49 +222,7 @@ export const mandateAccountAbi = [
   },
   {
     type: 'function',
-    inputs: [
-      {
-        name: 'mandate',
-        internalType: 'struct MandateAccount.Mandate',
-        type: 'tuple',
-        components: [
-          { name: 'owner', internalType: 'address', type: 'address' },
-          { name: 'account', internalType: 'address', type: 'address' },
-          { name: 'agent', internalType: 'address', type: 'address' },
-          { name: 'optionBook', internalType: 'address', type: 'address' },
-          { name: 'collateral', internalType: 'address', type: 'address' },
-          { name: 'asset', internalType: 'bytes32', type: 'bytes32' },
-          { name: 'side', internalType: 'uint8', type: 'uint8' },
-          {
-            name: 'maxPremiumPerFill',
-            internalType: 'uint256',
-            type: 'uint256',
-          },
-          { name: 'maxPremiumTotal', internalType: 'uint256', type: 'uint256' },
-          {
-            name: 'maxContractsPerFill',
-            internalType: 'uint256',
-            type: 'uint256',
-          },
-          { name: 'minTenorSeconds', internalType: 'uint64', type: 'uint64' },
-          { name: 'maxTenorSeconds', internalType: 'uint64', type: 'uint64' },
-          { name: 'riskThresholdBps', internalType: 'uint16', type: 'uint16' },
-          {
-            name: 'persistenceSeconds',
-            internalType: 'uint64',
-            type: 'uint64',
-          },
-          {
-            name: 'minExecutionIntervalSeconds',
-            internalType: 'uint64',
-            type: 'uint64',
-          },
-          { name: 'validAfter', internalType: 'uint64', type: 'uint64' },
-          { name: 'expiresAt', internalType: 'uint64', type: 'uint64' },
-          { name: 'nonce', internalType: 'uint256', type: 'uint256' },
-        ],
-      },
-    ],
+    inputs: [{ name: 'hash', internalType: 'bytes32', type: 'bytes32' }],
     name: 'pauseMandate',
     outputs: [],
     stateMutability: 'nonpayable',
@@ -291,56 +271,22 @@ export const mandateAccountAbi = [
           { name: 'nonce', internalType: 'uint256', type: 'uint256' },
         ],
       },
+      { name: 'signature', internalType: 'bytes', type: 'bytes' },
     ],
+    name: 'registerMandate',
+    outputs: [{ name: 'hash', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'hash', internalType: 'bytes32', type: 'bytes32' }],
     name: 'resumeMandate',
     outputs: [],
     stateMutability: 'nonpayable',
   },
   {
     type: 'function',
-    inputs: [
-      {
-        name: 'mandate',
-        internalType: 'struct MandateAccount.Mandate',
-        type: 'tuple',
-        components: [
-          { name: 'owner', internalType: 'address', type: 'address' },
-          { name: 'account', internalType: 'address', type: 'address' },
-          { name: 'agent', internalType: 'address', type: 'address' },
-          { name: 'optionBook', internalType: 'address', type: 'address' },
-          { name: 'collateral', internalType: 'address', type: 'address' },
-          { name: 'asset', internalType: 'bytes32', type: 'bytes32' },
-          { name: 'side', internalType: 'uint8', type: 'uint8' },
-          {
-            name: 'maxPremiumPerFill',
-            internalType: 'uint256',
-            type: 'uint256',
-          },
-          { name: 'maxPremiumTotal', internalType: 'uint256', type: 'uint256' },
-          {
-            name: 'maxContractsPerFill',
-            internalType: 'uint256',
-            type: 'uint256',
-          },
-          { name: 'minTenorSeconds', internalType: 'uint64', type: 'uint64' },
-          { name: 'maxTenorSeconds', internalType: 'uint64', type: 'uint64' },
-          { name: 'riskThresholdBps', internalType: 'uint16', type: 'uint16' },
-          {
-            name: 'persistenceSeconds',
-            internalType: 'uint64',
-            type: 'uint64',
-          },
-          {
-            name: 'minExecutionIntervalSeconds',
-            internalType: 'uint64',
-            type: 'uint64',
-          },
-          { name: 'validAfter', internalType: 'uint64', type: 'uint64' },
-          { name: 'expiresAt', internalType: 'uint64', type: 'uint64' },
-          { name: 'nonce', internalType: 'uint256', type: 'uint256' },
-        ],
-      },
-    ],
+    inputs: [{ name: 'hash', internalType: 'bytes32', type: 'bytes32' }],
     name: 'revokeMandate',
     outputs: [],
     stateMutability: 'nonpayable',
@@ -438,6 +384,25 @@ export const mandateAccountAbi = [
       },
     ],
     name: 'MandatePaused',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'mandateHash',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: true,
+      },
+      {
+        name: 'expiresAt',
+        internalType: 'uint64',
+        type: 'uint64',
+        indexed: false,
+      },
+    ],
+    name: 'MandateRegistered',
   },
   {
     type: 'event',
@@ -809,6 +774,15 @@ export const useReadMandateAccount = /*#__PURE__*/ createUseReadContract({
 })
 
 /**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"activeMandateHash"`
+ */
+export const useReadMandateAccountActiveMandateHash =
+  /*#__PURE__*/ createUseReadContract({
+    abi: mandateAccountAbi,
+    functionName: 'activeMandateHash',
+  })
+
+/**
  * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"controls"`
  */
 export const useReadMandateAccountControls =
@@ -824,6 +798,24 @@ export const useReadMandateAccountEntryPoint =
   /*#__PURE__*/ createUseReadContract({
     abi: mandateAccountAbi,
     functionName: 'entryPoint',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"getMandate"`
+ */
+export const useReadMandateAccountGetMandate =
+  /*#__PURE__*/ createUseReadContract({
+    abi: mandateAccountAbi,
+    functionName: 'getMandate',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"isMandateRegistered"`
+ */
+export const useReadMandateAccountIsMandateRegistered =
+  /*#__PURE__*/ createUseReadContract({
+    abi: mandateAccountAbi,
+    functionName: 'isMandateRegistered',
   })
 
 /**
@@ -905,6 +897,15 @@ export const useWriteMandateAccountPauseMandate =
   })
 
 /**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"registerMandate"`
+ */
+export const useWriteMandateAccountRegisterMandate =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: mandateAccountAbi,
+    functionName: 'registerMandate',
+  })
+
+/**
  * Wraps __{@link useWriteContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"resumeMandate"`
  */
 export const useWriteMandateAccountResumeMandate =
@@ -965,6 +966,15 @@ export const useSimulateMandateAccountPauseMandate =
   })
 
 /**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"registerMandate"`
+ */
+export const useSimulateMandateAccountRegisterMandate =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: mandateAccountAbi,
+    functionName: 'registerMandate',
+  })
+
+/**
  * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"resumeMandate"`
  */
 export const useSimulateMandateAccountResumeMandate =
@@ -1013,6 +1023,15 @@ export const useWatchMandateAccountMandatePausedEvent =
   /*#__PURE__*/ createUseWatchContractEvent({
     abi: mandateAccountAbi,
     eventName: 'MandatePaused',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link mandateAccountAbi}__ and `eventName` set to `"MandateRegistered"`
+ */
+export const useWatchMandateAccountMandateRegisteredEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: mandateAccountAbi,
+    eventName: 'MandateRegistered',
   })
 
 /**

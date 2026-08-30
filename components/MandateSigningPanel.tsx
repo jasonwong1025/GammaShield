@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
-import { useChainId, useSignTypedData, useSwitchChain } from "wagmi";
+import { useEffect, useMemo, useState } from "react";
+import { useChainId, useReadContract, useSignTypedData, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 import { baseSepolia } from "wagmi/chains";
-import { isAddress, parseUnits, type Address } from "viem";
+import { hashStruct, isAddress, parseUnits, zeroHash, type Address, type Hex } from "viem";
+import { mandateAccountAbi } from "@/lib/generated/contracts";
 import { MANDATE_EIP712_TYPES, mandateDomain, mandateMessage, type Mandate } from "@/lib/mandate";
 import { shortAddr } from "@/lib/format";
 import type { OptionsAsset } from "@/lib/assets";
@@ -47,17 +48,42 @@ const DEFAULT_TERMS: Terms = {
 export function MandateSigningPanel({ owner, account }: { owner: Address; account: Address }) {
   const [terms, setTerms] = useState<Terms>(DEFAULT_TERMS);
   const [nonce] = useState(() => BigInt(Date.now()));
-  const [signature, setSignature] = useState<`0x${string}` | null>(null);
+  const [signed, setSigned] = useState<{ mandate: Mandate; signature: Hex } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const chainId = useChainId();
   const { switchChainAsync, isPending: isSwitching } = useSwitchChain();
   const { signTypedDataAsync, isPending: isSigning } = useSignTypedData();
+  const { writeContractAsync, data: transactionHash, isPending: isSubmitting } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ chainId: baseSepolia.id, hash: transactionHash });
+  const { data: activeMandateHash, refetch: refetchActiveMandate } = useReadContract({
+    address: account,
+    abi: mandateAccountAbi,
+    functionName: "activeMandateHash",
+    chainId: baseSepolia.id,
+  });
+  const { data: control, refetch: refetchControl } = useReadContract({
+    address: account,
+    abi: mandateAccountAbi,
+    functionName: "controls",
+    args: activeMandateHash && activeMandateHash !== zeroHash ? [activeMandateHash] : undefined,
+    chainId: baseSepolia.id,
+    query: { enabled: Boolean(activeMandateHash && activeMandateHash !== zeroHash) },
+  });
   const configured = Boolean(OPTION_BOOK && COLLATERAL && AGENT);
+  const signedHash = useMemo(() => signed && hashStruct({ data: mandateMessage(signed.mandate), primaryType: "Mandate", types: MANDATE_EIP712_TYPES }), [signed]);
+  const active = activeMandateHash && activeMandateHash !== zeroHash ? activeMandateHash : null;
+  const busy = isSwitching || isSigning || isSubmitting || isConfirming;
+
+  useEffect(() => {
+    if (!isSuccess) return;
+    void refetchActiveMandate();
+    void refetchControl();
+  }, [isSuccess, refetchActiveMandate, refetchControl]);
 
   const signMandate = async () => {
     if (!OPTION_BOOK || !COLLATERAL || !AGENT) return;
     setError(null);
-    setSignature(null);
+    setSigned(null);
     try {
       if (chainId !== baseSepolia.id) await switchChainAsync({ chainId: baseSepolia.id });
       const mandate = buildMandate(owner, account, terms, nonce, OPTION_BOOK, COLLATERAL, AGENT);
@@ -67,9 +93,37 @@ export function MandateSigningPanel({ owner, account }: { owner: Address; accoun
         primaryType: "Mandate",
         message: mandateMessage(mandate),
       });
-      setSignature(signature);
+      setSigned({ mandate, signature });
     } catch {
       setError("Mandate signing was not completed. No policy was activated.");
+    }
+  };
+
+  const registerMandate = async () => {
+    if (!signed) return;
+    setError(null);
+    try {
+      if (chainId !== baseSepolia.id) await switchChainAsync({ chainId: baseSepolia.id });
+      await writeContractAsync({
+        address: account,
+        abi: mandateAccountAbi,
+        functionName: "registerMandate",
+        args: [mandateMessage(signed.mandate), signed.signature],
+        chainId: baseSepolia.id,
+      });
+    } catch {
+      setError("Mandate registration was not completed. No policy changed.");
+    }
+  };
+
+  const changeControl = async (functionName: "pauseMandate" | "resumeMandate" | "revokeMandate") => {
+    if (!active) return;
+    setError(null);
+    try {
+      if (chainId !== baseSepolia.id) await switchChainAsync({ chainId: baseSepolia.id });
+      await writeContractAsync({ address: account, abi: mandateAccountAbi, functionName, args: [active], chainId: baseSepolia.id });
+    } catch {
+      setError("Mandate control was not completed. The on-chain policy is unchanged.");
     }
   };
 
@@ -79,7 +133,7 @@ export function MandateSigningPanel({ owner, account }: { owner: Address; accoun
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-wide text-blue">Step 2 · EIP-712</p>
           <h3 className="mt-1 text-[14px] font-bold text-fg">Sign execution mandate</h3>
-          <p className="mt-1 text-[12px] text-muted">Review the immutable limits below. Signing is off-chain and does not move funds or activate the agent yet.</p>
+          <p className="mt-1 text-[12px] text-muted">Review the immutable limits below. Your wallet signs, then registers the exact policy on this account. It never moves funds.</p>
         </div>
         <span className="rounded-full bg-panel2 px-2.5 py-1 text-[10px] font-semibold text-muted">Revocable before every fill</span>
       </div>
@@ -109,7 +163,7 @@ export function MandateSigningPanel({ owner, account }: { owner: Address; accoun
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <button type="button" onClick={() => void signMandate()} disabled={isSwitching || isSigning} className="h-9 rounded-lg bg-blue px-3 text-[12px] font-semibold text-white hover:brightness-110 disabled:cursor-wait disabled:opacity-60">
+            <button type="button" onClick={() => void signMandate()} disabled={busy} className="h-9 rounded-lg bg-blue px-3 text-[12px] font-semibold text-white hover:brightness-110 disabled:cursor-wait disabled:opacity-60">
               {isSwitching ? "Switching network…" : isSigning ? "Confirm in wallet…" : "Review and sign mandate"}
             </button>
             <span className="text-[11px] text-faint">The agent cannot change these terms.</span>
@@ -117,7 +171,9 @@ export function MandateSigningPanel({ owner, account }: { owner: Address; accoun
         </>
       )}
 
-      {signature && <p className="mt-3 rounded-lg border border-calm/30 bg-calm/10 p-3 text-[12px] text-calm">Mandate signed locally. It is not yet registered with the agent or funded.</p>}
+      {signed && signedHash !== active && <div className="mt-3 rounded-lg border border-calm/30 bg-calm/10 p-3 text-[12px] text-calm"><p>Signature ready. Registering records this exact policy on-chain{active ? " and supersedes the active policy" : ""}; it does not fund the account.</p><button type="button" onClick={() => void registerMandate()} disabled={busy} className="mt-2 h-8 rounded-lg bg-calm px-3 text-[11px] font-semibold text-white disabled:cursor-wait disabled:opacity-60">{isSubmitting ? "Confirm in wallet…" : isConfirming ? "Registering policy…" : "Register signed mandate"}</button></div>}
+      {signed && active && signedHash === active && <p className="mt-3 rounded-lg border border-calm/30 bg-calm/10 p-3 text-[12px] text-calm">This signed mandate is active on-chain. It is still unfunded.</p>}
+      {active && <div className="mt-3 rounded-lg border border-edge bg-panel2 p-3 text-[12px] text-muted"><p>Active policy <span className="font-mono text-fg">{shortAddr(active)}</span>{control?.[0] ? " · paused" : " · executable only within its limits"}</p><div className="mt-2 flex flex-wrap gap-2"><button type="button" onClick={() => void changeControl(control?.[0] ? "resumeMandate" : "pauseMandate")} disabled={busy} className="h-8 rounded-lg bg-panel3 px-3 text-[11px] font-semibold text-fg disabled:cursor-wait disabled:opacity-60">{control?.[0] ? "Resume" : "Pause"}</button><button type="button" onClick={() => void changeControl("revokeMandate")} disabled={busy} className="h-8 rounded-lg border border-crit/40 px-3 text-[11px] font-semibold text-crit disabled:cursor-wait disabled:opacity-60">Revoke</button></div></div>}
       {error && <p className="mt-3 rounded-lg border border-crit/30 bg-crit/10 p-3 text-[12px] text-crit">{error}</p>}
     </section>
   );

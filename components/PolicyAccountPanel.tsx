@@ -61,7 +61,7 @@ export function PolicyAccountPanel() {
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-wide text-blue">Base Sepolia · ERC-4337</p>
           <h2 className="mt-1 text-[16px] font-bold text-fg">Policy account</h2>
-          <p className="mt-1 text-[12px] leading-relaxed text-muted">A dedicated smart account holds future test funds. An agent cannot use it until you sign a bounded mandate.</p>
+          <p className="mt-1 text-[12px] leading-relaxed text-muted">A dedicated smart account holds future test funds. An agent cannot use it until you register a bounded mandate.</p>
         </div>
         <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${deployed ? "bg-calm/15 text-calm" : "bg-panel2 text-muted"}`}>
           {deployed ? "Account deployed" : "Not deployed"}
@@ -99,7 +99,7 @@ export function PolicyAccountPanel() {
         </>
       )}
 
-      {(isSuccess || message) && <p className="rounded-lg border border-edge bg-panel2 p-3 text-[12px] text-muted">{isSuccess ? "Policy account deployed. Funding and mandate signing remain disabled until their dedicated steps." : message}</p>}
+      {(isSuccess || message) && <p className="rounded-lg border border-edge bg-panel2 p-3 text-[12px] text-muted">{isSuccess ? "Policy account deployed. It is unfunded and cannot execute until you register a mandate." : message}</p>}
     </section>
   );
 }
