@@ -1,13 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useAccount } from "wagmi";
 import type { Asset } from "@/lib/assets";
 import type { ThetanutsPosition } from "@/lib/positions";
 import { fmtCountdown, fmtExpiryDate, fmtStrike, fmtUsd } from "@/lib/format";
-import { getActiveProvider } from "./WalletConnect";
 
 export function ThetanutsPositions({ asset }: { asset: Asset }) {
-  const [address, setAddress] = useState<string | null>(null);
+  const { address } = useAccount();
   const [positions, setPositions] = useState<ThetanutsPosition[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -36,29 +36,13 @@ export function ThetanutsPositions({ asset }: { asset: Asset }) {
   }, []);
 
   useEffect(() => {
-    const provider = getActiveProvider();
-    if (!provider) return;
-    provider.request({ method: "eth_accounts" }).then((accounts) => {
-      const wallet = (accounts as string[])[0];
-      if (wallet) setAddress(wallet);
-    }).catch(() => {});
-  }, []);
-
-  useEffect(() => {
     if (!address) return;
     const id = setTimeout(() => void load(address), 0);
     return () => clearTimeout(id);
   }, [address, load]);
 
-  const connect = async () => {
-    const provider = getActiveProvider();
-    if (!provider) return setError("Connect a wallet to view Thetanuts positions");
-    const wallet = ((await provider.request({ method: "eth_requestAccounts" })) as string[])[0];
-    if (wallet) setAddress(wallet);
-  };
-
   const filtered = positions.filter((position) => position.asset === asset);
-  if (!address) return <Empty action={connect} label="Connect wallet to view Base-mainnet Thetanuts positions." />;
+  if (!address) return <Empty label="Connect wallet from the top bar to view Base-mainnet Thetanuts positions." />;
   if (!loaded) return <p className="px-5 py-10 text-center text-[12px] text-faint">Reading Thetanuts indexer…</p>;
   if (error) return <Empty action={() => void load(address)} label={error} />;
   if (!filtered.length) return <Empty action={() => void load(address)} label={`No open ${asset} positions indexed for this wallet.`} />;
@@ -87,6 +71,6 @@ export function ThetanutsPositions({ asset }: { asset: Asset }) {
   );
 }
 
-function Empty({ action, label }: { action: () => void; label: string }) {
-  return <div className="px-5 py-10 text-center text-[12px] text-faint"><p>{label}</p><button onClick={action} className="mt-3 text-blue hover:underline">Refresh</button></div>;
+function Empty({ action, label }: { action?: () => void; label: string }) {
+  return <div className="px-5 py-10 text-center text-[12px] text-faint"><p>{label}</p>{action && <button onClick={action} className="mt-3 text-blue hover:underline">Refresh</button>}</div>;
 }

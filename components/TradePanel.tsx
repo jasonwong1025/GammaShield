@@ -10,7 +10,10 @@
 // amount, and duration are all set.
 
 import { useEffect, useRef, useState } from "react";
-import { Interface } from "ethers";
+import { useAccount, useBalance, useSendTransaction, useSwitchChain } from "wagmi";
+import { getPublicClient, readContract, waitForTransactionReceipt } from "wagmi/actions";
+import { base, baseSepolia } from "wagmi/chains";
+import { decodeFunctionData, type Address, type Hex, zeroAddress } from "viem";
 import { isOptionsAsset, type Asset } from "@/lib/assets";
 import type { TradeQuote, TradeSide } from "@/lib/trade";
 import { TRADE_PERIODS, type TradePeriod } from "@/lib/tradePeriods";
@@ -18,23 +21,13 @@ import { COLLATERAL_TOKENS, RESERVE_BUFFER, collateralFor, decimalsForTokenSymbo
 import type { RfqPrepared, RfqStatus } from "@/lib/rfq";
 import type { AiRiskAssessment } from "@/lib/aiRisk";
 import type { ShadowQuote } from "@/lib/shadow";
+import { wagmiConfig } from "@/lib/wagmi";
+import { erc20Abi, useReadErc20BalanceOf } from "@/lib/generated/contracts";
 import { fmtExpiryDate, fmtIv, fmtStrike, fmtUsd, riskColor } from "@/lib/format";
-import {
-  getActiveProvider,
-  BASE_CHAIN,
-  BASE_SEPOLIA_CHAIN,
-  switchToBase,
-  switchToBaseSepolia,
-  type Eip1193Provider,
-} from "./WalletConnect";
 
 const QUOTE_DEBOUNCE_MS = 250;
 const QUOTE_REFRESH_MS = 15_000;
-const ERC20_INTERFACE = new Interface([
-  "function allowance(address owner,address spender) view returns (uint256)",
-  "function balanceOf(address account) view returns (uint256)",
-  "function approve(address spender,uint256 amount) returns (bool)",
-]);
+type GammaShieldChainId = typeof base.id | typeof baseSepolia.id;
 
 type TxPhase =
   | { step: "idle" }
@@ -56,61 +49,25 @@ type ShadowTxPhase =
   | { step: "done"; hash: string; quote: ShadowQuote }
   | { step: "error"; message: string };
 
-async function connectWallet() {
-  const provider = getActiveProvider();
-  if (!provider) throw new Error("No wallet detected — install MetaMask or Phantom.");
-  const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
-  const from = accounts[0];
-  if (!from) throw new Error("no account connected");
-  await switchToBase(provider);
-  if (await provider.request({ method: "eth_chainId" }) !== BASE_CHAIN.chainId) {
-    throw new Error("switch your wallet to Base mainnet to continue");
-  }
-  return { provider, from };
-}
-
-async function connectShadowWallet() {
-  const provider = getActiveProvider();
-  if (!provider) throw new Error("No wallet detected — install MetaMask or Phantom.");
-  const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
-  const from = accounts[0];
-  if (!from) throw new Error("no account connected");
-  await switchToBaseSepolia(provider);
-  if (await provider.request({ method: "eth_chainId" }) !== BASE_SEPOLIA_CHAIN.chainId) {
-    throw new Error("switch your wallet to Base Sepolia to continue");
-  }
-  return { provider, from };
-}
-
-async function sendTx(
-  provider: Eip1193Provider,
-  from: string,
-  tx: { to: string; data: string },
-): Promise<string> {
-  const hash = (await provider.request({
-    method: "eth_sendTransaction",
-    params: [{ from, to: tx.to, data: tx.data }],
-  })) as string;
-  await waitForReceipt(provider, hash);
-  return hash;
-}
-
 // Skip the approve popup when the token allowance already covers the pull —
 // fewer wallet prompts, and sidesteps MetaMask's spending-cap alert flow.
 async function needsApproval(
-  provider: Eip1193Provider,
-  owner: string,
+  owner: Address,
   approve: { to: string; data: string },
-  spender: string,
+  spender: Address,
+  chainId: GammaShieldChainId,
 ): Promise<boolean> {
   try {
-    const needed = ERC20_INTERFACE.decodeFunctionData("approve", approve.data)[1] as bigint;
-    const data = ERC20_INTERFACE.encodeFunctionData("allowance", [owner, spender]);
-    const res = (await provider.request({
-      method: "eth_call",
-      params: [{ to: approve.to, data }, "latest"],
-    })) as string;
-    return (ERC20_INTERFACE.decodeFunctionResult("allowance", res)[0] as bigint) < needed;
+    const decoded = decodeFunctionData({ abi: erc20Abi, data: approve.data as Hex });
+    if (decoded.functionName !== "approve" || !decoded.args) return true;
+    const allowance = await readContract(wagmiConfig, {
+      address: approve.to as Address,
+      abi: erc20Abi,
+      functionName: "allowance",
+      args: [owner, spender],
+      chainId,
+    });
+    return allowance < decoded.args[1];
   } catch {
     return true; // can't verify — approve to be safe
   }
@@ -122,13 +79,17 @@ async function needsApproval(
  * transaction. The wallet remains the RPC authority for the user's account.
  */
 async function preflightTx(
-  provider: Eip1193Provider,
-  from: string,
+  from: Address,
   tx: { to: string; data: string },
+  chainId: GammaShieldChainId,
 ) {
-  await provider.request({
-    method: "eth_call",
-    params: [{ from, to: tx.to, data: tx.data }, "pending"],
+  const client = getPublicClient(wagmiConfig, { chainId });
+  if (!client) throw new Error("Base RPC is not configured");
+  await client.call({
+    account: from,
+    to: tx.to as Address,
+    data: tx.data as Hex,
+    blockTag: "pending",
   });
 }
 
@@ -141,21 +102,6 @@ async function rfqApi<T>(body: Record<string, unknown>): Promise<T> {
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? `rfq ${res.status}`);
   return data as T;
-}
-
-async function waitForReceipt(provider: Eip1193Provider, hash: string) {
-  for (let i = 0; i < 60; i++) {
-    const receipt = (await provider.request({
-      method: "eth_getTransactionReceipt",
-      params: [hash],
-    })) as { status?: string } | null;
-    if (receipt) {
-      if (receipt.status === "0x0") throw new Error("transaction reverted");
-      return;
-    }
-    await new Promise((r) => setTimeout(r, 1500));
-  }
-  throw new Error("timed out waiting for confirmation");
 }
 
 /** aBasWETH → WETH etc. — friendlier display, full symbol in the title attr. */
@@ -172,6 +118,9 @@ function periodLabel(p: TradePeriod) {
 }
 
 export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
+  const { address: walletAddress, chainId } = useAccount();
+  const { switchChainAsync } = useSwitchChain();
+  const { sendTransactionAsync } = useSendTransaction();
   const [side, setSide] = useState<TradeSide>("call");
   const [executionMode, setExecutionMode] = useState<"mainnet" | "shadow">("mainnet");
   const [amountStr, setAmountStr] = useState("1");
@@ -183,9 +132,6 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
   const [shadowTx, setShadowTx] = useState<ShadowTxPhase>({ step: "idle" });
   const [rfq, setRfq] = useState<RfqPhase>({ step: "idle" });
   const [mountedSec] = useState(() => Math.floor(Date.now() / 1000));
-  const [walletAddress, setWalletAddress] = useState<string | null>(null);
-  const [tokenBalance, setTokenBalance] = useState<number | null>(null);
-  const [ethBalance, setEthBalance] = useState<number | null>(null);
   const [aiRisk, setAiRisk] = useState<AiRiskAssessment | null>(null);
   // Trade signature the current aiRisk was computed for — lets the render
   // detect a config change since the last click and hide the stale read
@@ -200,77 +146,58 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
   const amount = Number(amountStr);
   const validAmount = Number.isFinite(amount) && amount > 0;
 
-  // Silent lookup of whichever wallet is already connected (no popup) — lets
-  // us warn about insufficient balance before the user even clicks buy.
-  useEffect(() => {
-    const provider = getActiveProvider();
-    if (!provider) return;
-    let stale = false;
-    provider
-      .request({ method: "eth_accounts" })
-      .then((accounts) => {
-        if (!stale) setWalletAddress((accounts as string[])[0] ?? null);
-      })
-      .catch(() => {});
-    const onAccountsChanged = ((accounts: string[]) => {
-      setWalletAddress(accounts[0] ?? null);
-    }) as never;
-    provider.on?.("accountsChanged", onAccountsChanged);
-    return () => {
-      stale = true;
-      provider.removeListener?.("accountsChanged", onAccountsChanged);
-    };
-  }, []);
-
   // Whichever collateral token this trade would actually pull from: the
   // exact maker's token for a book fill, else the standard RFQ collateral.
   const collateralInfo =
-    quote?.source === "book" && quote.txs
-      ? {
-          address: quote.txs.approve.to,
-          decimals: decimalsForTokenSymbol(quote.premiumToken),
-          symbol: quote.premiumToken,
-        }
-      : isOptionsAsset(asset)
+    executionMode === "mainnet"
+      ? quote?.source === "book" && quote.txs
         ? {
-            address: COLLATERAL_TOKENS[collateralFor(asset, side)].address,
-            decimals: COLLATERAL_TOKENS[collateralFor(asset, side)].decimals,
-            symbol: collateralFor(asset, side),
+            address: quote.txs.approve.to,
+            decimals: decimalsForTokenSymbol(quote.premiumToken),
+            symbol: quote.premiumToken,
           }
-        : null;
+        : isOptionsAsset(asset)
+          ? {
+              address: COLLATERAL_TOKENS[collateralFor(asset, side)].address,
+              decimals: COLLATERAL_TOKENS[collateralFor(asset, side)].decimals,
+              symbol: collateralFor(asset, side),
+            }
+          : null
+      : null;
   const collateralAddress = collateralInfo?.address;
   const collateralDecimals = collateralInfo?.decimals;
+  const executionChainId: GammaShieldChainId = executionMode === "mainnet" ? base.id : baseSepolia.id;
+  const { data: tokenBalanceRaw } = useReadErc20BalanceOf({
+    address: (collateralAddress ?? zeroAddress) as Address,
+    args: [walletAddress ?? zeroAddress],
+    chainId: executionChainId,
+    query: { enabled: !!walletAddress && !!collateralAddress && collateralDecimals != null },
+  });
+  const { data: nativeBalance } = useBalance({
+    address: walletAddress,
+    chainId: executionChainId,
+    query: { enabled: !!walletAddress },
+  });
+  const tokenBalance = tokenBalanceRaw != null && collateralDecimals != null
+    ? Number(tokenBalanceRaw) / 10 ** collateralDecimals
+    : null;
+  const ethBalance = nativeBalance ? Number(nativeBalance.value) / 1e18 : null;
 
-  // Balance check — a wallet-side warning, not a substitute for the real
-  // approve/fill math, so plain floats are fine here.
-  useEffect(() => {
-    if (!walletAddress || !collateralAddress || collateralDecimals == null) return;
-    const provider = getActiveProvider();
-    if (!provider) return;
-    let stale = false;
-    const balanceOfData = ERC20_INTERFACE.encodeFunctionData("balanceOf", [walletAddress]);
-    provider
-      .request({ method: "eth_call", params: [{ to: collateralAddress, data: balanceOfData }, "latest"] })
-      .then((res) => {
-        if (stale) return;
-        const balance = ERC20_INTERFACE.decodeFunctionResult("balanceOf", res as string)[0] as bigint;
-        setTokenBalance(Number(balance) / 10 ** collateralDecimals);
-      })
-      .catch(() => {
-        if (!stale) setTokenBalance(null);
-      });
-    provider
-      .request({ method: "eth_getBalance", params: [walletAddress, "latest"] })
-      .then((res) => {
-        if (!stale) setEthBalance(Number(BigInt(res as string)) / 1e18);
-      })
-      .catch(() => {
-        if (!stale) setEthBalance(null);
-      });
-    return () => {
-      stale = true;
-    };
-  }, [walletAddress, collateralAddress, collateralDecimals]);
+  const ensureChain = async (targetChainId: GammaShieldChainId): Promise<Address> => {
+    if (!walletAddress) throw new Error("Connect a wallet from the top bar first.");
+    if (chainId !== targetChainId) await switchChainAsync({ chainId: targetChainId });
+    return walletAddress;
+  };
+
+  const sendTx = async (targetChainId: GammaShieldChainId, tx: { to: string; data: string }): Promise<string> => {
+    const hash = await sendTransactionAsync({
+      chainId: targetChainId,
+      to: tx.to as Address,
+      data: tx.data as Hex,
+    });
+    await waitForTransactionReceipt(wagmiConfig, { chainId: targetChainId, hash });
+    return hash;
+  };
 
   // Reset stale quote/tx state when the market or direction changes.
   const [prevKey, setPrevKey] = useState(`${asset}:${side}`);
@@ -362,7 +289,7 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
     if (!validAmount) return;
     try {
       setTx({ step: "connecting" });
-      const { provider, from } = await connectWallet();
+      const from = await ensureChain(base.id);
       setTx({ step: "preparing" });
       const params = new URLSearchParams({
         asset,
@@ -389,17 +316,17 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
         setQuote(prepared);
         throw new Error("Live price changed. Review the refreshed quote before approving.");
       }
-      if (await needsApproval(provider, from, prepared.txs.approve, prepared.txs.fill.to)) {
+      if (await needsApproval(from, prepared.txs.approve, prepared.txs.fill.to as Address, base.id)) {
         setTx({ step: "approving" });
-        await sendTx(provider, from, prepared.txs.approve);
-        if (await needsApproval(provider, from, prepared.txs.approve, prepared.txs.fill.to)) {
+        await sendTx(base.id, prepared.txs.approve);
+        if (await needsApproval(from, prepared.txs.approve, prepared.txs.fill.to as Address, base.id)) {
           throw new Error("Collateral approval is still insufficient; retry the approval before filling.");
         }
       }
       setTx({ step: "preflighting" });
-      await preflightTx(provider, from, prepared.txs.fill);
+      await preflightTx(from, prepared.txs.fill, base.id);
       setTx({ step: "filling" });
-      const fillHash = await sendTx(provider, from, prepared.txs.fill);
+      const fillHash = await sendTx(base.id, prepared.txs.fill);
       setTx({ step: "done", hash: fillHash });
     } catch (e) {
       const message =
@@ -416,22 +343,22 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
     if (!validAmount) return;
     try {
       setShadowTx({ step: "connecting" });
-      const { provider, from } = await connectShadowWallet();
+      const from = await ensureChain(baseSepolia.id);
       setShadowTx({ step: "preparing" });
       const params = new URLSearchParams({ asset, buyer: from, side, contracts: amountStr, period: String(period) });
       const res = await fetch(`/api/shadow/quote?${params}`, { cache: "no-store" });
       const shadowQuote = await res.json();
       if (!res.ok) throw new Error(shadowQuote.error ?? `shadow quote ${res.status}`);
       const prepared = shadowQuote as ShadowQuote;
-      if (await needsApproval(provider, from, prepared.txs.approve, prepared.txs.fill.to)) {
+      if (await needsApproval(from, prepared.txs.approve, prepared.txs.fill.to as Address, baseSepolia.id)) {
         setShadowTx({ step: "approving" });
-        await sendTx(provider, from, prepared.txs.approve);
-        if (await needsApproval(provider, from, prepared.txs.approve, prepared.txs.fill.to)) {
+        await sendTx(baseSepolia.id, prepared.txs.approve);
+        if (await needsApproval(from, prepared.txs.approve, prepared.txs.fill.to as Address, baseSepolia.id)) {
           throw new Error("Circle test USDC approval is still insufficient; retry the approval before filling");
         }
       }
       setShadowTx({ step: "filling" });
-      const hash = await sendTx(provider, from, prepared.txs.fill);
+      const hash = await sendTx(baseSepolia.id, prepared.txs.fill);
       setShadowTx({ step: "done", hash, quote: prepared });
     } catch (e) {
       const message =
@@ -449,7 +376,7 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
     if (!validAmount) return;
     try {
       setRfq({ step: "connecting" });
-      const { provider, from } = await connectWallet();
+      const from = await ensureChain(base.id);
       rfqAddress.current = from;
       const prepared = await rfqApi<RfqPrepared>({
         action: "prepare",
@@ -459,12 +386,12 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
         contracts: amount,
         period,
       });
-      if (await needsApproval(provider, from, prepared.approve, prepared.tx.to)) {
+      if (await needsApproval(from, prepared.approve, prepared.tx.to as Address, base.id)) {
         setRfq({ step: "approving" });
-        await sendTx(provider, from, prepared.approve);
+        await sendTx(base.id, prepared.approve);
       }
       setRfq({ step: "requesting" });
-      await sendTx(provider, from, prepared.tx);
+      await sendTx(base.id, prepared.tx);
       setRfq({ step: "auction", status: null, deadline: prepared.offerDeadlineTs });
     } catch (e) {
       const message =
@@ -507,17 +434,17 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
     const status = rfq.status;
     try {
       setRfq({ step: "accepting", status });
-      const { provider, from } = await connectWallet();
+      const from = await ensureChain(base.id);
       const txs = await rfqApi<{ approve: { to: string; data: string }; settle: { to: string; data: string } }>({
         action: "settle",
         address: from,
         id: status.id,
         offeror: status.best!.offeror,
       });
-      if (await needsApproval(provider, from, txs.approve, txs.settle.to)) {
-        await sendTx(provider, from, txs.approve);
+      if (await needsApproval(from, txs.approve, txs.settle.to as Address, base.id)) {
+        await sendTx(base.id, txs.approve);
       }
-      const hash = await sendTx(provider, from, txs.settle);
+      const hash = await sendTx(base.id, txs.settle);
       let optionAddress: string | null = null;
       try {
         const { rfq: settled } = await rfqApi<{ rfq: RfqStatus | null }>({
@@ -986,7 +913,7 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
       {tx.step === "error" && <p className="text-[12px] text-crit">{tx.message}</p>}
       {shadowTx.step === "done" && (
         <p className="text-[12px] text-calm">
-          Shadow fill confirmed on Base Sepolia. {BASE_SEPOLIA_CHAIN.blockExplorerUrls[0] && <a href={`${BASE_SEPOLIA_CHAIN.blockExplorerUrls[0]}/tx/${shadowTx.hash}`} target="_blank" rel="noopener noreferrer" className="underline">View transaction</a>}
+          Shadow fill confirmed on Base Sepolia. {process.env.NEXT_PUBLIC_BASE_SEPOLIA_EXPLORER_URL && <a href={`${process.env.NEXT_PUBLIC_BASE_SEPOLIA_EXPLORER_URL}/tx/${shadowTx.hash}`} target="_blank" rel="noopener noreferrer" className="underline">View transaction</a>}
         </p>
       )}
       {shadowTx.step === "error" && <p className="text-[12px] text-crit">{shadowTx.message}</p>}

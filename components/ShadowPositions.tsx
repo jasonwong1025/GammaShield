@@ -1,13 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useAccount } from "wagmi";
 import type { Asset } from "@/lib/assets";
 import type { ShadowPosition } from "@/lib/shadow";
 import { fmtCountdown, fmtExpiryDate, fmtStrike, fmtUsd } from "@/lib/format";
-import { getActiveProvider } from "./WalletConnect";
 
 export function ShadowPositions({ asset }: { asset: Asset }) {
-  const [address, setAddress] = useState<string | null>(null);
+  const { address } = useAccount();
   const [positions, setPositions] = useState<ShadowPosition[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -36,15 +36,6 @@ export function ShadowPositions({ asset }: { asset: Asset }) {
   }, []);
 
   useEffect(() => {
-    const provider = getActiveProvider();
-    if (!provider) return;
-    provider.request({ method: "eth_accounts" }).then((accounts) => {
-      const buyer = (accounts as string[])[0];
-      if (buyer) setAddress(buyer);
-    }).catch(() => {});
-  }, []);
-
-  useEffect(() => {
     if (!address) return;
     const initial = setTimeout(() => void load(address), 0);
     const id = setInterval(() => void load(address), 10_000);
@@ -54,17 +45,9 @@ export function ShadowPositions({ asset }: { asset: Asset }) {
     };
   }, [address, load]);
 
-  const connect = async () => {
-    const provider = getActiveProvider();
-    if (!provider) return setError("Connect a wallet to view shadow positions");
-    const buyer = ((await provider.request({ method: "eth_requestAccounts" })) as string[])[0];
-    if (!buyer) return;
-    setAddress(buyer);
-  };
-
   const filtered = positions.filter((position) => position.asset === asset);
   if (!address) {
-    return <Empty action={connect} label="Connect wallet to view Base Sepolia shadow positions." />;
+    return <Empty label="Connect wallet from the top bar to view Base Sepolia shadow positions." />;
   }
   if (!loaded) return <p className="px-5 py-10 text-center text-[12px] text-faint">Reading shadow positions…</p>;
   if (error) return <Empty action={() => void load(address)} label={error} />;
@@ -109,6 +92,6 @@ export function ShadowPositions({ asset }: { asset: Asset }) {
   );
 }
 
-function Empty({ action, label }: { action: () => void; label: string }) {
-  return <div className="px-5 py-10 text-center text-[12px] text-faint"><p>{label}</p><button onClick={action} className="mt-3 text-blue hover:underline">Refresh</button></div>;
+function Empty({ action, label }: { action?: () => void; label: string }) {
+  return <div className="px-5 py-10 text-center text-[12px] text-faint"><p>{label}</p>{action && <button onClick={action} className="mt-3 text-blue hover:underline">Refresh</button>}</div>;
 }
