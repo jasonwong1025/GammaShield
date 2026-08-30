@@ -1,5 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
-import { runConfiguredShadowAgent } from "@/lib/shadowAgent";
+import { runShadowAgents } from "@/lib/shadowAgent";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,7 +10,7 @@ export async function POST(request: Request) {
     return Response.json({ error: "unauthorized" }, { status: 401 });
   }
   try {
-    return Response.json(await runConfiguredShadowAgent(), { headers: { "Cache-Control": "no-store" } });
+    return Response.json({ results: await runShadowAgents() }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "shadow agent failed" }, { status: 502 });
   }

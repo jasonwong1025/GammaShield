@@ -73,16 +73,27 @@ export type ShadowAgentResult = {
   detail?: string;
 };
 
-export async function runConfiguredShadowAgent(): Promise<ShadowAgentResult> {
-  const account = process.env.SHADOW_AGENT_ACCOUNT_ADDRESS;
-  if (!account || !ethers.isAddress(account)) throw new Error("SHADOW_AGENT_ACCOUNT_ADDRESS is not configured");
-  return runShadowAgent(ethers.getAddress(account));
-}
-
-async function runShadowAgent(accountAddress: string): Promise<ShadowAgentResult> {
+export async function runShadowAgents(): Promise<ShadowAgentResult[]> {
   const config = runtimeConfig();
   const provider = new ethers.JsonRpcProvider(config.rpcUrl);
   const agent = new ethers.Wallet(config.privateKey);
+  const factory = new ethers.Contract(config.factory, ["event AccountCreated(address indexed account,address indexed owner,bytes32 indexed salt)"], provider);
+  // ponytail: scans this single demo factory; add an indexed event store before serving enough accounts to make this expensive.
+  const events = await factory.queryFilter(factory.filters.AccountCreated(), config.deploymentBlock);
+  const accounts = [...new Set(events.flatMap((event) => "args" in event && event.args?.account ? [ethers.getAddress(event.args.account)] : []))];
+  const results: ShadowAgentResult[] = [];
+  for (const account of accounts) {
+    try {
+      results.push(await runShadowAgent(account, config, provider, agent));
+    } catch (error) {
+      if (error instanceof Error && error.message === "active mandate is not eligible for shadow execution") continue;
+      throw error;
+    }
+  }
+  return results;
+}
+
+async function runShadowAgent(accountAddress: string, config: ReturnType<typeof runtimeConfig>, provider: ethers.JsonRpcProvider, agent: ethers.Wallet): Promise<ShadowAgentResult> {
   const account = new ethers.Contract(accountAddress, ACCOUNT_ABI, provider);
   const policy = await readPolicy(account, accountAddress, agent.address, config);
   const snapshot = await getMarketSnapshot({ fresh: true });
@@ -246,8 +257,13 @@ function runtimeConfig() {
   const pimlicoApiKey = process.env.PIMLICO_API_KEY;
   const optionBook = process.env.SHADOW_OPTION_BOOK_ADDRESS;
   const usdc = process.env.SHADOW_USDC_ADDRESS;
-  if (!rpcUrl || !privateKey || !pimlicoApiKey || !optionBook || !usdc || !ethers.isAddress(optionBook) || !ethers.isAddress(usdc)) {
+  const factory = process.env.NEXT_PUBLIC_BASE_SEPOLIA_MANDATE_FACTORY_ADDRESS;
+  const deploymentBlock = process.env.BASE_SEPOLIA_MANDATE_FACTORY_DEPLOYMENT_BLOCK;
+  if (!rpcUrl || !privateKey || !pimlicoApiKey || !optionBook || !usdc || !factory || !deploymentBlock || !/^\d+$/.test(deploymentBlock) || !ethers.isAddress(optionBook) || !ethers.isAddress(usdc) || !ethers.isAddress(factory)) {
     throw new Error("Base Sepolia agent configuration is incomplete");
   }
-  return { rpcUrl, privateKey: privateKey.startsWith("0x") ? privateKey : `0x${privateKey}`, pimlicoApiKey, optionBook: ethers.getAddress(optionBook), usdc: ethers.getAddress(usdc) };
+  return {
+    rpcUrl, privateKey: privateKey.startsWith("0x") ? privateKey : `0x${privateKey}`, pimlicoApiKey,
+    optionBook: ethers.getAddress(optionBook), usdc: ethers.getAddress(usdc), factory: ethers.getAddress(factory), deploymentBlock: Number(deploymentBlock),
+  };
 }
