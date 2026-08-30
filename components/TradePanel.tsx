@@ -378,6 +378,17 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
       if (prepared.source !== "book" || !prepared.txs) {
         throw new Error("No fresh listed OptionBook order can fill this trade. Choose an instant-fill tenor or request an RFQ.");
       }
+      // A maker may cancel or reprice between the visible quote and this
+      // fresh preparation. Show the new price instead of approving a fill
+      // that costs more than what the user just reviewed.
+      if (
+        !quote ||
+        prepared.premiumToken !== quote.premiumToken ||
+        prepared.totalCostToken > quote.totalCostToken
+      ) {
+        setQuote(prepared);
+        throw new Error("Live price changed. Review the refreshed quote before approving.");
+      }
       if (await needsApproval(provider, from, prepared.txs.approve, prepared.txs.fill.to)) {
         setTx({ step: "approving" });
         await sendTx(provider, from, prepared.txs.approve);
