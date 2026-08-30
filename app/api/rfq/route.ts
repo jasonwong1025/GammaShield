@@ -11,6 +11,9 @@ type Body = {
   side?: TradeSide;
   contracts?: number;
   period?: TradePeriod;
+  /** Strategy-builder leg override — request this exact strike/expiry instead of nearest-ATM/period. */
+  strike?: number;
+  expiry?: number;
   id?: string;
   offeror?: string;
 };
@@ -30,7 +33,7 @@ export async function POST(request: Request) {
 
   try {
     if (body.action === "prepare") {
-      const { asset, side, contracts, period } = body;
+      const { asset, side, contracts, period, strike, expiry } = body;
       if (!asset || !isOptionsAsset(asset)) {
         return Response.json({ error: "asset must have a live options book" }, { status: 400 });
       }
@@ -44,7 +47,13 @@ export async function POST(request: Request) {
       if (!TRADE_PERIODS.includes(resolvedPeriod)) {
         return Response.json({ error: `period must be one of ${TRADE_PERIODS.join(", ")}` }, { status: 400 });
       }
-      const prepared = await prepareRfq(asset, side, contracts!, resolvedPeriod, address);
+      if (strike != null && !(Number.isFinite(strike) && strike > 0)) {
+        return Response.json({ error: "invalid strike" }, { status: 400 });
+      }
+      if (expiry != null && !(Number.isFinite(expiry) && expiry > 0)) {
+        return Response.json({ error: "invalid expiry" }, { status: 400 });
+      }
+      const prepared = await prepareRfq(asset, side, contracts!, resolvedPeriod, address, strike, expiry);
       return Response.json(prepared, { headers: { "cache-control": "no-store" } });
     }
 

@@ -17,116 +17,25 @@ import { COLLATERAL_TOKENS, RESERVE_BUFFER, collateralFor, decimalsForTokenSymbo
 import type { RfqPrepared, RfqStatus } from "@/lib/rfq";
 import type { AiRiskAssessment } from "@/lib/aiRisk";
 import { fmtExpiryDate, fmtIv, fmtStrike, fmtUsd, riskColor } from "@/lib/format";
+import { getActiveProvider } from "./WalletConnect";
 import {
-  getActiveProvider,
-  switchToBase,
-  type Eip1193Provider,
-} from "./WalletConnect";
+  connectWallet,
+  displayToken,
+  fmtDays,
+  needsApproval,
+  periodLabel,
+  rfqApi,
+  sendTx,
+  type RfqPhase,
+  type TxPhase,
+} from "./tradeExec";
+import { StrategyBuilder } from "./StrategyBuilder";
 
 const QUOTE_DEBOUNCE_MS = 250;
 const QUOTE_REFRESH_MS = 15_000;
 
-type TxPhase =
-  | { step: "idle" }
-  | { step: "connecting" | "approving" | "filling" }
-  | { step: "done"; hash: string }
-  | { step: "error"; message: string };
-
-type RfqPhase =
-  | { step: "idle" }
-  | { step: "connecting" | "approving" | "requesting" }
-  | { step: "auction"; status: RfqStatus | null; deadline: number }
-  | { step: "accepting"; status: RfqStatus }
-  | { step: "done"; hash: string; optionAddress: string | null }
-  | { step: "error"; message: string };
-
-async function connectWallet() {
-  const provider = getActiveProvider();
-  if (!provider) throw new Error("No wallet detected — install MetaMask or Phantom.");
-  const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
-  const from = accounts[0];
-  if (!from) throw new Error("no account connected");
-  await switchToBase(provider);
-  return { provider, from };
-}
-
-async function sendTx(
-  provider: Eip1193Provider,
-  from: string,
-  tx: { to: string; data: string },
-): Promise<string> {
-  const hash = (await provider.request({
-    method: "eth_sendTransaction",
-    params: [{ from, to: tx.to, data: tx.data }],
-  })) as string;
-  await waitForReceipt(provider, hash);
-  return hash;
-}
-
-// Skip the approve popup when the token allowance already covers the pull —
-// fewer wallet prompts, and sidesteps MetaMask's spending-cap alert flow.
-async function needsApproval(
-  provider: Eip1193Provider,
-  owner: string,
-  approve: { to: string; data: string },
-  spender: string,
-): Promise<boolean> {
-  try {
-    const needed = BigInt("0x" + approve.data.slice(-64));
-    const data =
-      "0xdd62ed3e" + // allowance(address,address)
-      owner.slice(2).toLowerCase().padStart(64, "0") +
-      spender.slice(2).toLowerCase().padStart(64, "0");
-    const res = (await provider.request({
-      method: "eth_call",
-      params: [{ to: approve.to, data }, "latest"],
-    })) as string;
-    return BigInt(res) < needed;
-  } catch {
-    return true; // can't verify — approve to be safe
-  }
-}
-
-async function rfqApi<T>(body: Record<string, unknown>): Promise<T> {
-  const res = await fetch("/api/rfq", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error ?? `rfq ${res.status}`);
-  return data as T;
-}
-
-async function waitForReceipt(provider: Eip1193Provider, hash: string) {
-  for (let i = 0; i < 60; i++) {
-    const receipt = (await provider.request({
-      method: "eth_getTransactionReceipt",
-      params: [hash],
-    })) as { status?: string } | null;
-    if (receipt) {
-      if (receipt.status === "0x0") throw new Error("transaction reverted");
-      return;
-    }
-    await new Promise((r) => setTimeout(r, 1500));
-  }
-  throw new Error("timed out waiting for confirmation");
-}
-
-/** aBasWETH → WETH etc. — friendlier display, full symbol in the title attr. */
-function displayToken(symbol: string) {
-  return symbol.replace(/^aBas/, "");
-}
-
-function fmtDays(d: number) {
-  return d < 1 ? `${Math.round(d * 24)}h` : `${Math.round(d)}d`;
-}
-
-function periodLabel(p: TradePeriod) {
-  return p === 7 ? "1 Week" : p === 14 ? "2 Weeks" : "4 Weeks";
-}
-
 export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
+  const [mode, setMode] = useState<"single" | "strategy">("single");
   const [side, setSide] = useState<TradeSide>("call");
   const [amountStr, setAmountStr] = useState("1");
   const [period, setPeriod] = useState<TradePeriod>(7);
@@ -481,6 +390,26 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
         </span>
       </div>
 
+      {/* Single-option buy vs. the AI-assisted multi-leg strategy builder. */}
+      <div className="grid grid-cols-2 gap-1 rounded-lg bg-panel2 p-1">
+        {(["single", "strategy"] as const).map((m) => (
+          <button
+            key={m}
+            onClick={() => setMode(m)}
+            aria-pressed={mode === m}
+            className={`h-8 rounded-md text-[12px] font-semibold transition ${
+              mode === m ? "bg-panel text-fg shadow-sm" : "text-muted hover:text-fg"
+            }`}
+          >
+            {m === "single" ? "Single Option" : "AI Strategy"}
+          </button>
+        ))}
+      </div>
+
+      {mode === "strategy" ? (
+        <StrategyBuilder asset={asset} />
+      ) : (
+        <>
       {/* Direction */}
       <div className="grid grid-cols-2 gap-1 rounded-lg bg-panel2 p-1">
         {(["call", "put"] as const).map((s) => (
@@ -833,6 +762,8 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
         period trades through the Thetanuts RFQ auction at the real expiry. Premium is paid in
         the option&apos;s collateral token; everything settles on Base.
       </p>
+        </>
+      )}
     </section>
   );
 }

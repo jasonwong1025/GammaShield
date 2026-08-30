@@ -65,6 +65,11 @@ export async function prepareRfq(
   contracts: number,
   period: TradePeriod,
   address: string,
+  /** Request this exact strike/expiry instead of nearest-ATM/nearest-period —
+   * used by the strategy builder to RFQ one leg of a multi-leg structure at
+   * the strike/expiry already resolved for the whole strategy. */
+  strikeOverride?: number,
+  expiryOverride?: number,
 ): Promise<RfqPrepared> {
   if (!isOptionsAsset(asset)) throw new Error(`${asset} has no live Thetanuts market`);
   if (!(contracts > 0)) throw new Error("contracts must be positive");
@@ -73,7 +78,7 @@ export async function prepareRfq(
   // Reuse the trade quote: ATM strike + MM ask at the real grid tenor for
   // this period — expiryTs here MUST match the quote's, since the reserve
   // price and strike were computed against that exact expiry.
-  const quote = await getTradeQuote(asset, side, contracts, period);
+  const quote = await getTradeQuote(asset, side, contracts, period, strikeOverride, expiryOverride);
   const nowSec = Math.floor(Date.now() / 1000);
   const expiryTs = quote.expiryTs;
 

@@ -132,11 +132,94 @@ function encodeFill(order: SdkOrder, numContracts: bigint, to: string) {
   };
 }
 
+// The discrete strike grid available at a given expiry — union of listed
+// book orders and the MM pricing array. A strategy leg's strikeOffset (see
+// lib/strategy.ts) snaps to this grid; never fabricate an in-between strike.
+export async function getAvailableStrikes(
+  asset: OptionsAsset,
+  side: TradeSide,
+  expiryTs: number,
+): Promise<number[]> {
+  const c = getClient();
+  const [orders, pricing] = await Promise.all([getBookOrders(c), getMmPricing(c, asset)]);
+  const feed = c.chainConfig.priceFeeds[asset]?.toLowerCase();
+  const isCall = side === "call";
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  const fromBook = orders
+    .filter((o) => {
+      const raw = o.rawApiData;
+      return (
+        raw &&
+        !raw.isLong &&
+        raw.isCall === isCall &&
+        raw.strikes?.length === 1 &&
+        raw.priceFeed?.toLowerCase() === feed &&
+        Number(o.order.expiry) === expiryTs &&
+        raw.orderExpiryTimestamp > nowSec &&
+        o.availableAmount > 0n
+      );
+    })
+    .map((o) => Number(o.rawApiData!.strikes[0]) / 1e8);
+
+  const fromMm = pricing.filter((r) => r.isCall === isCall && r.expiry === expiryTs).map((r) => r.strike);
+
+  const seen = new Map<string, number>();
+  for (const s of [...fromBook, ...fromMm]) {
+    seen.set(s.toPrecision(8), s);
+  }
+  return [...seen.values()].sort((a, b) => a - b);
+}
+
+// The real tenor nearest to `period`, resolved across BOTH calls and puts —
+// unlike getTradeQuote's own (per-side) resolution, so every leg of a mixed
+// call/put strategy (Straddle, Strangle, Strap, Strip, …) lands on the
+// identical expiry. Same "prefer MM grid, fall back to a listed book expiry"
+// rule as getTradeQuote.
+export async function resolveSharedExpiry(asset: OptionsAsset, period: TradePeriod): Promise<number | null> {
+  const c = getClient();
+  const [orders, pricing] = await Promise.all([getBookOrders(c), getMmPricing(c, asset)]);
+  const feed = c.chainConfig.priceFeeds[asset]?.toLowerCase();
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  const mmTenors = [...new Set(pricing.filter((r) => r.expiry > nowSec).map((r) => r.expiry))];
+  const bookTenors = [
+    ...new Set(
+      orders
+        .filter((o) => {
+          const raw = o.rawApiData;
+          return (
+            raw &&
+            !raw.isLong &&
+            raw.priceFeed?.toLowerCase() === feed &&
+            Number(o.order.expiry) > nowSec &&
+            raw.orderExpiryTimestamp > nowSec &&
+            o.availableAmount > 0n
+          );
+        })
+        .map((o) => Number(o.order.expiry)),
+    ),
+  ];
+  const candidates = mmTenors.length ? mmTenors : bookTenors;
+  if (!candidates.length) return null;
+  return candidates.reduce((best, ts) =>
+    Math.abs((ts - nowSec) / 86400 - period) < Math.abs((best - nowSec) / 86400 - period) ? ts : best,
+  );
+}
+
 export async function getTradeQuote(
   asset: Asset,
   side: TradeSide,
   contracts: number,
   period: TradePeriod,
+  /** Resolve the quote at this exact strike instead of nearest-ATM — used by
+   * the strategy builder (lib/strategyQuote.ts) to price one leg of a
+   * multi-leg structure at a strike already picked via getAvailableStrikes. */
+  strikeOverride?: number,
+  /** Resolve at this exact expiry instead of nearest-to-period — paired with
+   * resolveSharedExpiry() so every leg of a mixed call/put strategy lands on
+   * the identical real tenor, not whichever is separately nearest per side. */
+  expiryOverride?: number,
 ): Promise<TradeQuote> {
   if (!isOptionsAsset(asset)) {
     throw new Error(`${asset} has no live Thetanuts market to trade`);
@@ -202,7 +285,15 @@ export async function getTradeQuote(
   }).filter((e): e is NonNullable<typeof e> => e != null);
   if (!expiries.length) throw new Error(`no ${asset} ${side} expiries available`);
 
-  const targetEntry = expiries.find((e) => e.period === period) ?? expiries[0];
+  const targetEntry =
+    expiryOverride != null
+      ? (expiries.find((e) => e.ts === expiryOverride) ?? {
+          period,
+          ts: expiryOverride,
+          days: (expiryOverride - nowSec) / 86400,
+          fillable: fillableTs.has(expiryOverride),
+        })
+      : (expiries.find((e) => e.period === period) ?? expiries[0]);
   const targetTs = targetEntry.ts;
 
   // Best listed maker order at the matched expiry: ATM first, cheaper on ties.
@@ -212,7 +303,8 @@ export async function getTradeQuote(
         .sort((a, b) => {
           const sa = Number(a.rawApiData!.strikes[0]) / 1e8;
           const sb = Number(b.rawApiData!.strikes[0]) / 1e8;
-          return Math.abs(sa - spot) - Math.abs(sb - spot) || Number(a.order.price - b.order.price);
+          const target = strikeOverride ?? spot;
+          return Math.abs(sa - target) - Math.abs(sb - target) || Number(a.order.price - b.order.price);
         })[0]
     : undefined;
 
@@ -285,8 +377,9 @@ export async function getTradeQuote(
     // fill; executing would go through the OptionFactory RFQ auction.
     const rows = sideRows.filter((r) => r.expiry === targetTs);
     if (!rows.length) throw new Error(`no ${asset} ${side} pricing at this expiry`);
+    const target = strikeOverride ?? spot;
     const atm = rows.reduce((best, r) =>
-      Math.abs(r.strike - spot) < Math.abs(best.strike - spot) ? r : best,
+      Math.abs(r.strike - target) < Math.abs(best.strike - target) ? r : best,
     );
     strike = atm.strike;
     premiumPerContractToken = atm.rawAskPrice; // in underlying units
