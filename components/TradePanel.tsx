@@ -27,11 +27,12 @@ import { fmtContracts, fmtExpiryDate, fmtIv, fmtStrike, fmtUsd, riskColor } from
 
 const QUOTE_DEBOUNCE_MS = 250;
 const QUOTE_REFRESH_MS = 15_000;
+const rfqExecutionEnabled = process.env.NEXT_PUBLIC_ENABLE_RFQ_EXECUTION === "true";
 type GammaShieldChainId = typeof base.id | typeof baseSepolia.id;
 
 type TxPhase =
   | { step: "idle" }
-  | { step: "connecting" | "preparing" | "approving" | "preflighting" | "filling" }
+  | { step: "connecting" | "preparing" | "approving" | "ready" | "preflighting" | "filling" }
   | { step: "done"; hash: string }
   | { step: "error"; message: string };
 
@@ -45,7 +46,7 @@ type RfqPhase =
 
 type ShadowTxPhase =
   | { step: "idle" }
-  | { step: "connecting" | "preparing" | "approving" | "filling" }
+  | { step: "connecting" | "preparing" | "approving" | "ready" | "filling" }
   | { step: "done"; hash: string; quote: ShadowQuote }
   | { step: "error"; message: string };
 
@@ -57,9 +58,23 @@ async function needsApproval(
   spender: Address,
   chainId: GammaShieldChainId,
 ): Promise<boolean> {
+  let allowanceNeeded: bigint;
   try {
     const decoded = decodeFunctionData({ abi: erc20Abi, data: approve.data as Hex });
-    if (decoded.functionName !== "approve" || !decoded.args) return true;
+    if (
+      decoded.functionName !== "approve" ||
+      !decoded.args ||
+      decoded.args[0].toLowerCase() !== spender.toLowerCase()
+    ) {
+      throw new Error("Approval does not authorize the intended execution contract.");
+    }
+    allowanceNeeded = decoded.args[1];
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Approval does not")) throw error;
+    return true;
+  }
+
+  try {
     const allowance = await readContract(wagmiConfig, {
       address: approve.to as Address,
       abi: erc20Abi,
@@ -67,7 +82,7 @@ async function needsApproval(
       args: [owner, spender],
       chainId,
     });
-    return allowance < decoded.args[1];
+    return allowance < allowanceNeeded;
   } catch {
     return true; // can't verify — approve to be safe
   }
@@ -307,19 +322,29 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
         throw new Error("No fresh listed OptionBook order can fill this trade. Choose an instant-fill tenor or request an RFQ.");
       }
       // A maker may cancel or reprice between the visible quote and this
-      // fresh preparation. Show the new price instead of approving a fill
-      // that costs more than what the user just reviewed.
+      // fresh preparation. The user must review any changed maker, option,
+      // expiry, collateral, size, or price before an approval/fill can occur.
       if (
         !quote ||
+        prepared.asset !== quote.asset ||
+        prepared.side !== quote.side ||
+        prepared.maker !== quote.maker ||
+        prepared.strike !== quote.strike ||
+        prepared.expiryTs !== quote.expiryTs ||
         prepared.premiumToken !== quote.premiumToken ||
-        prepared.totalCostToken > quote.totalCostToken
+        prepared.contracts !== quote.contracts ||
+        prepared.totalCostToken !== quote.totalCostToken ||
+        prepared.txs.approve.to.toLowerCase() !== quote.txs?.approve.to.toLowerCase() ||
+        prepared.txs.fill.to.toLowerCase() !== quote.txs?.fill.to.toLowerCase()
       ) {
         setQuote(prepared);
-        throw new Error("Live price changed. Review the refreshed quote before approving.");
+        throw new Error("Live order changed. Review the refreshed quote before continuing.");
       }
       if (await needsApproval(from, prepared.txs.approve, prepared.txs.fill.to as Address, base.id)) {
         setTx({ step: "approving" });
         await sendTx(base.id, prepared.txs.approve);
+        setTx({ step: "ready" });
+        return;
       }
       setTx({ step: "preflighting" });
       await preflightTx(from, prepared.txs.fill, base.id);
@@ -351,6 +376,8 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
       if (await needsApproval(from, prepared.txs.approve, prepared.txs.fill.to as Address, baseSepolia.id)) {
         setShadowTx({ step: "approving" });
         await sendTx(baseSepolia.id, prepared.txs.approve);
+        setShadowTx({ step: "ready" });
+        return;
       }
       setShadowTx({ step: "filling" });
       const hash = await sendTx(baseSepolia.id, prepared.txs.fill);
@@ -493,13 +520,13 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
     tx.step === "filling";
   const shadowBusy = shadowTx.step === "connecting" || shadowTx.step === "preparing" || shadowTx.step === "approving" || shadowTx.step === "filling";
 
-  // Required collateral for this quote: the padded approve amount for a book
-  // fill, or contracts × reservePrice (the RFQ escrow) otherwise — same math
+  // Required collateral for this quote: the exact simulated book-fill amount,
+  // or contracts × reservePrice (the RFQ escrow) otherwise — same math
   // as lib/trade.ts / lib/rfq.ts, just in plain floats for a UI-only check.
   const requiredCollateral =
     quote && configured
       ? quote.source === "book"
-        ? quote.totalCostToken * 1.01
+        ? quote.totalCostToken
         : quote.contracts *
           (side === "put" ? quote.premiumPerContractUsd : quote.premiumPerContractUsd / quote.spot) *
           RESERVE_BUFFER
@@ -775,7 +802,9 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
                   : "Filling on Base Sepolia…"
             : !validAmount
               ? "Enter an amount to trade"
-              : !quoteInSync || !quote
+              : shadowTx.step === "ready"
+                ? "Review and submit shadow fill"
+                : !quoteInSync || !quote
                 ? "Quoting…"
               : `Mirror ${fmtContracts(quote.contracts)} ${asset} ${side} on Sepolia`}
         </button>
@@ -842,7 +871,7 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
             trade again
           </button>
         </p>
-      ) : quote && !selFillable ? (
+      ) : quote && !selFillable && rfqExecutionEnabled ? (
         <div className="flex flex-col gap-1.5">
           <button
             onClick={requestRfq}
@@ -864,6 +893,18 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
             </button>
           )}
         </div>
+      ) : quote && !selFillable ? (
+        <div className="rounded-lg border border-warn/25 bg-panel2 p-3 text-[12px] leading-relaxed text-muted">
+          This expiry has no listed maker order. RFQ execution is paused by default because it escrows collateral and needs a separate review. Choose an instant-fill tenor instead.
+          {nearestFillable && (
+            <button
+              onClick={() => setPeriod(nearestFillable.period)}
+              className="mt-2 block text-blue hover:underline"
+            >
+              Choose instant fill · {periodLabel(nearestFillable.period)}
+            </button>
+          )}
+        </div>
       ) : (
         <button
           onClick={buy}
@@ -882,9 +923,11 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
                 : "Filling order…"
             : insufficientToken || insufficientGas
               ? "Insufficient balance"
-              : !validAmount
-                ? "Enter an amount to trade"
-                : !quoteInSync || !quote
+                : !validAmount
+                  ? "Enter an amount to trade"
+                  : tx.step === "ready"
+                    ? "Review and submit fill"
+                    : !quoteInSync || !quote
                   ? "Quoting…"
                   : configured && quote.txs
                     ? `Buy ${fmtContracts(quote.contracts)} ${asset} ${side}${quote.contracts === 1 ? "" : "s"}`
@@ -905,10 +948,20 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
           </a>
         </p>
       )}
+      {tx.step === "ready" && (
+        <p className="text-[12px] text-calm">
+          Approval confirmed for this order&apos;s exact simulated collateral. Review the refreshed quote, then submit the fill separately.
+        </p>
+      )}
       {tx.step === "error" && <p className="text-[12px] text-crit">{tx.message}</p>}
       {shadowTx.step === "done" && (
         <p className="text-[12px] text-calm">
           Shadow fill confirmed on Base Sepolia. {process.env.NEXT_PUBLIC_BASE_SEPOLIA_EXPLORER_URL && <a href={`${process.env.NEXT_PUBLIC_BASE_SEPOLIA_EXPLORER_URL}/tx/${shadowTx.hash}`} target="_blank" rel="noopener noreferrer" className="underline">View transaction</a>}
+        </p>
+      )}
+      {shadowTx.step === "ready" && (
+        <p className="text-[12px] text-calm">
+          Test-USDC approval confirmed. Review the next signed shadow quote, then submit the test fill separately.
         </p>
       )}
       {shadowTx.step === "error" && <p className="text-[12px] text-crit">{shadowTx.message}</p>}

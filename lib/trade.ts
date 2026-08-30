@@ -199,7 +199,14 @@ export async function getTradeQuote(
     const token = Object.values(c.chainConfig.tokens).find(
       (t) => t.address.toLowerCase() === raw.collateral.toLowerCase(),
     );
-    tokenSymbol = token?.symbol ?? "?";
+    if (!token) throw new Error("order uses an unrecognized collateral token");
+    const knownImplementations = new Set(
+      Object.values(c.chainConfig.implementations).map((address) => address.toLowerCase()),
+    );
+    if (!raw.implementation || !knownImplementations.has(raw.implementation.toLowerCase())) {
+      throw new Error("order uses an unrecognized option implementation");
+    }
+    tokenSymbol = token.symbol;
     const tokenUsd = tokenSymbol.includes("USD")
       ? 1
       : tokenSymbol.includes("ETH")
@@ -231,7 +238,16 @@ export async function getTradeQuote(
 
     if (filled > 0) {
       const fill = c.optionBook.encodeFillOrder(bookBest, requestedSpend);
+      // `previewFillOrder` is the authoritative amount this exact fill can
+      // pull. Approve exactly that amount: an allowance must never exceed the
+      // reviewed fill merely to provide rounding headroom.
       const approve = c.erc20.encodeApprove(preview.collateralToken, fill.to, preview.totalCollateral);
+      if (fill.to.toLowerCase() !== bookAddress.toLowerCase()) {
+        throw new Error("fill targets an unrecognized OptionBook contract");
+      }
+      if (preview.collateralToken.toLowerCase() !== token.address.toLowerCase() || approve.to.toLowerCase() !== token.address.toLowerCase()) {
+        throw new Error("approval targets an unrecognized collateral token");
+      }
       txs = { chainId: "0x2105", approve, fill };
     }
   } else {

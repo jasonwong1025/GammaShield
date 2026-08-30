@@ -137,7 +137,6 @@ export async function getShadowQuote(
   const config = contracts();
   const now = Math.floor(Date.now() / 1000);
   const premiumUsdc = ethers.parseUnits(option.totalCostUsd.toFixed(6), 6);
-  const approvalUsdc = (premiumUsdc * 101n + 99n) / 100n;
   const sourceHash = ethers.keccak256(
     ethers.toUtf8Bytes([
       "thetanuts-base-mainnet",
@@ -187,7 +186,8 @@ export async function getShadowQuote(
     },
     validUntil: Number(quote.validUntil),
     txs: {
-      approve: { to: config.usdc, data: token.encodeFunctionData("approve", [config.optionBook, approvalUsdc]) },
+      // The signed quote fixes `premiumUsdc`; approve only that exact amount.
+      approve: { to: config.usdc, data: token.encodeFunctionData("approve", [config.optionBook, premiumUsdc]) },
       fill: { to: config.optionBook, data: book.encodeFunctionData("fillShadow", [quote, signature]) },
     },
   };
