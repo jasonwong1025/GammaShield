@@ -6,7 +6,7 @@ import type { Asset } from "@/lib/assets";
 import type { ThetanutsPosition } from "@/lib/positions";
 import { fmtContracts, fmtCountdown, fmtExpiryDate, fmtStrike, fmtUsd } from "@/lib/format";
 
-export function ThetanutsPositions({ asset }: { asset: Asset }) {
+export function ThetanutsPositions({ asset, refreshKey = 0 }: { asset: Asset; refreshKey?: number }) {
   const { address } = useAccount();
   const [positions, setPositions] = useState<ThetanutsPosition[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -40,6 +40,12 @@ export function ThetanutsPositions({ asset }: { asset: Asset }) {
     const id = setTimeout(() => void load(address), 0);
     return () => clearTimeout(id);
   }, [address, load]);
+
+  useEffect(() => {
+    if (!address || !refreshKey) return;
+    const retry = setTimeout(() => void load(address), 8_000);
+    return () => clearTimeout(retry);
+  }, [address, load, refreshKey]);
 
   const filtered = positions.filter((position) => position.asset === asset);
   if (!address) return <Empty label="Connect wallet from the top bar to view Base-mainnet Thetanuts positions." />;

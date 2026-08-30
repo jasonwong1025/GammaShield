@@ -32,6 +32,15 @@ export function BookCard({
   spot: number;
 }) {
   const [tab, setTab] = useState<"book" | "expiries" | "thetanuts" | "shadow">("book");
+  const [positionsRefresh, setPositionsRefresh] = useState(0);
+  useEffect(() => {
+    const showPosition = () => {
+      setPositionsRefresh((value) => value + 1);
+      setTab("thetanuts");
+    };
+    window.addEventListener("thetanuts-position-changed", showPosition);
+    return () => window.removeEventListener("thetanuts-position-changed", showPosition);
+  }, []);
   const filtered = rows.filter((r) => r.asset === asset);
   const bookLabel = live ? "OptionBook (live)" : "Modeled book";
 
@@ -65,7 +74,7 @@ export function BookCard({
         </span>
       </div>
 
-      {tab === "book" ? <BookTable rows={filtered} asset={asset} spot={spot} /> : tab === "expiries" ? <Expiries snap={snap} /> : tab === "thetanuts" ? <ThetanutsPositions asset={asset} /> : <ShadowPositions asset={asset} />}
+      {tab === "book" ? <BookTable rows={filtered} asset={asset} spot={spot} /> : tab === "expiries" ? <Expiries snap={snap} /> : tab === "thetanuts" ? <ThetanutsPositions asset={asset} refreshKey={positionsRefresh} /> : <ShadowPositions asset={asset} />}
     </section>
   );
 }

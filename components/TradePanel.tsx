@@ -375,6 +375,7 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
       setTx({ step: "filling" });
       const fillHash = await sendTx(base.id, prepared.txs.fill);
       setTx({ step: "done", hash: fillHash });
+      window.dispatchEvent(new Event("thetanuts-position-changed"));
     } catch (e) {
       const message =
         (e as { code?: number })?.code === 4001
