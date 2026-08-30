@@ -37,8 +37,8 @@ struct PackedUserOperation {
 }
 
 /// @notice A Base Sepolia ERC-4337 account where an agent can submit only a
-/// signed, bounded shadow fill. The owner can pause/revoke a mandate or use
-/// owner recovery execution through the EntryPoint.
+/// registered, bounded shadow fill. The owner registers, pauses, or revokes
+/// policies directly; the account can only move funds through the EntryPoint.
 contract MandateAccount {
     struct Mandate {
         address owner;
@@ -96,7 +96,10 @@ contract MandateAccount {
     address public immutable owner;
     address public immutable riskAttester;
     mapping(bytes32 => MandateControl) public controls;
+    mapping(bytes32 => Mandate) private mandates;
+    mapping(bytes32 => bool) public isMandateRegistered;
 
+    event MandateRegistered(bytes32 indexed mandateHash, uint64 expiresAt);
     event MandatePaused(bytes32 indexed mandateHash);
     event MandateResumed(bytes32 indexed mandateHash);
     event MandateRevoked(bytes32 indexed mandateHash);
@@ -104,6 +107,11 @@ contract MandateAccount {
 
     modifier onlyEntryPoint() {
         require(msg.sender == entryPoint, "entry point only");
+        _;
+    }
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "owner only");
         _;
     }
 
@@ -140,9 +148,9 @@ contract MandateAccount {
         return _domainSeparator(RISK_NAME_HASH);
     }
 
-    /// @notice ERC-4337 v0.7 validation. Owner signatures may use the owner
-    /// recovery or mandate controls; an agent signature is accepted only for a
-    /// fully validated executeShadow call.
+    /// @notice ERC-4337 v0.7 validation. Owner signatures may use owner
+    /// recovery; an agent signature is accepted only for a fully validated,
+    /// registered executeShadow call.
     function validateUserOp(PackedUserOperation calldata userOp, bytes32 userOpHash, uint256 missingAccountFunds)
         external
         onlyEntryPoint
@@ -152,7 +160,7 @@ contract MandateAccount {
         uint64 validUntil;
         if (userOp.sender == address(this) && userOp.callData.length >= 4) {
             bytes4 selector = bytes4(userOp.callData[:4]);
-            if (selector == this.executeOwner.selector || selector == this.pauseMandate.selector || selector == this.resumeMandate.selector || selector == this.revokeMandate.selector) {
+            if (selector == this.executeOwner.selector) {
                 valid = _recover(userOpHash, userOp.signature) == owner;
             } else if (selector == this.executeShadow.selector) {
                 (valid, validUntil) = _validateAgentUserOp(userOp.callData[4:], userOpHash, userOp.signature);
@@ -172,10 +180,10 @@ contract MandateAccount {
         view
         returns (bool valid, uint64 validUntil)
     {
-        (Mandate memory mandate, bytes memory mandateSignature, RiskAttestation memory risk, bytes memory riskSignature, IShadowFill.ShadowQuote memory quote,) = abi.decode(
-            encodedCall, (Mandate, bytes, RiskAttestation, bytes, IShadowFill.ShadowQuote, bytes)
+        (bytes32 mandateHash_, RiskAttestation memory risk, bytes memory riskSignature, IShadowFill.ShadowQuote memory quote,) = abi.decode(
+            encodedCall, (bytes32, RiskAttestation, bytes, IShadowFill.ShadowQuote, bytes)
         );
-        return _validAgentExecution(mandate, mandateSignature, risk, riskSignature, quote, userOpHash, agentSignature);
+        return _validAgentExecution(mandateHash_, risk, riskSignature, quote, userOpHash, agentSignature);
     }
 
     function executeOwner(address to, uint256 value, bytes calldata data) external onlyEntryPoint {
@@ -184,36 +192,48 @@ contract MandateAccount {
         if (!success) _revert(result);
     }
 
-    function pauseMandate(Mandate calldata mandate) external onlyEntryPoint {
-        bytes32 hash = mandateHash(mandate);
+    function registerMandate(Mandate calldata mandate, bytes calldata signature) external onlyOwner returns (bytes32 hash) {
+        hash = _requireMandate(mandate, signature);
+        require(!isMandateRegistered[hash], "mandate registered");
+        mandates[hash] = mandate;
+        isMandateRegistered[hash] = true;
+        emit MandateRegistered(hash, mandate.expiresAt);
+    }
+
+    function getMandate(bytes32 hash) external view returns (Mandate memory) {
+        require(isMandateRegistered[hash], "mandate unavailable");
+        return mandates[hash];
+    }
+
+    function pauseMandate(bytes32 hash) external onlyOwner {
+        require(isMandateRegistered[hash], "mandate unavailable");
         require(!controls[hash].revoked, "mandate revoked");
         controls[hash].paused = true;
         emit MandatePaused(hash);
     }
 
-    function resumeMandate(Mandate calldata mandate) external onlyEntryPoint {
-        bytes32 hash = mandateHash(mandate);
+    function resumeMandate(bytes32 hash) external onlyOwner {
+        require(isMandateRegistered[hash], "mandate unavailable");
         MandateControl storage control = controls[hash];
-        require(!control.revoked && block.timestamp < mandate.expiresAt, "mandate inactive");
+        require(!control.revoked && block.timestamp < mandates[hash].expiresAt, "mandate inactive");
         control.paused = false;
         emit MandateResumed(hash);
     }
 
-    function revokeMandate(Mandate calldata mandate) external onlyEntryPoint {
-        bytes32 hash = mandateHash(mandate);
+    function revokeMandate(bytes32 hash) external onlyOwner {
+        require(isMandateRegistered[hash], "mandate unavailable");
         controls[hash].revoked = true;
         emit MandateRevoked(hash);
     }
 
     function executeShadow(
-        Mandate calldata mandate,
-        bytes calldata mandateSignature,
+        bytes32 hash,
         RiskAttestation calldata risk,
         bytes calldata riskSignature,
         IShadowFill.ShadowQuote calldata quote,
         bytes calldata quoteSignature
     ) external onlyEntryPoint returns (uint256 positionId) {
-        bytes32 hash = _requireMandate(mandate, mandateSignature);
+        Mandate memory mandate = _requireRegisteredMandate(hash);
         _requireRisk(hash, mandate, risk, riskSignature);
         _requireQuote(mandate, quote);
 
@@ -236,19 +256,20 @@ contract MandateAccount {
     }
 
     function _validAgentExecution(
-        Mandate memory mandate,
-        bytes memory mandateSignature,
+        bytes32 hash,
         RiskAttestation memory risk,
         bytes memory riskSignature,
         IShadowFill.ShadowQuote memory quote,
         bytes32 userOpHash,
         bytes calldata agentSignature
     ) private view returns (bool valid, uint64 validUntil) {
+        if (!isMandateRegistered[hash]) return (false, 0);
+        Mandate memory mandate = mandates[hash];
         if (_recover(userOpHash, agentSignature) != mandate.agent) return (false, 0);
-        if (!_isMandateValid(mandate, mandateSignature) || !_isRiskValid(mandateHash(mandate), mandate, risk, riskSignature) || !_isQuoteValid(mandate, quote)) {
+        if (!_isRiskValid(hash, mandate, risk, riskSignature) || !_isQuoteValid(mandate, quote)) {
             return (false, 0);
         }
-        MandateControl storage control = controls[mandateHash(mandate)];
+        MandateControl storage control = controls[hash];
         if (
             control.paused || control.revoked || control.spentPremium + quote.premiumUsdc > mandate.maxPremiumTotal ||
             (control.lastExecutionAt != 0 && block.timestamp < uint256(control.lastExecutionAt) + mandate.minExecutionIntervalSeconds)
@@ -262,11 +283,16 @@ contract MandateAccount {
         return mandateHash(mandate);
     }
 
-    function _requireRisk(bytes32 mandateHash_, Mandate calldata mandate, RiskAttestation calldata risk, bytes calldata signature) private view {
+    function _requireRegisteredMandate(bytes32 hash) private view returns (Mandate memory mandate) {
+        require(isMandateRegistered[hash], "mandate unavailable");
+        return mandates[hash];
+    }
+
+    function _requireRisk(bytes32 mandateHash_, Mandate memory mandate, RiskAttestation calldata risk, bytes calldata signature) private view {
         require(_isRiskValid(mandateHash_, mandate, risk, signature), "invalid risk attestation");
     }
 
-    function _requireQuote(Mandate calldata mandate, IShadowFill.ShadowQuote calldata quote) private view {
+    function _requireQuote(Mandate memory mandate, IShadowFill.ShadowQuote calldata quote) private view {
         require(_isQuoteValid(mandate, quote), "quote violates mandate");
     }
 
