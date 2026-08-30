@@ -26,8 +26,8 @@ GammaShield is a **Real-Time Crypto Options Market Fragility Engine & Autonomous
                                        │ (Trigger: Risk > 75% & High Truth Score)
 ┌──────────────────────────────────────▼──────────────────────────────────────┐
 │ 3. On-Chain Execution Layer (Thetanuts V4 SDK)                              │
-│ • Executes real ~1 USDC protective Long Put option on Base Mainnet          │
-│ • Outputs verifiable live TxHash on Basescan                                │
+│ • Prepares an exact, user-reviewed listed OptionBook fill on Base Mainnet   │
+│ • User wallet signs approval and fill as two distinct actions               │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -43,6 +43,7 @@ GammaShield is a **Real-Time Crypto Options Market Fragility Engine & Autonomous
   * `Auth Header`: `Authorization: Bearer sk-...` or `x-api-key: sk-...`
 * **Base Mainnet RPC**: Set the server-only `BASE_RPC_URL` to a dedicated Base endpoint.
 * **User wallet**: Fund the wallet that will review and sign the trade with the selected collateral token plus Base ETH for gas. GammaShield never stores a trading private key.
+* **RFQ execution**: Leave `ENABLE_RFQ_EXECUTION=false` and `NEXT_PUBLIC_ENABLE_RFQ_EXECUTION=false` for the hackathon demo. RFQs escrow collateral and are not part of the reviewed instant-fill flow.
 
 #### 2. Gonka 30-Second Smoke Test
 Verify endpoint connectivity using `DeepSeek-V4-Flash`:
@@ -120,7 +121,7 @@ export async function analyzeMarketRumor(headline: string, currentGexScore: numb
 
 ### Phase 4: Thetanuts V4 SDK Live On-Chain Hedging (Days 3–4)
 
-AI can recommend a hedge, but the trade panel refreshes the listed order, preflights it, and asks the user wallet to sign. No server-side signer is used.
+AI can recommend a hedge, but the trade panel refreshes the listed order, validates SDK-configured collateral/implementation/OptionBook targets, preflights it, and asks the user wallet to sign. Approval is exact to the SDK preview and is never followed by an automatic fill. No server-side signer is used.
 
 ---
 
