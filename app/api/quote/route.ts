@@ -7,6 +7,11 @@ export async function GET(request: Request) {
   const side = params.get("side") as TradeSide | null;
   const contracts = Number(params.get("contracts") ?? "0");
   const period = Number(params.get("period") ?? "7") as TradePeriod;
+  // Skip the orders cache — the live-fill path re-quotes right before signing
+  // so the calldata is built against a book that hasn't gone stale.
+  const fresh = params.get("fresh") === "1";
+  // Pin an exact strike/expiry — the strategy builder quotes one leg of a
+  // multi-leg structure at coordinates it already resolved.
   const strikeParam = params.get("strike");
   const strikeOverride = strikeParam != null ? Number(strikeParam) : undefined;
   const expiryParam = params.get("expiry");
@@ -32,7 +37,11 @@ export async function GET(request: Request) {
   }
 
   try {
-    const quote = await getTradeQuote(asset, side, contracts, period, strikeOverride, expiryOverride);
+    const quote = await getTradeQuote(asset, side, contracts, period, {
+      fresh,
+      strike: strikeOverride,
+      expiry: expiryOverride,
+    });
     return Response.json(quote, { headers: { "cache-control": "no-store" } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "quote failed";

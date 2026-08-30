@@ -16,17 +16,21 @@ import { TRADE_PERIODS, type TradePeriod } from "@/lib/tradePeriods";
 import { COLLATERAL_TOKENS, RESERVE_BUFFER, collateralFor, decimalsForTokenSymbol } from "@/lib/collateral";
 import type { RfqPrepared, RfqStatus } from "@/lib/rfq";
 import type { AiRiskAssessment } from "@/lib/aiRisk";
+import type { ShadowQuote } from "@/lib/shadow";
 import { fmtExpiryDate, fmtIv, fmtStrike, fmtUsd, riskColor } from "@/lib/format";
-import { getActiveProvider } from "./WalletConnect";
+import { BASE_SEPOLIA_CHAIN, getActiveProvider } from "./WalletConnect";
 import {
+  connectShadowWallet,
   connectWallet,
   displayToken,
   fmtDays,
   needsApproval,
   periodLabel,
+  preflightTx,
   rfqApi,
   sendTx,
   type RfqPhase,
+  type ShadowTxPhase,
   type TxPhase,
 } from "./tradeExec";
 import { StrategyBuilder } from "./StrategyBuilder";
@@ -37,12 +41,14 @@ const QUOTE_REFRESH_MS = 15_000;
 export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
   const [mode, setMode] = useState<"single" | "strategy">("single");
   const [side, setSide] = useState<TradeSide>("call");
+  const [executionMode, setExecutionMode] = useState<"mainnet" | "shadow">("mainnet");
   const [amountStr, setAmountStr] = useState("1");
   const [period, setPeriod] = useState<TradePeriod>(7);
   const [quote, setQuote] = useState<TradeQuote | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [tx, setTx] = useState<TxPhase>({ step: "idle" });
+  const [shadowTx, setShadowTx] = useState<ShadowTxPhase>({ step: "idle" });
   const [rfq, setRfq] = useState<RfqPhase>({ step: "idle" });
   const [mountedSec] = useState(() => Math.floor(Date.now() / 1000));
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
@@ -100,20 +106,22 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
             symbol: collateralFor(asset, side),
           }
         : null;
+  const collateralAddress = collateralInfo?.address;
+  const collateralDecimals = collateralInfo?.decimals;
 
   // Balance check — a wallet-side warning, not a substitute for the real
   // approve/fill math, so plain floats are fine here.
   useEffect(() => {
-    if (!walletAddress || !collateralInfo) return;
+    if (!walletAddress || !collateralAddress || collateralDecimals == null) return;
     const provider = getActiveProvider();
     if (!provider) return;
     let stale = false;
     const balanceOfData = "0x70a08231" + walletAddress.slice(2).toLowerCase().padStart(64, "0");
     provider
-      .request({ method: "eth_call", params: [{ to: collateralInfo.address, data: balanceOfData }, "latest"] })
+      .request({ method: "eth_call", params: [{ to: collateralAddress, data: balanceOfData }, "latest"] })
       .then((res) => {
         if (stale) return;
-        setTokenBalance(Number(BigInt(res as string)) / 10 ** collateralInfo.decimals);
+        setTokenBalance(Number(BigInt(res as string)) / 10 ** collateralDecimals);
       })
       .catch(() => {
         if (!stale) setTokenBalance(null);
@@ -129,7 +137,7 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
     return () => {
       stale = true;
     };
-  }, [walletAddress, collateralInfo?.address, collateralInfo?.decimals]);
+  }, [walletAddress, collateralAddress, collateralDecimals]);
 
   // Reset stale quote/tx state when the market or direction changes.
   const [prevKey, setPrevKey] = useState(`${asset}:${side}`);
@@ -218,16 +226,36 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
   };
 
   const buy = async () => {
-    if (!quote?.txs) return;
+    if (!validAmount) return;
     try {
       setTx({ step: "connecting" });
       const { provider, from } = await connectWallet();
-      if (await needsApproval(provider, from, quote.txs.approve, quote.txs.fill.to)) {
-        setTx({ step: "approving" });
-        await sendTx(provider, from, quote.txs.approve);
+      setTx({ step: "preparing" });
+      const params = new URLSearchParams({
+        asset,
+        side,
+        contracts: amountStr,
+        period: String(period),
+        fresh: "1",
+      });
+      const res = await fetch(`/api/quote?${params}`, { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? `quote ${res.status}`);
+      const prepared = data as TradeQuote;
+      if (prepared.source !== "book" || !prepared.txs) {
+        throw new Error("No fresh listed OptionBook order can fill this trade. Choose an instant-fill tenor or request an RFQ.");
       }
+      if (await needsApproval(provider, from, prepared.txs.approve, prepared.txs.fill.to)) {
+        setTx({ step: "approving" });
+        await sendTx(provider, from, prepared.txs.approve);
+        if (await needsApproval(provider, from, prepared.txs.approve, prepared.txs.fill.to)) {
+          throw new Error("Collateral approval is still insufficient; retry the approval before filling.");
+        }
+      }
+      setTx({ step: "preflighting" });
+      await preflightTx(provider, from, prepared.txs.fill);
       setTx({ step: "filling" });
-      const fillHash = await sendTx(provider, from, quote.txs.fill);
+      const fillHash = await sendTx(provider, from, prepared.txs.fill);
       setTx({ step: "done", hash: fillHash });
     } catch (e) {
       const message =
@@ -237,6 +265,38 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
             ? e.message
             : "transaction failed";
       setTx({ step: "error", message });
+    }
+  };
+
+  const buyShadow = async () => {
+    if (!validAmount) return;
+    try {
+      setShadowTx({ step: "connecting" });
+      const { provider, from } = await connectShadowWallet();
+      setShadowTx({ step: "preparing" });
+      const params = new URLSearchParams({ asset, buyer: from, side, contracts: amountStr, period: String(period) });
+      const res = await fetch(`/api/shadow/quote?${params}`, { cache: "no-store" });
+      const shadowQuote = await res.json();
+      if (!res.ok) throw new Error(shadowQuote.error ?? `shadow quote ${res.status}`);
+      const prepared = shadowQuote as ShadowQuote;
+      if (await needsApproval(provider, from, prepared.txs.approve, prepared.txs.fill.to)) {
+        setShadowTx({ step: "approving" });
+        await sendTx(provider, from, prepared.txs.approve);
+        if (await needsApproval(provider, from, prepared.txs.approve, prepared.txs.fill.to)) {
+          throw new Error("Circle test USDC approval is still insufficient; retry the approval before filling");
+        }
+      }
+      setShadowTx({ step: "filling" });
+      const hash = await sendTx(provider, from, prepared.txs.fill);
+      setShadowTx({ step: "done", hash, quote: prepared });
+    } catch (e) {
+      const message =
+        (e as { code?: number })?.code === 4001
+          ? "Transaction rejected in wallet."
+          : e instanceof Error
+            ? e.message
+            : "shadow fill failed";
+      setShadowTx({ step: "error", message });
     }
   };
 
@@ -359,7 +419,13 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
   const impact = configured && quoteInSync ? quote.impact : null;
   const currentTradeKey = quote ? `${asset}:${side}:${quote.strike}:${quote.expiryTs}:${quote.contracts}` : null;
   const aiRiskCurrent = aiRisk && aiRiskKey === currentTradeKey ? aiRisk : null;
-  const busy = tx.step === "connecting" || tx.step === "approving" || tx.step === "filling";
+  const busy =
+    tx.step === "connecting" ||
+    tx.step === "preparing" ||
+    tx.step === "approving" ||
+    tx.step === "preflighting" ||
+    tx.step === "filling";
+  const shadowBusy = shadowTx.step === "connecting" || shadowTx.step === "preparing" || shadowTx.step === "approving" || shadowTx.step === "filling";
 
   // Required collateral for this quote: the padded approve amount for a book
   // fill, or contracts × reservePrice (the RFQ escrow) otherwise — same math
@@ -430,6 +496,18 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
             {s === "call" ? "↗ Call" : "↘ Put"}
           </button>
         ))}
+      </div>
+
+      <div>
+        <div className="mb-1 text-[11px] text-muted">Execution network</div>
+        <div className="grid grid-cols-2 gap-1 rounded-lg bg-panel2 p-1">
+          <button type="button" onClick={() => setExecutionMode("mainnet")} aria-pressed={executionMode === "mainnet"} className={`h-8 rounded-md text-[12px] font-semibold ${executionMode === "mainnet" ? "bg-panel text-fg shadow-sm" : "text-muted"}`}>
+            Base mainnet
+          </button>
+          <button type="button" onClick={() => setExecutionMode("shadow")} aria-pressed={executionMode === "shadow"} className={`h-8 rounded-md text-[12px] font-semibold ${executionMode === "shadow" ? "bg-panel text-blue shadow-sm" : "text-muted"}`}>
+            Sepolia shadow
+          </button>
+        </div>
       </div>
 
       {/* Amount */}
@@ -551,6 +629,16 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
         <p className="text-[12px] text-faint">{loading ? "Quoting the live book…" : ""}</p>
       )}
 
+      {executionMode === "shadow" ? (
+        <p className="rounded-lg border border-blue/25 bg-bluesoft/30 p-2.5 text-[11px] leading-relaxed text-muted">
+          Mirrors this live quote on Base Sepolia using Circle test USDC. Try 0.01 contracts for a small test; this is not a Thetanuts position.
+        </p>
+      ) : (
+        <p className="rounded-lg border border-warn/25 bg-panel2 p-2.5 text-[11px] leading-relaxed text-muted">
+          Base mainnet uses real funds. Before your wallet can send a fill, GammaShield refetches the listed OptionBook order and simulates the exact transaction against your account.
+        </p>
+      )}
+
       {/* Amplification impact — only once the trade is fully configured. One
           card: the always-on heuristic (lib/engine.ts) up top, then an
           optional AI second opinion (GonkaRouter, manual — see fetchAiRisk)
@@ -625,7 +713,27 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
       )}
 
       {/* Action */}
-      {rfq.step === "connecting" ||
+      {executionMode === "shadow" ? (
+        <button
+          onClick={buyShadow}
+          disabled={!configured || !quoteInSync || shadowBusy}
+          className="h-10 rounded-lg bg-blue text-white text-[13px] font-semibold hover:brightness-110 transition disabled:opacity-50"
+        >
+          {shadowBusy
+            ? shadowTx.step === "connecting"
+              ? "Connecting wallet…"
+              : shadowTx.step === "preparing"
+                ? "Signing fresh shadow quote…"
+                : shadowTx.step === "approving"
+                  ? "Approving Circle test USDC…"
+                  : "Filling on Base Sepolia…"
+            : !validAmount
+              ? "Enter an amount to trade"
+              : !quoteInSync || !quote
+                ? "Quoting…"
+                : `Mirror ${quote.contracts.toFixed(3)} ${asset} ${side} on Sepolia`}
+        </button>
+      ) : rfq.step === "connecting" ||
       rfq.step === "approving" ||
       rfq.step === "requesting" ||
       rfq.step === "auction" ||
@@ -719,8 +827,12 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
           {busy
             ? tx.step === "connecting"
               ? "Connecting wallet…"
+              : tx.step === "preparing"
+                ? "Refreshing listed order…"
               : tx.step === "approving"
                 ? `Approving ${displayToken(quote?.premiumToken ?? "")}…`
+                : tx.step === "preflighting"
+                  ? "Preflighting fill…"
                 : "Filling order…"
             : insufficientToken || insufficientGas
               ? "Insufficient balance"
@@ -748,6 +860,12 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
         </p>
       )}
       {tx.step === "error" && <p className="text-[12px] text-crit">{tx.message}</p>}
+      {shadowTx.step === "done" && (
+        <p className="text-[12px] text-calm">
+          Shadow fill confirmed on Base Sepolia. {BASE_SEPOLIA_CHAIN.blockExplorerUrls[0] && <a href={`${BASE_SEPOLIA_CHAIN.blockExplorerUrls[0]}/tx/${shadowTx.hash}`} target="_blank" rel="noopener noreferrer" className="underline">View transaction</a>}
+        </p>
+      )}
+      {shadowTx.step === "error" && <p className="text-[12px] text-crit">{shadowTx.message}</p>}
       {rfq.step === "error" && (
         <p className="text-[12px] text-crit">
           {rfq.message}{" "}

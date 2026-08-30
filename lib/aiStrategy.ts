@@ -7,6 +7,7 @@
 // on a snapshot refresh.
 
 import type { Asset } from "./assets";
+import { gonkaApiKey, gonkaBaseUrl } from "./gonkaConfig";
 import { STRATEGY_CATALOG, type SentimentBucket } from "./strategy";
 
 export type AiStrategyInput = {
@@ -30,8 +31,8 @@ export type AiStrategySuggestion = {
   generatedAt: number;
 };
 
-const API_KEY = process.env.GONKAROUTER_API_KEY;
-const BASE_URL = process.env.GONKAROUTER_BASE_URL ?? "https://api.gonkarouter.io/v1";
+const API_KEY = gonkaApiKey;
+const BASE_URL = gonkaBaseUrl;
 const MODEL = process.env.GONKAROUTER_MODEL ?? "deepseek-ai/DeepSeek-V4-Flash-0731";
 
 const AI_CACHE_MS = 45_000;

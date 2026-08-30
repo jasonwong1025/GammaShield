@@ -78,7 +78,10 @@ export async function prepareRfq(
   // Reuse the trade quote: ATM strike + MM ask at the real grid tenor for
   // this period — expiryTs here MUST match the quote's, since the reserve
   // price and strike were computed against that exact expiry.
-  const quote = await getTradeQuote(asset, side, contracts, period, strikeOverride, expiryOverride);
+  const quote = await getTradeQuote(asset, side, contracts, period, {
+    strike: strikeOverride,
+    expiry: expiryOverride,
+  });
   const nowSec = Math.floor(Date.now() / 1000);
   const expiryTs = quote.expiryTs;
 

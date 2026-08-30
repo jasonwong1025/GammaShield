@@ -1,4 +1,4 @@
-export function fmtUsd(v: number, compact = true): string {
+export function fmtUsd(v: number, compact = true, maximumFractionDigits = 0): string {
   if (!Number.isFinite(v)) return "—";
   const abs = Math.abs(v);
   if (compact) {
@@ -6,7 +6,7 @@ export function fmtUsd(v: number, compact = true): string {
     if (abs >= 1_000_000) return `$${(v / 1_000_000).toFixed(2)}M`;
     if (abs >= 1_000) return `$${(v / 1_000).toFixed(1)}K`;
   }
-  return `$${v.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+  return `$${v.toLocaleString("en-US", { maximumFractionDigits })}`;
 }
 
 export function fmtSignedUsd(v: number): string {

@@ -95,7 +95,7 @@ export async function resolveStrategyQuote(
     }
     const strike = grid[idx];
     const legContracts = contracts * leg.qty;
-    const quote = await getTradeQuote(asset, leg.side, legContracts, period, strike, expiryTs);
+    const quote = await getTradeQuote(asset, leg.side, legContracts, period, { strike, expiry: expiryTs });
 
     legs.push({
       side: leg.side,

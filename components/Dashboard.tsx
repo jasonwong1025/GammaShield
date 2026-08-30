@@ -2,13 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MarketSnapshot } from "@/lib/snapshot";
-import { TopBar } from "./TopBar";
+import { TopBar, type NavTab } from "./TopBar";
 import { AssetRail } from "./AssetRail";
 import { TradePanel } from "./TradePanel";
 import { PriceChart } from "./PriceChart";
 import { RiskView } from "./RiskView";
 import { BookCard } from "./BookFeed";
 import { LivePrice } from "./LivePrice";
+import { CopilotView } from "./CopilotView";
+import { HedgeView } from "./HedgeView";
 import { ASSET_META, isOptionsAsset, type Asset } from "@/lib/assets";
 
 const POLL_MS = 10_000;
@@ -17,6 +19,7 @@ const PRICE_POLL_MS = 4_000;
 type Ticker = { symbol: string; price: number }[];
 
 export function Dashboard() {
+  const [activeTab, setActiveTab] = useState<NavTab>("dashboard");
   const [asset, setAsset] = useState<Asset>("BTC");
   const [snap, setSnap] = useState<MarketSnapshot | null>(null);
   const [ticker, setTicker] = useState<Ticker | null>(null);
@@ -92,10 +95,15 @@ export function Dashboard() {
   const live = isOptionsAsset(asset);
   const a = snap?.assets[asset] ?? null;
   const livePrice = ticker?.find((t) => t.symbol === asset)?.price ?? a?.spot ?? 0;
+  const hasHighRisk = Boolean(a && (a.score >= 70 || a.regime === "amplifying"));
 
   return (
     <div className="flex flex-col min-h-dvh">
-      <TopBar />
+      <TopBar
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        hasHighRiskAlert={hasHighRisk}
+      />
 
       <div className="flex grow min-h-0">
         <AssetRail
@@ -153,31 +161,51 @@ export function Dashboard() {
               </div>
 
               {a && (
-                <div className="grid grow grid-cols-1 xl:grid-cols-[1fr_380px] gap-px bg-edge">
-                  {/* Wide column: an options chain is a wide table by nature,
-                      so it sits with the charts, not squeezed into the 380px
-                      ticket column (that forced a horizontal scroll just to
-                      see Premium/Delta/IV/Size). Placed right after price so
-                      it reads price → the live book behind it → risk derived
-                      from that book (gamma / open interest, tabbed together
-                      as two views of the same strike axis). */}
-                  <div className="flex flex-col gap-px min-w-0">
-                    <PriceChart asset={asset} flip={a.flipStrike} livePrice={livePrice} />
-                    <BookCard rows={snap.feed} snap={a} asset={asset} live={live} spot={livePrice} />
-                    <RiskView snap={a} />
-                  </div>
+                <>
+                  {/* TAB 1: Main Dashboard (Trading, OptionBook, RiskView from main) */}
+                  {activeTab === "dashboard" && (
+                    <div className="grid grow grid-cols-1 xl:grid-cols-[1fr_380px] gap-px bg-edge">
+                      <div className="flex flex-col gap-px min-w-0">
+                        <PriceChart asset={asset} flip={a.flipStrike} livePrice={livePrice} />
+                        <BookCard rows={snap.feed} snap={a} asset={asset} live={live} spot={livePrice} />
+                        <RiskView snap={a} />
+                        <div className="grow bg-panel" />
+                      </div>
 
-                  <div className="flex flex-col gap-px min-w-0">
-                    <TradePanel asset={asset} live={live} />
-                    <div className="grow bg-panel" />
-                  </div>
-                </div>
+                      <div className="flex flex-col gap-px min-w-0">
+                        <TradePanel asset={asset} live={live} />
+                        <div className="grow bg-panel" />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* TAB 2: Gonka AI Copilot Workspace */}
+                  {activeTab === "copilot" && (
+                    <CopilotView
+                      snap={a}
+                      onNavigateToHedge={() => {
+                        setActiveTab("hedge");
+                      }}
+                    />
+                  )}
+
+                  {/* TAB 3: Autonomous Thetanuts Hedging Workspace */}
+                  {activeTab === "hedge" && (
+                    <HedgeView
+                      snap={a}
+                      feed={snap.feed}
+                      asset={asset}
+                      live={live}
+                      spot={livePrice}
+                      onOpenDashboard={() => setActiveTab("dashboard")}
+                    />
+                  )}
+                </>
               )}
             </>
           )}
         </div>
       </div>
-
     </div>
   );
 }

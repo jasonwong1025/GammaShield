@@ -1,14 +1,23 @@
-// Shared wallet/approve/fill/RFQ plumbing for buying options — used by both
-// the single-option flow (TradePanel.tsx) and the multi-leg strategy executor
-// (StrategyBuilder.tsx), which walks these same steps once per leg.
+// Shared wallet/approve/fill/RFQ plumbing for buying options — used by the
+// single-option flow and the Base Sepolia shadow flow (TradePanel.tsx), and
+// by the multi-leg strategy executor (StrategyBuilder.tsx), which walks these
+// same steps once per leg.
 
 import type { RfqStatus } from "@/lib/rfq";
+import type { ShadowQuote } from "@/lib/shadow";
 import type { TradePeriod } from "@/lib/tradePeriods";
-import { getActiveProvider, switchToBase, type Eip1193Provider } from "./WalletConnect";
+import {
+  BASE_CHAIN,
+  BASE_SEPOLIA_CHAIN,
+  getActiveProvider,
+  switchToBase,
+  switchToBaseSepolia,
+  type Eip1193Provider,
+} from "./WalletConnect";
 
 export type TxPhase =
   | { step: "idle" }
-  | { step: "connecting" | "approving" | "filling" }
+  | { step: "connecting" | "preparing" | "approving" | "preflighting" | "filling" }
   | { step: "done"; hash: string }
   | { step: "error"; message: string };
 
@@ -20,6 +29,12 @@ export type RfqPhase =
   | { step: "done"; hash: string; optionAddress: string | null }
   | { step: "error"; message: string };
 
+export type ShadowTxPhase =
+  | { step: "idle" }
+  | { step: "connecting" | "preparing" | "approving" | "filling" }
+  | { step: "done"; hash: string; quote: ShadowQuote }
+  | { step: "error"; message: string };
+
 export async function connectWallet() {
   const provider = getActiveProvider();
   if (!provider) throw new Error("No wallet detected — install MetaMask or Phantom.");
@@ -27,6 +42,22 @@ export async function connectWallet() {
   const from = accounts[0];
   if (!from) throw new Error("no account connected");
   await switchToBase(provider);
+  if ((await provider.request({ method: "eth_chainId" })) !== BASE_CHAIN.chainId) {
+    throw new Error("switch your wallet to Base mainnet to continue");
+  }
+  return { provider, from };
+}
+
+export async function connectShadowWallet() {
+  const provider = getActiveProvider();
+  if (!provider) throw new Error("No wallet detected — install MetaMask or Phantom.");
+  const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
+  const from = accounts[0];
+  if (!from) throw new Error("no account connected");
+  await switchToBaseSepolia(provider);
+  if ((await provider.request({ method: "eth_chainId" })) !== BASE_SEPOLIA_CHAIN.chainId) {
+    throw new Error("switch your wallet to Base Sepolia to continue");
+  }
   return { provider, from };
 }
 
@@ -65,6 +96,22 @@ export async function needsApproval(
   } catch {
     return true; // can't verify — approve to be safe
   }
+}
+
+/**
+ * Simulate the exact user-signed fill after its approval is confirmed. This
+ * catches stale/filled orders and insufficient balance without broadcasting a
+ * transaction. The wallet remains the RPC authority for the user's account.
+ */
+export async function preflightTx(
+  provider: Eip1193Provider,
+  from: string,
+  tx: { to: string; data: string },
+) {
+  await provider.request({
+    method: "eth_call",
+    params: [{ from, to: tx.to, data: tx.data }, "pending"],
+  });
 }
 
 export async function rfqApi<T>(body: Record<string, unknown>): Promise<T> {
