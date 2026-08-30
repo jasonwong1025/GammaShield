@@ -3,7 +3,7 @@
 import type { AssetSnapshot } from "@/lib/engine";
 import type { FeedRow } from "@/lib/snapshot";
 import type { Asset } from "@/lib/assets";
-import { ExecutionTerminal } from "./ExecutionTerminal";
+import { PolicyAccountPanel } from "./PolicyAccountPanel";
 import { ScorePanel } from "./ScorePanel";
 import { BookCard } from "./BookFeed";
 
@@ -13,15 +13,14 @@ type Props = {
   asset: Asset;
   live: boolean;
   spot: number;
-  initialStrike?: number;
 };
 
-export function HedgeView({ snap, feed, asset, live, spot, initialStrike }: Props) {
+export function HedgeView({ snap, feed, asset, live, spot }: Props) {
   return (
     <div className="grid grow grid-cols-1 xl:grid-cols-[1fr_380px] gap-px bg-edge">
-      {/* Main Column: Execution Terminal */}
+      {/* Main Column: Policy account setup */}
       <div className="flex flex-col gap-px min-w-0">
-        <ExecutionTerminal snap={snap} initialStrike={initialStrike} />
+        <PolicyAccountPanel />
         <div className="grow bg-panel" />
       </div>
 
