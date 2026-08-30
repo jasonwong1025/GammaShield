@@ -98,9 +98,9 @@ export async function getLivePrices() {
   return ticker;
 }
 
-export async function getMarketSnapshot(): Promise<MarketSnapshot> {
+export async function getMarketSnapshot({ fresh = false }: { fresh?: boolean } = {}): Promise<MarketSnapshot> {
   const now = Date.now();
-  if (cached && now - cachedAt < CACHE_MS) return { ...cached, source: "cache" };
+  if (!fresh && cached && now - cachedAt < CACHE_MS) return { ...cached, source: "cache" };
   if (inflight) return inflight;
 
   inflight = (async () => {

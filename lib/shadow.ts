@@ -126,12 +126,14 @@ export async function getShadowQuote(
   side: TradeSide,
   count = 1,
   period: number = 7,
+  fresh = false,
+  maxPremiumUsd?: number,
 ): Promise<ShadowQuote> {
   if (!isOptionsAsset(asset as OptionsAsset)) throw new Error("only BTC and ETH have a live Thetanuts book");
   if (!ethers.isAddress(buyer)) throw new Error("invalid buyer address");
 
   const contractsCount = validContracts(count);
-  const option = await getTradeQuote(asset as OptionsAsset, side, contractsCount, validPeriod(period));
+  const option = await getTradeQuote(asset as OptionsAsset, side, contractsCount, validPeriod(period), fresh, maxPremiumUsd);
   if (option.contracts <= 0 || option.totalCostUsd <= 0) throw new Error("no fillable shadow quote is available");
 
   const config = contracts();

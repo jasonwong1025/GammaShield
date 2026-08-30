@@ -81,9 +81,9 @@ async function getBookOrders(c: ThetanutsClient, fresh = false): Promise<SdkOrde
   return orders;
 }
 
-async function getMmPricing(c: ThetanutsClient, asset: OptionsAsset): Promise<MmRow[]> {
+async function getMmPricing(c: ThetanutsClient, asset: OptionsAsset, fresh = false): Promise<MmRow[]> {
   const cached = pricingCache.get(asset);
-  if (cached && Date.now() - cached.at < PRICING_CACHE_MS) return cached.rows;
+  if (!fresh && cached && Date.now() - cached.at < PRICING_CACHE_MS) return cached.rows;
   const rows = await c.mmPricing.getPricingArray(asset);
   pricingCache.set(asset, { at: Date.now(), rows });
   return rows;
@@ -105,8 +105,8 @@ export async function getTradeQuote(
   const [orders, market, snapshot, pricing] = await Promise.all([
     getBookOrders(c, fresh),
     c.api.getMarketData(),
-    getMarketSnapshot(), // keeps getLastNormalizedOrders() fresh for impact math
-    getMmPricing(c, asset),
+    getMarketSnapshot({ fresh }), // keeps getLastNormalizedOrders() fresh for impact math
+    getMmPricing(c, asset, fresh),
   ]);
   const spot = market.prices[asset];
   if (!Number.isFinite(spot) || spot <= 0) throw new Error(`no live ${asset} spot price`);
