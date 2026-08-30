@@ -95,6 +95,7 @@ export async function getTradeQuote(
   contracts: number,
   period: TradePeriod,
   fresh = false,
+  maxPremiumUsd?: number,
 ): Promise<TradeQuote> {
   if (!isOptionsAsset(asset)) {
     throw new Error(`${asset} has no live Thetanuts market to trade`);
@@ -161,13 +162,33 @@ export async function getTradeQuote(
   const targetEntry = expiries.find((e) => e.period === period) ?? expiries[0];
   const targetTs = targetEntry.ts;
 
-  // Best listed maker order at the matched expiry: ATM first, cheaper on ties.
+  // For a protective plan, prefer a listed put within the user's premium
+  // ceiling; otherwise preserve the normal nearest-ATM selection. The SDK
+  // preview below remains authoritative for the final fill amount.
   const bookBest = targetEntry.fillable
     ? buyable
         .filter((o) => Number(o.order.expiry) === targetTs)
         .sort((a, b) => {
           const sa = Number(a.rawApiData!.strikes[0]) / 1e8;
           const sb = Number(b.rawApiData!.strikes[0]) / 1e8;
+          if (side === "put" && maxPremiumUsd != null) {
+            const usd = (order: typeof a) => {
+              const token = Object.values(c.chainConfig.tokens).find(
+                (entry) => entry.address.toLowerCase() === order.rawApiData!.collateral.toLowerCase(),
+              );
+              const tokenUsd = token?.symbol.includes("USD")
+                ? 1
+                : token?.symbol.includes("ETH")
+                  ? market.prices.ETH
+                  : token?.symbol.includes("BTC")
+                    ? market.prices.BTC
+                    : Number.POSITIVE_INFINITY;
+              return (Number(order.order.price) / 1e8) * contracts * tokenUsd;
+            };
+            const aFits = usd(a) <= maxPremiumUsd;
+            const bFits = usd(b) <= maxPremiumUsd;
+            if (aFits !== bFits) return aFits ? -1 : 1;
+          }
           return Math.abs(sa - spot) - Math.abs(sb - spot) || Number(a.order.price - b.order.price);
         })[0]
     : undefined;

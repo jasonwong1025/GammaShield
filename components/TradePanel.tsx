@@ -169,6 +169,7 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
 
   const amount = Number(amountStr);
   const validAmount = Number.isFinite(amount) && amount > 0;
+  const quotePremiumCap = hedgeIntent?.asset === asset && side === "put" ? hedgeIntent.maxPremiumUsd : null;
 
   // Whichever collateral token this trade would actually pull from: the
   // exact maker's token for a book fill, else the standard RFQ collateral.
@@ -254,8 +255,10 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
       setLoading(true);
       try {
         const contracts = validAmount ? amount : 0;
+        const params = new URLSearchParams({ asset, side, contracts: String(contracts), period: String(period) });
+        if (quotePremiumCap != null) params.set("maxPremiumUsd", String(quotePremiumCap));
         const res = await fetch(
-          `/api/quote?asset=${asset}&side=${side}&contracts=${contracts}&period=${period}`,
+          `/api/quote?${params}`,
           { cache: "no-store" },
         );
         const data = await res.json();
@@ -277,7 +280,7 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
       clearTimeout(timer);
       clearInterval(refresh);
     };
-  }, [asset, side, amount, validAmount, period, live]);
+  }, [asset, side, amount, validAmount, period, live, quotePremiumCap]);
 
   // AI second opinion on the same fill, via GonkaRouter (lib/aiRisk.ts).
   // Manual only — the user clicks "Get AI read"; nothing here auto-fires on
@@ -338,6 +341,7 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
         period: String(period),
         fresh: "1",
       });
+      if (quotePremiumCap != null) params.set("maxPremiumUsd", String(quotePremiumCap));
       const res = await fetch(`/api/quote?${params}`, { cache: "no-store" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? `quote ${res.status}`);
@@ -703,7 +707,7 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
               </span>
             )}
           </div>
-          <Row label="Strike (nearest ATM)" value={fmtStrike(quote.strike)} />
+          <Row label={quotePremiumCap != null && side === "put" ? "Strike (selected within cap)" : "Strike (nearest ATM)"} value={fmtStrike(quote.strike)} />
           <Row
             label="Premium / contract"
             value={

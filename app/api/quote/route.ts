@@ -8,6 +8,8 @@ export async function GET(request: Request) {
   const contracts = Number(params.get("contracts") ?? "0");
   const period = Number(params.get("period") ?? "7") as TradePeriod;
   const fresh = params.get("fresh") === "1";
+  const rawMaxPremiumUsd = params.get("maxPremiumUsd");
+  const maxPremiumUsd = rawMaxPremiumUsd == null ? undefined : Number(rawMaxPremiumUsd);
 
   if (!asset || !isOptionsAsset(asset)) {
     return Response.json({ error: "asset must have a live options book" }, { status: 400 });
@@ -21,9 +23,12 @@ export async function GET(request: Request) {
   if (!TRADE_PERIODS.includes(period)) {
     return Response.json({ error: `period must be one of ${TRADE_PERIODS.join(", ")}` }, { status: 400 });
   }
+  if (maxPremiumUsd != null && (!Number.isFinite(maxPremiumUsd) || maxPremiumUsd <= 0 || maxPremiumUsd > 1_000_000)) {
+    return Response.json({ error: "invalid maxPremiumUsd" }, { status: 400 });
+  }
 
   try {
-    const quote = await getTradeQuote(asset, side, contracts, period, fresh);
+    const quote = await getTradeQuote(asset, side, contracts, period, fresh, maxPremiumUsd);
     return Response.json(quote, { headers: { "cache-control": "no-store" } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "quote failed";
