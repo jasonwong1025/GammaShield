@@ -76,7 +76,15 @@ contract MandateAccount {
         uint64 lastExecutionAt;
     }
 
+    struct RiskState {
+        uint16 scoreBps;
+        uint64 eligibleSince;
+        uint64 observedAt;
+        uint64 validUntil;
+    }
+
     uint256 private constant SIG_VALIDATION_FAILED = 1;
+    uint64 private constant MAX_RISK_OBSERVATION_AGE = 3 minutes;
     uint256 private constant SECP256K1N_HALF =
         0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0;
     bytes32 private constant DOMAIN_TYPEHASH = keccak256(
@@ -98,6 +106,7 @@ contract MandateAccount {
     mapping(bytes32 => MandateControl) public controls;
     mapping(bytes32 => Mandate) private mandates;
     mapping(bytes32 => bool) public isMandateRegistered;
+    mapping(bytes32 => RiskState) public riskStates;
     bytes32 public activeMandateHash;
 
     event MandateRegistered(bytes32 indexed mandateHash, uint64 expiresAt);
@@ -105,6 +114,7 @@ contract MandateAccount {
     event MandateResumed(bytes32 indexed mandateHash);
     event MandateRevoked(bytes32 indexed mandateHash);
     event MandateExecuted(bytes32 indexed mandateHash, bytes32 indexed fillId, uint256 premiumUsdc, uint256 positionId);
+    event RiskObserved(bytes32 indexed mandateHash, uint16 scoreBps, uint64 eligibleSince, uint64 validUntil);
 
     modifier onlyEntryPoint() {
         require(msg.sender == entryPoint, "entry point only");
@@ -163,6 +173,8 @@ contract MandateAccount {
             bytes4 selector = bytes4(userOp.callData[:4]);
             if (selector == this.executeOwner.selector) {
                 valid = _recover(userOpHash, userOp.signature) == owner;
+            } else if (selector == this.recordRisk.selector) {
+                (valid, validUntil) = _validateAgentRiskRecord(userOp.callData[4:], userOpHash, userOp.signature);
             } else if (selector == this.executeShadow.selector) {
                 (valid, validUntil) = _validateAgentUserOp(userOp.callData[4:], userOpHash, userOp.signature);
             }
@@ -181,10 +193,22 @@ contract MandateAccount {
         view
         returns (bool valid, uint64 validUntil)
     {
-        (bytes32 mandateHash_, RiskAttestation memory risk, bytes memory riskSignature, IShadowFill.ShadowQuote memory quote,) = abi.decode(
-            encodedCall, (bytes32, RiskAttestation, bytes, IShadowFill.ShadowQuote, bytes)
+        (bytes32 mandateHash_, IShadowFill.ShadowQuote memory quote,) = abi.decode(
+            encodedCall, (bytes32, IShadowFill.ShadowQuote, bytes)
         );
-        return _validAgentExecution(mandateHash_, risk, riskSignature, quote, userOpHash, agentSignature);
+        return _validAgentExecution(mandateHash_, quote, userOpHash, agentSignature);
+    }
+
+    function _validateAgentRiskRecord(bytes calldata encodedCall, bytes32 userOpHash, bytes calldata agentSignature)
+        private
+        view
+        returns (bool valid, uint64 validUntil)
+    {
+        (bytes32 mandateHash_, RiskAttestation memory risk, bytes memory riskSignature) = abi.decode(encodedCall, (bytes32, RiskAttestation, bytes));
+        if (mandateHash_ == bytes32(0) || mandateHash_ != activeMandateHash) return (false, 0);
+        Mandate memory mandate = mandates[mandateHash_];
+        if (_recover(userOpHash, agentSignature) != mandate.agent || !_isRiskValid(mandateHash_, mandate, risk, riskSignature)) return (false, 0);
+        return (true, risk.validUntil);
     }
 
     function executeOwner(address to, uint256 value, bytes calldata data) external onlyEntryPoint {
@@ -233,15 +257,28 @@ contract MandateAccount {
         emit MandateRevoked(hash);
     }
 
+    /// @notice Records a short-lived risk observation. A separate agent
+    /// UserOperation is required before the account can use that risk state.
+    function recordRisk(bytes32 hash, RiskAttestation calldata risk, bytes calldata signature) external onlyEntryPoint {
+        Mandate memory mandate = _requireActiveMandate(hash);
+        _requireRisk(hash, mandate, risk, signature);
+
+        RiskState storage state = riskStates[hash];
+        bool continuous = state.eligibleSince != 0 && state.validUntil >= block.timestamp && risk.observedAt >= state.observedAt;
+        state.eligibleSince = continuous ? state.eligibleSince : uint64(block.timestamp);
+        state.scoreBps = risk.riskScoreBps;
+        state.observedAt = risk.observedAt;
+        state.validUntil = risk.validUntil;
+        emit RiskObserved(hash, risk.riskScoreBps, state.eligibleSince, risk.validUntil);
+    }
+
     function executeShadow(
         bytes32 hash,
-        RiskAttestation calldata risk,
-        bytes calldata riskSignature,
         IShadowFill.ShadowQuote calldata quote,
         bytes calldata quoteSignature
     ) external onlyEntryPoint returns (uint256 positionId) {
-        Mandate memory mandate = _requireRegisteredMandate(hash);
-        _requireRisk(hash, mandate, risk, riskSignature);
+        Mandate memory mandate = _requireActiveMandate(hash);
+        _requirePersistentRisk(hash, mandate);
         _requireQuote(mandate, quote);
 
         MandateControl storage control = controls[hash];
@@ -264,8 +301,6 @@ contract MandateAccount {
 
     function _validAgentExecution(
         bytes32 hash,
-        RiskAttestation memory risk,
-        bytes memory riskSignature,
         IShadowFill.ShadowQuote memory quote,
         bytes32 userOpHash,
         bytes calldata agentSignature
@@ -273,7 +308,8 @@ contract MandateAccount {
         if (hash == bytes32(0) || hash != activeMandateHash) return (false, 0);
         Mandate memory mandate = mandates[hash];
         if (_recover(userOpHash, agentSignature) != mandate.agent) return (false, 0);
-        if (!_isRiskValid(hash, mandate, risk, riskSignature) || !_isQuoteValid(mandate, quote)) {
+        RiskState memory risk = riskStates[hash];
+        if (!_isPersistentRisk(risk, mandate) || !_isQuoteValid(mandate, quote)) {
             return (false, 0);
         }
         MandateControl storage control = controls[hash];
@@ -290,9 +326,13 @@ contract MandateAccount {
         return mandateHash(mandate);
     }
 
-    function _requireRegisteredMandate(bytes32 hash) private view returns (Mandate memory mandate) {
-        require(isMandateRegistered[hash], "mandate unavailable");
+    function _requireActiveMandate(bytes32 hash) private view returns (Mandate memory mandate) {
+        require(hash != bytes32(0) && hash == activeMandateHash, "mandate inactive");
         return mandates[hash];
+    }
+
+    function _requirePersistentRisk(bytes32 hash, Mandate memory mandate) private view {
+        require(_isPersistentRisk(riskStates[hash], mandate), "risk not persistent");
     }
 
     function _requireRisk(bytes32 mandateHash_, Mandate memory mandate, RiskAttestation calldata risk, bytes calldata signature) private view {
@@ -318,11 +358,17 @@ contract MandateAccount {
     function _isRiskValid(bytes32 mandateHash_, Mandate memory mandate, RiskAttestation memory risk, bytes memory signature) private view returns (bool) {
         if (
             risk.mandateHash != mandateHash_ || risk.riskScoreBps < mandate.riskThresholdBps || risk.observedAt > block.timestamp ||
-            risk.validUntil < block.timestamp || risk.persistenceSeconds < mandate.persistenceSeconds ||
-            uint256(risk.observedAt) + risk.persistenceSeconds > block.timestamp
+            block.timestamp - risk.observedAt > MAX_RISK_OBSERVATION_AGE || risk.validUntil < risk.observedAt ||
+            risk.validUntil - risk.observedAt > MAX_RISK_OBSERVATION_AGE || risk.validUntil < block.timestamp ||
+            risk.persistenceSeconds < mandate.persistenceSeconds
         ) return false;
         bytes32 riskHash = keccak256(abi.encode(RISK_TYPEHASH, risk.mandateHash, risk.riskScoreBps, risk.observedAt, risk.validUntil, risk.persistenceSeconds));
         return _recover(_typedDataHash(_domainSeparator(RISK_NAME_HASH), riskHash), signature) == riskAttester;
+    }
+
+    function _isPersistentRisk(RiskState memory risk, Mandate memory mandate) private view returns (bool) {
+        return risk.eligibleSince != 0 && risk.scoreBps >= mandate.riskThresholdBps && risk.validUntil >= block.timestamp &&
+            block.timestamp >= uint256(risk.eligibleSince) + mandate.persistenceSeconds;
     }
 
     function _isQuoteValid(Mandate memory mandate, IShadowFill.ShadowQuote memory quote) private view returns (bool) {

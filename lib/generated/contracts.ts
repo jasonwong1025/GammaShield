@@ -62,23 +62,6 @@ export const mandateAccountAbi = [
     inputs: [
       { name: 'hash', internalType: 'bytes32', type: 'bytes32' },
       {
-        name: 'risk',
-        internalType: 'struct MandateAccount.RiskAttestation',
-        type: 'tuple',
-        components: [
-          { name: 'mandateHash', internalType: 'bytes32', type: 'bytes32' },
-          { name: 'riskScoreBps', internalType: 'uint16', type: 'uint16' },
-          { name: 'observedAt', internalType: 'uint64', type: 'uint64' },
-          { name: 'validUntil', internalType: 'uint64', type: 'uint64' },
-          {
-            name: 'persistenceSeconds',
-            internalType: 'uint64',
-            type: 'uint64',
-          },
-        ],
-      },
-      { name: 'riskSignature', internalType: 'bytes', type: 'bytes' },
-      {
         name: 'quote',
         internalType: 'struct IShadowFill.ShadowQuote',
         type: 'tuple',
@@ -230,6 +213,32 @@ export const mandateAccountAbi = [
   {
     type: 'function',
     inputs: [
+      { name: 'hash', internalType: 'bytes32', type: 'bytes32' },
+      {
+        name: 'risk',
+        internalType: 'struct MandateAccount.RiskAttestation',
+        type: 'tuple',
+        components: [
+          { name: 'mandateHash', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'riskScoreBps', internalType: 'uint16', type: 'uint16' },
+          { name: 'observedAt', internalType: 'uint64', type: 'uint64' },
+          { name: 'validUntil', internalType: 'uint64', type: 'uint64' },
+          {
+            name: 'persistenceSeconds',
+            internalType: 'uint64',
+            type: 'uint64',
+          },
+        ],
+      },
+      { name: 'signature', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'recordRisk',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
       {
         name: 'mandate',
         internalType: 'struct MandateAccount.Mandate',
@@ -303,6 +312,18 @@ export const mandateAccountAbi = [
     inputs: [],
     name: 'riskDomainSeparator',
     outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    name: 'riskStates',
+    outputs: [
+      { name: 'scoreBps', internalType: 'uint16', type: 'uint16' },
+      { name: 'eligibleSince', internalType: 'uint64', type: 'uint64' },
+      { name: 'observedAt', internalType: 'uint64', type: 'uint64' },
+      { name: 'validUntil', internalType: 'uint64', type: 'uint64' },
+    ],
     stateMutability: 'view',
   },
   {
@@ -429,6 +450,37 @@ export const mandateAccountAbi = [
       },
     ],
     name: 'MandateRevoked',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'mandateHash',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: true,
+      },
+      {
+        name: 'scoreBps',
+        internalType: 'uint16',
+        type: 'uint16',
+        indexed: false,
+      },
+      {
+        name: 'eligibleSince',
+        internalType: 'uint64',
+        type: 'uint64',
+        indexed: false,
+      },
+      {
+        name: 'validUntil',
+        internalType: 'uint64',
+        type: 'uint64',
+        indexed: false,
+      },
+    ],
+    name: 'RiskObserved',
   },
 ] as const
 
@@ -863,6 +915,15 @@ export const useReadMandateAccountRiskDomainSeparator =
   })
 
 /**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"riskStates"`
+ */
+export const useReadMandateAccountRiskStates =
+  /*#__PURE__*/ createUseReadContract({
+    abi: mandateAccountAbi,
+    functionName: 'riskStates',
+  })
+
+/**
  * Wraps __{@link useWriteContract}__ with `abi` set to __{@link mandateAccountAbi}__
  */
 export const useWriteMandateAccount = /*#__PURE__*/ createUseWriteContract({
@@ -894,6 +955,15 @@ export const useWriteMandateAccountPauseMandate =
   /*#__PURE__*/ createUseWriteContract({
     abi: mandateAccountAbi,
     functionName: 'pauseMandate',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"recordRisk"`
+ */
+export const useWriteMandateAccountRecordRisk =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: mandateAccountAbi,
+    functionName: 'recordRisk',
   })
 
 /**
@@ -963,6 +1033,15 @@ export const useSimulateMandateAccountPauseMandate =
   /*#__PURE__*/ createUseSimulateContract({
     abi: mandateAccountAbi,
     functionName: 'pauseMandate',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"recordRisk"`
+ */
+export const useSimulateMandateAccountRecordRisk =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: mandateAccountAbi,
+    functionName: 'recordRisk',
   })
 
 /**
@@ -1050,6 +1129,15 @@ export const useWatchMandateAccountMandateRevokedEvent =
   /*#__PURE__*/ createUseWatchContractEvent({
     abi: mandateAccountAbi,
     eventName: 'MandateRevoked',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link mandateAccountAbi}__ and `eventName` set to `"RiskObserved"`
+ */
+export const useWatchMandateAccountRiskObservedEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: mandateAccountAbi,
+    eventName: 'RiskObserved',
   })
 
 /**
