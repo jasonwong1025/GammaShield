@@ -27,7 +27,7 @@ type Message = {
 export function WhatIfChat({ snap, onNavigateToHedge }: Props) {
   const [input, setInput] = useState(SAMPLE_QUERIES[0]);
   const [loading, setLoading] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([
+  const [messages, setMessages] = useState<Message[]>(() => [
     {
       id: "welcome",
       sender: "ai",
@@ -96,7 +96,7 @@ export function WhatIfChat({ snap, onNavigateToHedge }: Props) {
         <div className="flex items-center gap-2">
           <span className="flex size-2 rounded-full bg-calm" />
           <h2 className="text-[14px] font-semibold tracking-tight">
-            Scenario Simulator ("What-If" Copilot)
+            Scenario Simulator (&quot;What-If&quot; Copilot)
           </h2>
         </div>
         <div className="flex items-center gap-2 text-[11px] font-mono text-muted">

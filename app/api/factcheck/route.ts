@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { analyzeMarketRumor, type FactCheckRequest } from "@/lib/gonka";
+import { getOptimalPutHedge } from "@/lib/optimizer";
+import type { Asset } from "@/lib/assets";
 
 export async function POST(req: NextRequest) {
   try {
@@ -10,15 +12,25 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing or invalid headline parameter" }, { status: 400 });
     }
 
+    const currentAsset = (asset || "ETH") as Asset;
+    const currentSpot = Number(spotPrice) || 2500;
+
+    let optimalContract = null;
+    try {
+      const optRec = await getOptimalPutHedge(currentAsset, currentSpot);
+      optimalContract = optRec.optimalContract;
+    } catch {}
+
     const requestParams: FactCheckRequest = {
       headline: headline.trim(),
-      asset: asset || "ETH",
+      asset: currentAsset,
       gexScore: Number(gexScore) || 50,
-      spotPrice: Number(spotPrice) || 0,
+      spotPrice: currentSpot,
       flipStrike: flipStrike ? Number(flipStrike) : null,
       netGexUsd: netGexUsd ? Number(netGexUsd) : undefined,
       regime: regime || "neutral",
       model: model || undefined,
+      optimalContract,
     };
 
     const analysis = await analyzeMarketRumor(requestParams);

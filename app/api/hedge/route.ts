@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { executeLiveHedge, getWalletStatus, type HedgeRequest } from "@/lib/hedge";
+import {
+  executeLiveHedge,
+  getWalletStatus,
+  setAutopilotEnabled,
+  checkAndExecuteAutopilot,
+  type HedgeRequest,
+} from "@/lib/hedge";
+import type { Asset } from "@/lib/assets";
 
 export async function GET() {
   try {
@@ -16,12 +23,26 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    const { asset, targetStrike, amountUsdc } = body;
+    const { action, enabled, asset, targetStrike, amountUsdc, fragilityScore } = body;
 
+    // Handle Autopilot Toggle
+    if (action === "toggleAutopilot") {
+      const updatedStatus = setAutopilotEnabled(Boolean(enabled));
+      return NextResponse.json({ success: true, autopilot: updatedStatus }, { headers: { "Cache-Control": "no-store" } });
+    }
+
+    // Handle Background Autopilot Trigger Check
+    if (action === "checkAutopilot") {
+      const checkResult = await checkAndExecuteAutopilot((asset || "ETH") as Asset, Number(fragilityScore) || 50);
+      return NextResponse.json(checkResult, { headers: { "Cache-Control": "no-store" } });
+    }
+
+    // Standard Copilot 1-Click Execution
     const requestParams: HedgeRequest = {
       asset: asset || "ETH",
       targetStrike: targetStrike ? Number(targetStrike) : undefined,
       amountUsdc: amountUsdc ? Number(amountUsdc) : 1,
+      isAutopilot: false,
     };
 
     const result = await executeLiveHedge(requestParams);

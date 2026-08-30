@@ -2,6 +2,8 @@
 // Interfaces directly with GonkaRouter (https://api.gonkarouter.io/v1)
 // using zero external dependencies (native fetch).
 
+import type { PutCandidate } from "./optimizerTypes";
+
 export const GONKA_MODELS = {
   PRIMARY: "MiniMaxAI/MiniMax-M2.7", // Recommended agent & reasoning model (200k context)
   KIMI: "moonshotai/Kimi-K2.6",      // High accuracy factual verification
@@ -22,6 +24,7 @@ export type FactCheckRequest = {
   netGexUsd?: number; // USD net dealer GEX
   regime?: "dampening" | "amplifying" | "neutral";
   model?: GonkaModelId;
+  optimalContract?: PutCandidate | null;
 };
 
 export type FactCheckResult = {
@@ -33,6 +36,7 @@ export type FactCheckResult = {
   shouldHedge: boolean; // Autonomous hedge recommendation
   strikeSuggestion: number; // Suggested Put option strike in USD
   actionRationale: string; // Why this hedge strike is optimal
+  optimalContract?: PutCandidate;
 };
 
 export type GonkaResponse = {
@@ -87,7 +91,7 @@ export async function analyzeMarketRumor(params: FactCheckRequest): Promise<Gonk
   const apiKey = process.env.GONKA_API_KEY;
   if (!apiKey || apiKey === "sk-your-gonkarouter-api-key-here") {
     // Provide a deterministic mock response if API key is not yet configured by user
-    return generateFallbackAnalysis(params, "mock-demo-req-id");
+    return generateFallbackAnalysis(params, "mock-demo-req-id", params.optimalContract);
   }
 
   const baseUrl = (process.env.GONKA_BASE_URL || DEFAULT_BASE_URL).replace(/\/$/, "");
@@ -124,6 +128,7 @@ Dealer Fragility Score: ${params.gexScore}/100
 Net Dealer GEX: ${params.netGexUsd ? `${params.netGexUsd.toLocaleString()} USD/1% move` : "N/A"}
 Market Regime: ${params.regime || "neutral"}
 Gamma Flip Level: ${params.flipStrike ? `$${params.flipStrike}` : "None"}
+Optimal Protective Put Strike: ${params.optimalContract ? `$${params.optimalContract.strike} (${params.optimalContract.protectionCoveragePct}% coverage)` : "N/A"}
 
 Headline to Fact-Check: "${params.headline}"`;
 
@@ -154,6 +159,14 @@ Headline to Fact-Check: "${params.headline}"`;
     const rawContent = json.choices?.[0]?.message?.content || "{}";
     const parsedData: FactCheckResult = extractJson<FactCheckResult>(rawContent);
 
+    // Attach optimizer contract
+    if (params.optimalContract) {
+      parsedData.optimalContract = params.optimalContract;
+      if (!parsedData.strikeSuggestion || parsedData.strikeSuggestion <= 0) {
+        parsedData.strikeSuggestion = params.optimalContract.strike;
+      }
+    }
+
     return {
       success: true,
       data: parsedData,
@@ -163,15 +176,19 @@ Headline to Fact-Check: "${params.headline}"`;
     };
   } catch (err) {
     console.error("[GonkaRouter] Inference error:", err);
-    // If upstream fails (e.g. invalid key or network outage), return fallback analysis with error context
-    return generateFallbackAnalysis(params, `error-fallback-${Date.now().toString(36)}`, err instanceof Error ? err.message : "Inference error");
+    return generateFallbackAnalysis(params, `error-fallback-${Date.now().toString(36)}`, params.optimalContract, err instanceof Error ? err.message : "Inference error");
   }
 }
 
 /**
  * Deterministic fallback generator for demo / offline simulation
  */
-function generateFallbackAnalysis(params: FactCheckRequest, requestId: string, errorNote?: string): GonkaResponse {
+function generateFallbackAnalysis(
+  params: FactCheckRequest,
+  requestId: string,
+  optimalContract?: PutCandidate | null,
+  errorNote?: string,
+): GonkaResponse {
   const isHighRisk = params.gexScore > 70;
   const isPutTrigger = params.headline.toLowerCase().includes("dump") ||
                        params.headline.toLowerCase().includes("crash") ||
@@ -180,7 +197,7 @@ function generateFallbackAnalysis(params: FactCheckRequest, requestId: string, e
                        params.headline.toLowerCase().includes("whale") ||
                        isHighRisk;
 
-  const defaultStrike = params.flipStrike || Math.round(params.spotPrice * 0.95);
+  const defaultStrike = optimalContract?.strike || params.flipStrike || Math.round(params.spotPrice * 0.95);
 
   const mockResult: FactCheckResult = {
     truthScore: isHighRisk ? 82 : 45,
@@ -199,6 +216,7 @@ function generateFallbackAnalysis(params: FactCheckRequest, requestId: string, e
     shouldHedge: isPutTrigger,
     strikeSuggestion: defaultStrike,
     actionRationale: `Protective Put at $${defaultStrike.toLocaleString()} locks in floor liquidity before dealer flip levels are breached.`,
+    optimalContract: optimalContract || undefined,
   };
 
   return {
@@ -259,6 +277,7 @@ export type WhatIfRequest = {
   netGexUsd: number;
   regime: "dampening" | "amplifying" | "neutral";
   model?: GonkaModelId;
+  optimalContract?: PutCandidate | null;
 };
 
 export type WhatIfResult = {
@@ -272,6 +291,7 @@ export type WhatIfResult = {
   strategicAdvice: string;
   gonkaRequestId: string;
   modelUsed: string;
+  optimalContract?: PutCandidate;
 };
 
 /**
@@ -283,7 +303,7 @@ export async function simulateWhatIfQuery(params: WhatIfRequest): Promise<WhatIf
   const selectedModel = params.model || GONKA_MODELS.FLASH;
 
   // 1. Coarse heuristic extraction as fallback
-  let parsedAction: "BUY" | "SELL" = params.question.toLowerCase().includes("buy") ? "BUY" : "SELL";
+  const parsedAction: "BUY" | "SELL" = params.question.toLowerCase().includes("buy") ? "BUY" : "SELL";
   let parsedSizeM = 10;
   const numMatch = params.question.match(/\$?(\d+(?:\.\d+)?)\s*(?:m|million|k|thousand|b|billion)?/i);
   if (numMatch) {
@@ -364,9 +384,10 @@ JSON schema:
           totalMovePct,
           amplification,
           conversationalAnswer: parsed.conversationalAnswer || `A $${parsedSizeM}M ${parsedAction.toLowerCase()} in ${params.asset} will trigger an estimated ${totalMovePct.toFixed(2)}% total price move.`,
-          strategicAdvice: parsed.strategicAdvice || "Consider using a TWAP algorithm or staging entries to minimize adverse dealer hedging impact.",
+          strategicAdvice: parsed.strategicAdvice || (amplification > 1.15 ? `Consider buying a protective Put near $${params.optimalContract?.strike || "the Gamma Flip"} to insulate against dealer hedging cascade.` : "Direct market execution has low secondary feedback."),
           gonkaRequestId: json.id || `req_whatif_${Date.now().toString(36)}`,
           modelUsed: selectedModel,
+          optimalContract: params.optimalContract || undefined,
         };
       }
     } catch (e) {
@@ -388,5 +409,6 @@ JSON schema:
       : `Market depth is currently stable. Direct market execution has low secondary feedback.`,
     gonkaRequestId: `whatif_local_${Date.now().toString(36)}`,
     modelUsed: selectedModel,
+    optimalContract: params.optimalContract || undefined,
   };
 }

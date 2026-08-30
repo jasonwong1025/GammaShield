@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { simulateWhatIfQuery, type WhatIfRequest } from "@/lib/gonka";
+import { getOptimalPutHedge } from "@/lib/optimizer";
+import type { Asset } from "@/lib/assets";
 
 export async function POST(req: NextRequest) {
   try {
@@ -10,14 +12,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing question parameter" }, { status: 400 });
     }
 
+    const currentAsset = (asset || "ETH") as Asset;
+    const currentSpot = Number(spotPrice) || 2500;
+
+    let optimalContract = null;
+    try {
+      const optRec = await getOptimalPutHedge(currentAsset, currentSpot);
+      optimalContract = optRec.optimalContract;
+    } catch {}
+
     const requestParams: WhatIfRequest = {
       question: question.trim(),
-      asset: asset || "ETH",
-      spotPrice: Number(spotPrice) || 0,
+      asset: currentAsset,
+      spotPrice: currentSpot,
       score: Number(score) || 50,
       netGexUsd: Number(netGexUsd) || 0,
       regime: regime || "neutral",
       model: model || undefined,
+      optimalContract,
     };
 
     const result = await simulateWhatIfQuery(requestParams);

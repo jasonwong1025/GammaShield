@@ -24,6 +24,7 @@ export function Dashboard() {
   const [snap, setSnap] = useState<MarketSnapshot | null>(null);
   const [ticker, setTicker] = useState<Ticker | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selectedHedgeStrike, setSelectedHedgeStrike] = useState<number | undefined>(undefined);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
@@ -34,10 +35,24 @@ export function Dashboard() {
       setSnap(data);
       setTicker((t) => t ?? data.ticker);
       setError(null);
+
+      // Background Autopilot check: if risk score >= 75 on Base options asset, check Autopilot
+      const currentAssetSnap = data.assets[asset];
+      if (currentAssetSnap && currentAssetSnap.score >= 75) {
+        fetch("/api/hedge", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "checkAutopilot",
+            asset,
+            fragilityScore: currentAssetSnap.score,
+          }),
+        }).catch(() => {});
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "network error");
     }
-  }, []);
+  }, [asset]);
 
   useEffect(() => {
     const initial = setTimeout(load, 0);
@@ -184,6 +199,7 @@ export function Dashboard() {
                     <CopilotView
                       snap={a}
                       onNavigateToHedge={(strike) => {
+                        setSelectedHedgeStrike(strike);
                         setActiveTab("hedge");
                       }}
                     />
@@ -197,6 +213,7 @@ export function Dashboard() {
                       asset={asset}
                       live={live}
                       spot={livePrice}
+                      initialStrike={selectedHedgeStrike}
                     />
                   )}
                 </>

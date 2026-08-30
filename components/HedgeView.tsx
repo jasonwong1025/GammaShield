@@ -13,14 +13,15 @@ type Props = {
   asset: Asset;
   live: boolean;
   spot: number;
+  initialStrike?: number;
 };
 
-export function HedgeView({ snap, feed, asset, live, spot }: Props) {
+export function HedgeView({ snap, feed, asset, live, spot, initialStrike }: Props) {
   return (
     <div className="grid grow grid-cols-1 xl:grid-cols-[1fr_380px] gap-px bg-edge">
       {/* Main Column: Execution Terminal */}
       <div className="flex flex-col gap-px min-w-0">
-        <ExecutionTerminal snap={snap} />
+        <ExecutionTerminal snap={snap} initialStrike={initialStrike} />
         <div className="grow bg-panel" />
       </div>
 
