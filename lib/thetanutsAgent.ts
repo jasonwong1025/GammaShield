@@ -6,6 +6,7 @@ import { getMarketSnapshot, type MarketSnapshot } from "@/lib/snapshot";
 import { getTradeQuote } from "@/lib/trade";
 import { TRADE_PERIODS } from "@/lib/tradePeriods";
 import { getPolicyUserOperationReceipt, submitPolicyUserOperation } from "@/lib/policyAgent4337";
+import { discoverPolicyAccounts } from "@/lib/policyAgentDiscovery";
 
 const ENTRY_POINT = "0x0000000071727De22E5E9d8BAf0edAc6f37da032";
 const RISK_LIFETIME_SECONDS = 120;
@@ -27,9 +28,9 @@ export async function runThetanutsAgents(options: { pendingAccounts?: Iterable<s
   const factory = new ethers.Contract(config.factory, ["event AccountCreated(address indexed account,address indexed owner,bytes32 indexed salt)"], provider);
   const latestBlock = await provider.getBlockNumber();
   const discoveryFromBlock = Math.max(config.deploymentBlock, options.discoveryFromBlock ?? config.deploymentBlock);
-  const events = await accountCreatedEvents(factory, discoveryFromBlock, latestBlock);
+  const discoveredAccounts = await discoverPolicyAccounts(factory, discoveryFromBlock, latestBlock);
   const knownAccounts = [...(options.knownAccounts ?? [])].filter((account): account is string => typeof account === "string" && ethers.isAddress(account)).map(ethers.getAddress);
-  const accounts = [...new Set([...knownAccounts, ...events.flatMap((event) => event.args?.account ? [ethers.getAddress(event.args.account)] : [])])];
+  const accounts = [...new Set([...knownAccounts, ...discoveredAccounts])];
   const pendingAccounts = new Set([...(options.pendingAccounts ?? [])].filter((account): account is string => typeof account === "string" && ethers.isAddress(account)).map((account) => ethers.getAddress(account).toLowerCase()));
   const snapshot = await getMarketSnapshot({ fresh: true });
   const results: ThetanutsAgentResult[] = [];
@@ -107,13 +108,6 @@ async function readPolicy(account: ethers.Contract, agentAddress: string) {
 
 function riskState(raw: { scoreBps: bigint; eligibleSince: bigint; validUntil: bigint }): RiskState {
   return { scoreBps: BigInt(raw.scoreBps), eligibleSince: BigInt(raw.eligibleSince), validUntil: BigInt(raw.validUntil) };
-}
-
-async function accountCreatedEvents(factory: ethers.Contract, fromBlock: number, toBlock: number): Promise<Array<{ args?: { account?: string } }>> {
-  if (fromBlock > toBlock) return [];
-  const events: Array<{ args?: { account?: string } }> = [];
-  for (let start = fromBlock; start <= toBlock; start += 10_000) events.push(...await factory.queryFilter(factory.filters.AccountCreated(), start, Math.min(start + 9_999, toBlock)) as Array<{ args?: { account?: string } }>);
-  return events;
 }
 
 function runtimeConfig() {

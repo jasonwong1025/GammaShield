@@ -7,6 +7,7 @@ import { getMarketSnapshot, type MarketSnapshot } from "@/lib/snapshot";
 import { getShadowQuote } from "@/lib/shadow";
 import { TRADE_PERIODS } from "@/lib/tradePeriods";
 import { getPolicyUserOperationReceipt, submitPolicyUserOperation } from "@/lib/policyAgent4337";
+import { discoverPolicyAccounts } from "@/lib/policyAgentDiscovery";
 
 const ENTRY_POINT = "0x0000000071727De22E5E9d8BAf0edAc6f37da032";
 const RISK_LIFETIME_SECONDS = 120;
@@ -53,9 +54,9 @@ export async function runShadowAgents(options: { pendingAccounts?: Iterable<stri
   // ponytail: scans this single demo factory; add an indexed event store before serving enough accounts to make this expensive.
   const latestBlock = await provider.getBlockNumber();
   const discoveryFromBlock = Math.max(config.deploymentBlock, options.discoveryFromBlock ?? config.deploymentBlock);
-  const events = await accountCreatedEvents(factory, discoveryFromBlock, latestBlock);
+  const discoveredAccounts = await discoverPolicyAccounts(factory, discoveryFromBlock, latestBlock);
   const knownAccounts = [...(options.knownAccounts ?? [])].filter((account): account is string => typeof account === "string" && ethers.isAddress(account)).map((account) => ethers.getAddress(account));
-  const accounts = [...new Set([...knownAccounts, ...events.flatMap((event) => "args" in event && event.args?.account ? [ethers.getAddress(event.args.account)] : [])])];
+  const accounts = [...new Set([...knownAccounts, ...discoveredAccounts])];
   const pendingAccounts = new Set([...(options.pendingAccounts ?? [])].filter((account): account is string => typeof account === "string" && ethers.isAddress(account)).map((account) => ethers.getAddress(account).toLowerCase()));
   const snapshot = await getMarketSnapshot({ fresh: true });
   const results: ShadowAgentResult[] = [];
@@ -68,15 +69,6 @@ export async function runShadowAgents(options: { pendingAccounts?: Iterable<stri
     if (result) results.push(result);
   }
   return { results, accounts, scannedToBlock: latestBlock };
-}
-
-async function accountCreatedEvents(factory: ethers.Contract, fromBlock: number, toBlock: number): Promise<Array<{ args?: { account?: string } }>> {
-  if (fromBlock > toBlock) return [];
-  const events: Array<{ args?: { account?: string } }> = [];
-  for (let start = fromBlock; start <= toBlock; start += 10_000) {
-    events.push(...await factory.queryFilter(factory.filters.AccountCreated(), start, Math.min(start + 9_999, toBlock)) as Array<{ args?: { account?: string } }>);
-  }
-  return events;
 }
 
 export async function getShadowUserOperationReceipt(userOpHash: string) {
