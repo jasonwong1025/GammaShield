@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useAccount, useBalance, useBytecode, useChainId, useReadContract, useSendTransaction, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 import { waitForTransactionReceipt } from "wagmi/actions";
-import { formatEther, formatUnits, parseEther, parseUnits, zeroAddress, zeroHash, type Address, type Hex } from "viem";
+import { BaseError, formatEther, formatUnits, parseEther, parseUnits, zeroAddress, zeroHash, type Address, type Hex } from "viem";
 import { erc20Abi, mandateAccountFactoryAbi, useReadErc20BalanceOf } from "@/lib/generated/contracts";
 import { shortAddr } from "@/lib/format";
 import { wagmiConfig } from "@/lib/wagmi";
@@ -52,8 +52,8 @@ export function PolicyAccountPanel() {
         args: [address, zeroHash],
         chainId: policy.chainId,
       });
-    } catch {
-      setMessage("Account deployment was not completed.");
+    } catch (error) {
+      setMessage(`Account deployment was not completed${error instanceof BaseError && error.shortMessage ? `: ${error.shortMessage}` : "."}`);
     }
   };
 
