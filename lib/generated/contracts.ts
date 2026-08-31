@@ -103,6 +103,53 @@ export const mandateAccountAbi = [
   },
   {
     type: 'function',
+    inputs: [
+      { name: 'hash', internalType: 'bytes32', type: 'bytes32' },
+      {
+        name: 'risk',
+        internalType: 'struct MandateAccount.RiskAttestation',
+        type: 'tuple',
+        components: [
+          { name: 'mandateHash', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'riskScoreBps', internalType: 'uint16', type: 'uint16' },
+          { name: 'observedAt', internalType: 'uint64', type: 'uint64' },
+          { name: 'validUntil', internalType: 'uint64', type: 'uint64' },
+          {
+            name: 'persistenceSeconds',
+            internalType: 'uint64',
+            type: 'uint64',
+          },
+        ],
+      },
+      { name: 'riskSignature', internalType: 'bytes', type: 'bytes' },
+      {
+        name: 'quote',
+        internalType: 'struct MandateAccount.ThetanutsQuote',
+        type: 'tuple',
+        components: [
+          { name: 'mandateHash', internalType: 'bytes32', type: 'bytes32' },
+          {
+            name: 'fillCalldataHash',
+            internalType: 'bytes32',
+            type: 'bytes32',
+          },
+          { name: 'premium', internalType: 'uint256', type: 'uint256' },
+          { name: 'contracts', internalType: 'uint256', type: 'uint256' },
+          { name: 'observedAt', internalType: 'uint64', type: 'uint64' },
+          { name: 'validUntil', internalType: 'uint64', type: 'uint64' },
+        ],
+      },
+      { name: 'quoteSignature', internalType: 'bytes', type: 'bytes' },
+      { name: 'fillData', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'executeThetanuts',
+    outputs: [
+      { name: 'optionAddress', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
     inputs: [{ name: 'hash', internalType: 'bytes32', type: 'bytes32' }],
     name: 'getMandate',
     outputs: [
@@ -341,6 +388,13 @@ export const mandateAccountAbi = [
       { name: 'observedAt', internalType: 'uint64', type: 'uint64' },
       { name: 'validUntil', internalType: 'uint64', type: 'uint64' },
     ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'thetanutsQuoteDomainSeparator',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
     stateMutability: 'view',
   },
   {
@@ -941,6 +995,15 @@ export const useReadMandateAccountRiskStates =
   })
 
 /**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"thetanutsQuoteDomainSeparator"`
+ */
+export const useReadMandateAccountThetanutsQuoteDomainSeparator =
+  /*#__PURE__*/ createUseReadContract({
+    abi: mandateAccountAbi,
+    functionName: 'thetanutsQuoteDomainSeparator',
+  })
+
+/**
  * Wraps __{@link useWriteContract}__ with `abi` set to __{@link mandateAccountAbi}__
  */
 export const useWriteMandateAccount = /*#__PURE__*/ createUseWriteContract({
@@ -963,6 +1026,15 @@ export const useWriteMandateAccountExecuteShadow =
   /*#__PURE__*/ createUseWriteContract({
     abi: mandateAccountAbi,
     functionName: 'executeShadow',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"executeThetanuts"`
+ */
+export const useWriteMandateAccountExecuteThetanuts =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: mandateAccountAbi,
+    functionName: 'executeThetanuts',
   })
 
 /**
@@ -1041,6 +1113,15 @@ export const useSimulateMandateAccountExecuteShadow =
   /*#__PURE__*/ createUseSimulateContract({
     abi: mandateAccountAbi,
     functionName: 'executeShadow',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"executeThetanuts"`
+ */
+export const useSimulateMandateAccountExecuteThetanuts =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: mandateAccountAbi,
+    functionName: 'executeThetanuts',
   })
 
 /**

@@ -3,13 +3,21 @@ pragma solidity 0.8.24;
 
 import {MockUSDC} from "./MockUSDC.sol";
 import {ShadowOptionBook} from "../src/ShadowOptionBook.sol";
-import {IShadowFill, MandateAccount, PackedUserOperation} from "../src/MandateAccount.sol";
+import {IShadowFill, IThetanutsOptionBook, MandateAccount, PackedUserOperation} from "../src/MandateAccount.sol";
 
 interface VmMandate {
     function addr(uint256 privateKey) external returns (address);
     function sign(uint256 privateKey, bytes32 digest) external returns (uint8, bytes32, bytes32);
     function prank(address msgSender) external;
     function warp(uint256 newTimestamp) external;
+    function chainId(uint256 newChainId) external;
+    function etch(address target, bytes calldata code) external;
+}
+
+contract MockThetanutsOptionBook {
+    function fillOrder(IThetanutsOptionBook.Order calldata, bytes calldata, address) external pure returns (address) {
+        return address(0xBEEF);
+    }
 }
 
 contract MandateAccountTest {
@@ -178,6 +186,50 @@ contract MandateAccountTest {
         require(account.mandateHash(mandate) == 0xd0298dc2b570dce5bc70525d3f110abe7a2f07a0c7f2b5673cf9a4f57d5d0534, "EIP-712 hash mismatch");
     }
 
+    function testThetanutsAdapterAcceptsOnlyAFreshBoundedPutFill() public {
+        vm.chainId(8453);
+        address baseUsdc = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
+        address baseBook = 0x1bDff855d6811728acaDC00989e79143a2bdfDed;
+        MockThetanutsOptionBook mockBook = new MockThetanutsOptionBook();
+        vm.etch(baseUsdc, address(token).code);
+        vm.etch(baseBook, address(mockBook).code);
+        MockUSDC(baseUsdc).mint(address(account), 100e6);
+
+        MandateAccount.Mandate memory mandate = _mandate(3e6, 5e6);
+        mandate.optionBook = baseBook;
+        mandate.collateral = baseUsdc;
+        bytes32 mandateHash = account.mandateHash(mandate);
+        bytes memory mandateSignature = _sign(OWNER_KEY, _typed(account.mandateDomainSeparator(), mandateHash));
+        vm.prank(owner);
+        account.registerMandate(mandate, mandateSignature);
+        MandateAccount.RiskAttestation memory risk = _risk(mandateHash);
+        account.recordRisk(mandateHash, risk, _sign(RISK_KEY, _typed(account.riskDomainSeparator(), _riskHash(risk))));
+        _renewRisk(mandate);
+        _renewRisk(mandate);
+        _renewRisk(mandate);
+        _renewRisk(mandate);
+        _renewRisk(mandate);
+
+        uint256[] memory strikes = new uint256[](1);
+        strikes[0] = 2_000e8;
+        IThetanutsOptionBook.Order memory order = IThetanutsOptionBook.Order({
+            maker: owner, orderExpiryTimestamp: block.timestamp + 1 minutes, collateral: baseUsdc, isCall: false,
+            priceFeed: 0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70, implementation: 0x7355EB92dfb0503DB558a70c10843618932ab290,
+            isLong: false, maxCollateralUsable: 10e6, strikes: strikes, expiry: block.timestamp + 7 days,
+            price: 1e8, numContracts: 1e6, extraOptionData: ""
+        });
+        bytes memory fillData = abi.encodeWithSelector(IThetanutsOptionBook.fillOrder.selector, order, _sign(QUOTE_KEY, keccak256("maker")), address(0));
+        MandateAccount.ThetanutsQuote memory quote = MandateAccount.ThetanutsQuote({
+            mandateHash: mandateHash, fillCalldataHash: keccak256(fillData), premium: 1e6, contracts: 1e6,
+            observedAt: uint64(block.timestamp), validUntil: uint64(block.timestamp + 1 minutes)
+        });
+        bytes memory quoteSignature = _sign(RISK_KEY, _typed(account.thetanutsQuoteDomainSeparator(), _thetanutsQuoteHash(quote)));
+        risk = _risk(mandateHash);
+        account.executeThetanuts(mandateHash, risk, _sign(RISK_KEY, _typed(account.riskDomainSeparator(), _riskHash(risk))), quote, quoteSignature, fillData);
+        (,, uint256 spent,) = account.controls(mandateHash);
+        require(spent == 1e6, "Thetanuts fill was not accounted");
+    }
+
     function _mandate(uint256 perFill, uint256 total) private view returns (MandateAccount.Mandate memory) {
         return MandateAccount.Mandate({
             owner: owner, account: address(account), agent: agent, optionBook: address(book), collateral: address(token), asset: bytes32("ETH"), side: 1,
@@ -252,6 +304,13 @@ contract MandateAccountTest {
         return keccak256(abi.encode(
             keccak256("RiskAttestation(bytes32 mandateHash,uint16 riskScoreBps,uint64 observedAt,uint64 validUntil,uint64 persistenceSeconds)"),
             risk.mandateHash, risk.riskScoreBps, risk.observedAt, risk.validUntil, risk.persistenceSeconds
+        ));
+    }
+
+    function _thetanutsQuoteHash(MandateAccount.ThetanutsQuote memory quote) private pure returns (bytes32) {
+        return keccak256(abi.encode(
+            keccak256("ThetanutsQuote(bytes32 mandateHash,bytes32 fillCalldataHash,uint256 premium,uint256 contracts,uint64 observedAt,uint64 validUntil)"),
+            quote.mandateHash, quote.fillCalldataHash, quote.premium, quote.contracts, quote.observedAt, quote.validUntil
         ));
     }
 

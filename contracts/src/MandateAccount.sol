@@ -22,6 +22,26 @@ interface IShadowFill {
     function fillShadow(ShadowQuote calldata quote, bytes calldata signature) external returns (uint256 positionId);
 }
 
+interface IThetanutsOptionBook {
+    struct Order {
+        address maker;
+        uint256 orderExpiryTimestamp;
+        address collateral;
+        bool isCall;
+        address priceFeed;
+        address implementation;
+        bool isLong;
+        uint256 maxCollateralUsable;
+        uint256[] strikes;
+        uint256 expiry;
+        uint256 price;
+        uint256 numContracts;
+        bytes extraOptionData;
+    }
+
+    function fillOrder(Order calldata order, bytes calldata signature, address referrer) external returns (address optionAddress);
+}
+
 /// @dev ERC-4337 v0.7 packed user operation, kept local to avoid coupling the
 /// demonstration contract to a particular account-abstraction package.
 struct PackedUserOperation {
@@ -69,6 +89,15 @@ contract MandateAccount {
         uint64 persistenceSeconds;
     }
 
+    struct ThetanutsQuote {
+        bytes32 mandateHash;
+        bytes32 fillCalldataHash;
+        uint256 premium;
+        uint256 contracts;
+        uint64 observedAt;
+        uint64 validUntil;
+    }
+
     struct MandateControl {
         bool paused;
         bool revoked;
@@ -85,6 +114,12 @@ contract MandateAccount {
 
     uint256 private constant SIG_VALIDATION_FAILED = 1;
     uint64 private constant MAX_RISK_OBSERVATION_AGE = 3 minutes;
+    uint64 private constant MAX_THETANUTS_QUOTE_AGE = 3 minutes;
+    address private constant BASE_OPTION_BOOK = 0x1bDff855d6811728acaDC00989e79143a2bdfDed;
+    address private constant BASE_USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
+    address private constant BASE_ETH_FEED = 0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70;
+    address private constant BASE_BTC_FEED = 0x64c911996D3c6aC71f9b455B1E8E7266BcbD848F;
+    address private constant BASE_PUT_IMPLEMENTATION = 0x7355EB92dfb0503DB558a70c10843618932ab290;
     uint256 private constant SECP256K1N_HALF =
         0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0;
     bytes32 private constant DOMAIN_TYPEHASH = keccak256(
@@ -95,6 +130,9 @@ contract MandateAccount {
     );
     bytes32 private constant RISK_TYPEHASH = keccak256(
         "RiskAttestation(bytes32 mandateHash,uint16 riskScoreBps,uint64 observedAt,uint64 validUntil,uint64 persistenceSeconds)"
+    );
+    bytes32 private constant THETANUTS_QUOTE_TYPEHASH = keccak256(
+        "ThetanutsQuote(bytes32 mandateHash,bytes32 fillCalldataHash,uint256 premium,uint256 contracts,uint64 observedAt,uint64 validUntil)"
     );
     bytes32 private constant MANDATE_NAME_HASH = keccak256("GammaShield Mandate");
     bytes32 private constant RISK_NAME_HASH = keccak256("GammaShield Risk");
@@ -159,6 +197,10 @@ contract MandateAccount {
         return _domainSeparator(RISK_NAME_HASH);
     }
 
+    function thetanutsQuoteDomainSeparator() public view returns (bytes32) {
+        return _domainSeparator(keccak256("GammaShield Thetanuts Quote"));
+    }
+
     /// @notice ERC-4337 v0.7 validation. Owner signatures may use owner
     /// recovery; an agent signature is accepted only for a fully validated,
     /// registered executeShadow call.
@@ -177,6 +219,8 @@ contract MandateAccount {
                 (valid, validUntil) = _validateAgentRiskRecord(userOp.callData[4:], userOpHash, userOp.signature);
             } else if (selector == this.executeShadow.selector) {
                 (valid, validUntil) = _validateAgentUserOp(userOp.callData[4:], userOpHash, userOp.signature);
+            } else if (selector == this.executeThetanuts.selector) {
+                (valid, validUntil) = _validateThetanutsUserOp(userOp.callData[4:], userOpHash, userOp.signature);
             }
         }
 
@@ -186,6 +230,27 @@ contract MandateAccount {
             paid;
         }
         return uint256(validUntil) << 160;
+    }
+
+    function _validateThetanutsUserOp(bytes calldata encodedCall, bytes32 userOpHash, bytes calldata agentSignature)
+        private
+        view
+        returns (bool valid, uint64 validUntil)
+    {
+        (bytes32 mandateHash_, RiskAttestation memory risk, bytes memory riskSignature, ThetanutsQuote memory quote, bytes memory quoteSignature, bytes memory fillData) = abi.decode(
+            encodedCall, (bytes32, RiskAttestation, bytes, ThetanutsQuote, bytes, bytes)
+        );
+        if (mandateHash_ == bytes32(0) || mandateHash_ != activeMandateHash) return (false, 0);
+        Mandate memory mandate = mandates[mandateHash_];
+        if (_recover(userOpHash, agentSignature) != mandate.agent) return (false, 0);
+        MandateControl storage control = controls[mandateHash_];
+        if (
+            !_isPersistentRisk(riskStates[mandateHash_], mandate) || !_isRiskValid(mandateHash_, mandate, risk, riskSignature) ||
+            !_isThetanutsQuoteValid(mandateHash_, mandate, quote, quoteSignature, fillData) || control.paused || control.revoked ||
+            control.spentPremium + quote.premium > mandate.maxPremiumTotal ||
+            (control.lastExecutionAt != 0 && block.timestamp < uint256(control.lastExecutionAt) + mandate.minExecutionIntervalSeconds)
+        ) return (false, 0);
+        return (true, _minimum(mandate.expiresAt, _minimum(risk.validUntil, quote.validUntil)));
     }
 
     function _validateAgentUserOp(bytes calldata encodedCall, bytes32 userOpHash, bytes calldata agentSignature)
@@ -304,6 +369,39 @@ contract MandateAccount {
         emit MandateExecuted(hash, quote.fillId, quote.premiumUsdc, positionId);
     }
 
+    /// @notice Mainnet-only adapter for a freshly SDK-previewed, listed Thetanuts PUT.
+    /// The account reconstructs no contract calldata itself: it validates the exact SDK
+    /// fill payload, grants the exact premium allowance, then calls Base OptionBook.
+    function executeThetanuts(
+        bytes32 hash,
+        RiskAttestation calldata risk,
+        bytes calldata riskSignature,
+        ThetanutsQuote calldata quote,
+        bytes calldata quoteSignature,
+        bytes calldata fillData
+    ) external onlyEntryPoint returns (address optionAddress) {
+        Mandate memory mandate = _requireActiveMandate(hash);
+        _requirePersistentRisk(hash, mandate);
+        _requireRisk(hash, mandate, risk, riskSignature);
+        _requireThetanutsQuote(hash, mandate, quote, quoteSignature, fillData);
+
+        MandateControl storage control = controls[hash];
+        require(!control.paused && !control.revoked, "mandate inactive");
+        require(control.spentPremium + quote.premium <= mandate.maxPremiumTotal, "total cap exceeded");
+        require(
+            control.lastExecutionAt == 0 || block.timestamp >= uint256(control.lastExecutionAt) + mandate.minExecutionIntervalSeconds,
+            "execution cooldown"
+        );
+
+        _call(mandate.collateral, abi.encodeCall(IERC20Approval.approve, (mandate.optionBook, quote.premium)), true);
+        bytes memory result = _call(mandate.optionBook, fillData, false);
+        optionAddress = abi.decode(result, (address));
+
+        control.spentPremium += quote.premium;
+        control.lastExecutionAt = uint64(block.timestamp);
+        emit MandateExecuted(hash, quote.fillCalldataHash, quote.premium, uint256(uint160(optionAddress)));
+    }
+
     function _validAgentExecution(
         bytes32 hash,
         RiskAttestation memory risk,
@@ -354,6 +452,12 @@ contract MandateAccount {
         require(_isQuoteValid(mandate, quote), "quote violates mandate");
     }
 
+    function _requireThetanutsQuote(
+        bytes32 mandateHash_, Mandate memory mandate, ThetanutsQuote calldata quote, bytes calldata signature, bytes calldata fillData
+    ) private view {
+        require(_isThetanutsQuoteValid(mandateHash_, mandate, quote, signature, fillData), "Thetanuts quote violates mandate");
+    }
+
     function _isMandateValid(Mandate memory mandate, bytes memory signature) private view returns (bool) {
         if (
             mandate.owner != owner || mandate.account != address(this) || mandate.agent == address(0) || mandate.agent == owner ||
@@ -398,6 +502,52 @@ contract MandateAccount {
         ) return false;
         uint256 tenor = uint256(quote.expiry) - block.timestamp;
         return tenor >= mandate.minTenorSeconds && tenor <= mandate.maxTenorSeconds;
+    }
+
+    function _isThetanutsQuoteValid(
+        bytes32 mandateHash_, Mandate memory mandate, ThetanutsQuote memory quote, bytes memory signature, bytes memory fillData
+    ) private view returns (bool) {
+        if (
+            block.chainid != 8453 || mandate.optionBook != BASE_OPTION_BOOK || mandate.collateral != BASE_USDC || mandate.side != 1 ||
+            quote.mandateHash != mandateHash_ || quote.fillCalldataHash != keccak256(fillData) || quote.observedAt > block.timestamp ||
+            block.timestamp - quote.observedAt > MAX_THETANUTS_QUOTE_AGE || quote.validUntil < block.timestamp ||
+            quote.validUntil < quote.observedAt || quote.validUntil - quote.observedAt > MAX_THETANUTS_QUOTE_AGE
+        ) return false;
+        bytes32 quoteHash = keccak256(abi.encode(
+            THETANUTS_QUOTE_TYPEHASH, quote.mandateHash, quote.fillCalldataHash, quote.premium, quote.contracts, quote.observedAt, quote.validUntil
+        ));
+        if (_recover(_typedDataHash(_domainSeparator(keccak256("GammaShield Thetanuts Quote")), quoteHash), signature) != riskAttester) return false;
+        if (fillData.length < 4 || _selector(fillData) != IThetanutsOptionBook.fillOrder.selector) return false;
+        bytes memory parameters = new bytes(fillData.length - 4);
+        assembly {
+            let source := add(fillData, 36)
+            let destination := add(parameters, 32)
+            let end := add(destination, mload(parameters))
+            for {} lt(destination, end) { destination := add(destination, 32) source := add(source, 32) } {
+                mstore(destination, mload(source))
+            }
+        }
+        (IThetanutsOptionBook.Order memory order, bytes memory makerSignature, address referrer) = abi.decode(
+            parameters, (IThetanutsOptionBook.Order, bytes, address)
+        );
+        if (
+            makerSignature.length != 65 || referrer != address(0) || order.maker == address(0) || order.isCall || order.isLong ||
+            order.collateral != BASE_USDC || order.implementation != BASE_PUT_IMPLEMENTATION || order.strikes.length != 1 ||
+            order.extraOptionData.length != 0 || order.price == 0 || order.numContracts == 0 || order.numContracts > mandate.maxContractsPerFill ||
+            order.price > type(uint256).max / order.numContracts || order.orderExpiryTimestamp <= block.timestamp ||
+            order.expiry <= block.timestamp || quote.contracts != order.numContracts
+        ) return false;
+        address expectedFeed = mandate.asset == bytes32("ETH") ? BASE_ETH_FEED : mandate.asset == bytes32("BTC") ? BASE_BTC_FEED : address(0);
+        if (expectedFeed == address(0) || order.priceFeed != expectedFeed) return false;
+        uint256 tenor = order.expiry - block.timestamp;
+        uint256 premium = order.price * order.numContracts / 1e8;
+        return tenor >= mandate.minTenorSeconds && tenor <= mandate.maxTenorSeconds && premium > 0 && premium == quote.premium && premium <= mandate.maxPremiumPerFill;
+    }
+
+    function _selector(bytes memory data) private pure returns (bytes4 selector) {
+        assembly {
+            selector := mload(add(data, 32))
+        }
     }
 
     function _domainSeparator(bytes32 nameHash) private view returns (bytes32) {
