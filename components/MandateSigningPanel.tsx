@@ -6,7 +6,8 @@ import { baseSepolia } from "wagmi/chains";
 import { hashStruct, isAddress, parseUnits, zeroHash, type Address, type Hex } from "viem";
 import { mandateAccountAbi } from "@/lib/generated/contracts";
 import { MANDATE_EIP712_TYPES, mandateDomain, mandateMessage, type Mandate } from "@/lib/mandate";
-import { shortAddr } from "@/lib/format";
+import { fmtExpiryDate, fmtStrike, fmtUsd, shortAddr } from "@/lib/format";
+import type { AiMandateDraft, MandateDraftTerms } from "@/lib/mandateDraft";
 import type { OptionsAsset } from "@/lib/assets";
 import type { TradeSide } from "@/lib/trade";
 
@@ -17,19 +18,7 @@ const OPTION_BOOK: Address | undefined = optionBookFromEnv && isAddress(optionBo
 const COLLATERAL: Address | undefined = collateralFromEnv && isAddress(collateralFromEnv) ? collateralFromEnv : undefined;
 const AGENT: Address | undefined = agentFromEnv && isAddress(agentFromEnv) ? agentFromEnv : undefined;
 
-type Terms = {
-  asset: OptionsAsset;
-  side: TradeSide;
-  premiumPerFill: string;
-  premiumTotal: string;
-  contracts: string;
-  minTenorDays: string;
-  maxTenorDays: string;
-  riskScore: string;
-  persistenceMinutes: string;
-  cooldownMinutes: string;
-  validityHours: string;
-};
+type Terms = Omit<MandateDraftTerms, "side"> & { side: TradeSide };
 
 const DEFAULT_TERMS: Terms = {
   asset: "ETH",
@@ -49,6 +38,8 @@ export function MandateSigningPanel({ owner, account }: { owner: Address; accoun
   const [terms, setTerms] = useState<Terms>(DEFAULT_TERMS);
   const [nonce] = useState(() => BigInt(Date.now()));
   const [signed, setSigned] = useState<{ mandate: Mandate; signature: Hex } | null>(null);
+  const [draft, setDraft] = useState<AiMandateDraft | null>(null);
+  const [drafting, setDrafting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const chainId = useChainId();
   const { switchChainAsync, isPending: isSwitching } = useSwitchChain();
@@ -73,6 +64,11 @@ export function MandateSigningPanel({ owner, account }: { owner: Address; accoun
   const signedHash = useMemo(() => signed && hashStruct({ data: mandateMessage(signed.mandate), primaryType: "Mandate", types: MANDATE_EIP712_TYPES }), [signed]);
   const active = activeMandateHash && activeMandateHash !== zeroHash ? activeMandateHash : null;
   const busy = isSwitching || isSigning || isSubmitting || isConfirming;
+
+  const updateTerms = (change: Partial<Terms>) => {
+    setTerms((value) => ({ ...value, ...change }));
+    setSigned(null);
+  };
 
   useEffect(() => {
     if (!isSuccess) return;
@@ -127,6 +123,21 @@ export function MandateSigningPanel({ owner, account }: { owner: Address; accoun
     }
   };
 
+  const createDraft = async () => {
+    setError(null);
+    setDrafting(true);
+    try {
+      const response = await fetch("/api/mandate-draft", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ asset: terms.asset }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? `AI draft ${response.status}`);
+      setDraft(data.draft as AiMandateDraft);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "AI draft was unavailable.");
+    } finally {
+      setDrafting(false);
+    }
+  };
+
   return (
     <section className="mt-4 border-t border-edge pt-4" aria-label="Sign execution mandate">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -143,18 +154,20 @@ export function MandateSigningPanel({ owner, account }: { owner: Address; accoun
       ) : (
         <>
           <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            <Select label="Asset" value={terms.asset} onChange={(asset) => setTerms((value) => ({ ...value, asset: asset as OptionsAsset }))} options={["BTC", "ETH"]} />
-            <Select label="Option side" value={terms.side} onChange={(side) => setTerms((value) => ({ ...value, side: side as TradeSide }))} options={["put", "call"]} />
-            <NumberField label="Max premium / fill" value={terms.premiumPerFill} suffix="test USDC" onChange={(premiumPerFill) => setTerms((value) => ({ ...value, premiumPerFill }))} />
-            <NumberField label="Max premium / mandate" value={terms.premiumTotal} suffix="test USDC" onChange={(premiumTotal) => setTerms((value) => ({ ...value, premiumTotal }))} />
-            <NumberField label="Contracts / fill" value={terms.contracts} suffix="contracts" onChange={(contracts) => setTerms((value) => ({ ...value, contracts }))} />
-            <NumberField label="Risk trigger" value={terms.riskScore} suffix="/ 100" onChange={(riskScore) => setTerms((value) => ({ ...value, riskScore }))} />
-            <NumberField label="Min tenor" value={terms.minTenorDays} suffix="days" onChange={(minTenorDays) => setTerms((value) => ({ ...value, minTenorDays }))} />
-            <NumberField label="Max tenor" value={terms.maxTenorDays} suffix="days" onChange={(maxTenorDays) => setTerms((value) => ({ ...value, maxTenorDays }))} />
-            <NumberField label="Risk persistence" value={terms.persistenceMinutes} suffix="minutes" onChange={(persistenceMinutes) => setTerms((value) => ({ ...value, persistenceMinutes }))} />
-            <NumberField label="Fill cooldown" value={terms.cooldownMinutes} suffix="minutes" onChange={(cooldownMinutes) => setTerms((value) => ({ ...value, cooldownMinutes }))} />
-            <NumberField label="Mandate validity" value={terms.validityHours} suffix="hours" onChange={(validityHours) => setTerms((value) => ({ ...value, validityHours }))} />
+            <Select label="Asset" value={terms.asset} onChange={(asset) => updateTerms({ asset: asset as OptionsAsset })} options={["BTC", "ETH"]} />
+            <Select label="Option side" value={terms.side} onChange={(side) => updateTerms({ side: side as TradeSide })} options={["put", "call"]} />
+            <NumberField label="Max premium / fill" value={terms.premiumPerFill} suffix="test USDC" onChange={(premiumPerFill) => updateTerms({ premiumPerFill })} />
+            <NumberField label="Max premium / mandate" value={terms.premiumTotal} suffix="test USDC" onChange={(premiumTotal) => updateTerms({ premiumTotal })} />
+            <NumberField label="Contracts / fill" value={terms.contracts} suffix="contracts" onChange={(contracts) => updateTerms({ contracts })} />
+            <NumberField label="Risk trigger" value={terms.riskScore} suffix="/ 100" onChange={(riskScore) => updateTerms({ riskScore })} />
+            <NumberField label="Min tenor" value={terms.minTenorDays} suffix="days" onChange={(minTenorDays) => updateTerms({ minTenorDays })} />
+            <NumberField label="Max tenor" value={terms.maxTenorDays} suffix="days" onChange={(maxTenorDays) => updateTerms({ maxTenorDays })} />
+            <NumberField label="Risk persistence" value={terms.persistenceMinutes} suffix="minutes" onChange={(persistenceMinutes) => updateTerms({ persistenceMinutes })} />
+            <NumberField label="Fill cooldown" value={terms.cooldownMinutes} suffix="minutes" onChange={(cooldownMinutes) => updateTerms({ cooldownMinutes })} />
+            <NumberField label="Mandate validity" value={terms.validityHours} suffix="hours" onChange={(validityHours) => updateTerms({ validityHours })} />
           </div>
+
+          {draft && <div className="mt-3 rounded-lg border border-blue/30 bg-blue/5 p-3 text-[12px] text-muted"><div className="flex flex-wrap items-center justify-between gap-2"><p className="font-semibold text-fg">AI policy draft <span className="ml-1 rounded bg-panel px-1.5 py-0.5 text-[10px] text-blue">{draft.source === "gonka" ? "Gonka advisory" : "Deterministic fallback"}</span></p><button type="button" onClick={() => updateTerms(draft.terms)} disabled={busy} className="h-8 rounded-lg bg-blue px-3 text-[11px] font-semibold text-white disabled:opacity-60">Apply draft</button></div><p className="mt-2">{draft.quote.liquidity === "book" ? "Fresh listed Thetanuts OptionBook PUT" : "Thetanuts MM estimate · RFQ-only"}: {fmtStrike(draft.quote.strike)} · {fmtExpiryDate(draft.quote.expiryTs)} · {draft.quote.contracts} contracts · {fmtUsd(draft.quote.premiumUsd, false, 6)}.</p><p className="mt-1">{draft.rationale}</p><p className="mt-2 text-[10px] text-faint">Applying only edits this form. You still review, sign, and register the policy; it cannot execute a trade{draft.quote.liquidity === "mm" ? "; the agent waits for a fresh listed OptionBook order" : ""}.</p></div>}
 
           <div className="mt-3 grid gap-2 rounded-lg border border-edge bg-panel2 p-3 text-[11px] sm:grid-cols-[110px_1fr]">
             <span className="text-faint">Policy account</span><span className="font-mono text-fg">{shortAddr(account)}</span>
@@ -163,6 +176,7 @@ export function MandateSigningPanel({ owner, account }: { owner: Address; accoun
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button type="button" onClick={() => void createDraft()} disabled={busy || drafting} className="h-9 rounded-lg bg-panel3 px-3 text-[12px] font-semibold text-blue hover:bg-panel2 disabled:cursor-wait disabled:opacity-60">{drafting ? "Reading fresh OptionBook…" : "Generate AI draft"}</button>
             <button type="button" onClick={() => void signMandate()} disabled={busy} className="h-9 rounded-lg bg-blue px-3 text-[12px] font-semibold text-white hover:brightness-110 disabled:cursor-wait disabled:opacity-60">
               {isSwitching ? "Switching network…" : isSigning ? "Confirm in wallet…" : "Review and sign mandate"}
             </button>
