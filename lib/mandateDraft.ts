@@ -65,7 +65,7 @@ export async function createAiMandateDraft(asset: string): Promise<AiMandateDraf
 async function findAdvisoryPut(asset: OptionsAsset) {
   let estimate: Awaited<ReturnType<typeof getTradeQuote>> | null = null;
   for (const period of TRADE_PERIODS) {
-    const reference = await getTradeQuote(asset, "put", 1, period, true);
+    const reference = await getTradeQuote(asset, "put", 1, period, { fresh: true });
     if (reference.premiumPerContractUsd <= 0) continue;
     const target = Math.min(1, reference.maxContracts ?? 1, Math.max(0.001, Math.floor((2 / reference.premiumPerContractUsd) * 1e6) / 1e6));
     if (target < 0.001) continue;

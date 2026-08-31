@@ -139,7 +139,10 @@ export async function getShadowQuote(
   if (!ethers.isAddress(buyer)) throw new Error("invalid buyer address");
 
   const contractsCount = validContracts(count);
-  const option = await getTradeQuote(asset as OptionsAsset, side, contractsCount, validPeriod(period), fresh, maxPremiumUsd);
+  const option = await getTradeQuote(asset as OptionsAsset, side, contractsCount, validPeriod(period), {
+    fresh,
+    maxPremiumUsd,
+  });
   if (option.contracts <= 0 || option.totalCostUsd <= 0) throw new Error("no fillable shadow quote is available");
 
   const config = contracts();

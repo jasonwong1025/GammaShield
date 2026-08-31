@@ -27,6 +27,7 @@ import { fmtContracts, fmtExpiryDate, fmtIv, fmtStrike, fmtUsd, riskColor } from
 import { ExplorerLink } from "./ExplorerLink";
 import { useExecutionNetwork } from "./ExecutionNetworkProvider";
 import { ensureWalletChain } from "@/lib/walletChain";
+import { StrategyBuilder } from "./StrategyBuilder";
 
 const QUOTE_DEBOUNCE_MS = 250;
 const QUOTE_REFRESH_MS = 15_000;
@@ -150,6 +151,7 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
   const { sendTransactionAsync } = useSendTransaction();
   const initialHedge = hedgeIntent?.asset === asset ? hedgeIntent : null;
   const [side, setSide] = useState<TradeSide>(initialHedge ? "put" : "call");
+  const [view, setView] = useState<"single" | "strategy">("single");
   const executionMode = network === "mainnet" ? "mainnet" : "shadow";
   const [amountStr, setAmountStr] = useState(initialHedge?.contracts ?? "1");
   const [period, setPeriod] = useState<TradePeriod>(initialHedge?.period ?? 7);
@@ -582,13 +584,15 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
 
   return (
     <section className="card p-5 flex flex-col gap-4" aria-label="Trade options">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <h2 className="text-[14px] font-semibold">Trade {asset} options</h2>
-        <span className="flex items-center gap-1.5 text-[11px] text-muted">
-          <span className="live-dot inline-block size-1.5 rounded-full bg-calm" />
-          OptionBook (live)
-        </span>
+        <div className="flex items-center gap-2">
+          <div className="flex rounded-lg bg-panel2 p-1 text-[10px] font-semibold"><button onClick={() => setView("single")} aria-pressed={view === "single"} className={`h-6 rounded px-2 ${view === "single" ? "bg-panel text-fg shadow-sm" : "text-muted"}`}>Single</button><button onClick={() => setView("strategy")} aria-pressed={view === "strategy"} className={`h-6 rounded px-2 ${view === "strategy" ? "bg-panel text-fg shadow-sm" : "text-muted"}`}>Strategies</button></div>
+          <span className="hidden sm:flex items-center gap-1.5 text-[11px] text-muted"><span className="live-dot inline-block size-1.5 rounded-full bg-calm" />OptionBook (live)</span>
+        </div>
       </div>
+
+      {view === "strategy" ? <StrategyBuilder asset={asset} /> : <>
 
       {/* Direction */}
       <div className="grid grid-cols-2 gap-1 rounded-lg bg-panel2 p-1">
@@ -1015,6 +1019,7 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
         period trades through the Thetanuts RFQ auction at the real expiry. Premium is paid in
         the option&apos;s collateral token; everything settles on Base.
       </p>
+      </>}
     </section>
   );
 }
