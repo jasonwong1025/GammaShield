@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useAccount, useBalance, useBytecode, useChainId, useReadContract, useSendTransaction, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
+import { useAccount, useBalance, useBytecode, useReadContract, useSendTransaction, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 import { waitForTransactionReceipt } from "wagmi/actions";
-import { BaseError, formatEther, formatUnits, parseEther, parseUnits, zeroAddress, zeroHash, type Address, type Hex } from "viem";
+import { formatEther, formatUnits, parseEther, parseUnits, zeroAddress, zeroHash, type Address, type Hex } from "viem";
 import { erc20Abi, mandateAccountFactoryAbi, useReadErc20BalanceOf } from "@/lib/generated/contracts";
 import { shortAddr } from "@/lib/format";
 import { wagmiConfig } from "@/lib/wagmi";
@@ -11,23 +11,23 @@ import { MandateSigningPanel } from "./MandateSigningPanel";
 import { ExplorerLink } from "./ExplorerLink";
 import { useExecutionNetwork } from "./ExecutionNetworkProvider";
 import { policyNetwork } from "@/lib/policyNetwork";
+import { ensureWalletChain, walletActionError } from "@/lib/walletChain";
 
 export function PolicyAccountPanel() {
   const { network } = useExecutionNetwork();
   const policy = policyNetwork(network);
-  const { address, isConnected } = useAccount();
-  const chainId = useChainId();
+  const { address, connector, isConnected } = useAccount();
   const { switchChainAsync, isPending: isSwitching } = useSwitchChain();
   const [message, setMessage] = useState<string | null>(null);
   const canDerive = Boolean(address && policy.factory);
   const { data: accountAddress, isPending: isDeriving, error: deriveError } = useReadAccountAddress(address, policy.factory, policy.chainId);
-  const { data: bytecode, refetch: refetchBytecode } = useBytecode({
+  const { data: bytecode, error: bytecodeError, isPending: isCheckingDeployment, refetch: refetchBytecode } = useBytecode({
     address: accountAddress,
     chainId: policy.chainId,
     query: { enabled: Boolean(accountAddress) },
   });
   const { writeContractAsync, data: transactionHash, isPending: isSubmitting } = useWriteContract();
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
+  const { isError: deploymentFailed, error: deploymentError, isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
     chainId: policy.chainId,
     hash: transactionHash,
   });
@@ -38,13 +38,17 @@ export function PolicyAccountPanel() {
   }, [isSuccess, refetchBytecode]);
 
   const deployed = bytecode != null && bytecode !== "0x";
+  const accountStateUnknown = Boolean(bytecodeError);
+  const deploymentMessage = deploymentFailed
+    ? `The deployment transaction did not succeed on-chain: ${walletActionError(deploymentError, "check the linked transaction before retrying.")} No policy account was created; network gas may have been charged.`
+    : message;
   const busy = isSwitching || isSubmitting || isConfirming;
 
   const createAccount = async () => {
     if (!address || !policy.factory || deployed) return;
     setMessage(null);
     try {
-      if (chainId !== policy.chainId) await switchChainAsync({ chainId: policy.chainId });
+      await ensureWalletChain(policy.chainId, connector, switchChainAsync);
       await writeContractAsync({
         address: policy.factory,
         abi: mandateAccountFactoryAbi,
@@ -53,7 +57,7 @@ export function PolicyAccountPanel() {
         chainId: policy.chainId,
       });
     } catch (error) {
-      setMessage(`Account deployment was not completed${error instanceof BaseError && error.shortMessage ? `: ${error.shortMessage}` : "."}`);
+      setMessage(`Account deployment was not completed: ${walletActionError(error, "the wallet did not submit a transaction.")}`);
     }
   };
 
@@ -84,6 +88,8 @@ export function PolicyAccountPanel() {
           </div>
 
           {deriveError && <p className="text-[12px] text-crit">Could not derive the policy account on {network === "mainnet" ? "Base mainnet" : "Base Sepolia"}.</p>}
+          {accountAddress && isCheckingDeployment && <p className="text-[12px] text-muted">Checking whether the deterministic policy account is already deployed…</p>}
+          {accountStateUnknown && <p className="text-[12px] text-crit">Could not verify whether this policy account is deployed. Reload or restore the Base RPC connection before submitting another deployment.</p>}
 
           <div className="flex flex-wrap items-center gap-2">
             {deployed && accountAddress ? (
@@ -91,24 +97,25 @@ export function PolicyAccountPanel() {
                 View account ↗
               </ExplorerLink>
             ) : (
-              <button type="button" onClick={() => void createAccount()} disabled={busy || isDeriving || !canDerive} className="h-9 rounded-lg bg-blue px-3 text-[12px] font-semibold text-white hover:brightness-110 disabled:cursor-wait disabled:opacity-60">
+              <button type="button" onClick={() => void createAccount()} disabled={busy || isDeriving || isCheckingDeployment || !canDerive || accountStateUnknown} className="h-9 rounded-lg bg-blue px-3 text-[12px] font-semibold text-white hover:brightness-110 disabled:cursor-wait disabled:opacity-60">
                 {isSwitching ? "Switching network…" : isSubmitting ? "Confirm in wallet…" : isConfirming ? "Deploying account…" : "Create policy account"}
               </button>
             )}
             <span className="text-[11px] text-faint">This is a one-time wallet transaction; it does not enable autonomous trading.</span>
           </div>
+          {isConfirming && transactionHash && <p className="rounded-lg border border-edge bg-panel2 p-3 text-[12px] text-muted">Deployment transaction submitted; awaiting Base confirmation. <ExplorerLink network={network} resource="tx" value={transactionHash} className="underline">View transaction</ExplorerLink></p>}
           {deployed && accountAddress && <MandateSigningPanel owner={address} account={accountAddress} network={network} />}
           {deployed && accountAddress && <PolicyFundingPanel account={accountAddress} network={network} collateral={policy.collateral} collateralLabel={policy.collateralLabel} chainId={policy.chainId} />}
         </>
       )}
 
-      {(isSuccess || message) && <p className="rounded-lg border border-edge bg-panel2 p-3 text-[12px] text-muted">{isSuccess ? <>Policy account deployed. It is unfunded and cannot execute until you register a mandate. {transactionHash && <ExplorerLink network={network} resource="tx" value={transactionHash} className="text-blue hover:underline">View deployment</ExplorerLink>}</> : message}</p>}
+      {(isSuccess || deploymentMessage) && <p className="rounded-lg border border-edge bg-panel2 p-3 text-[12px] text-muted">{isSuccess ? <>Policy account deployed. It is unfunded and cannot execute until you register a mandate. {transactionHash && <ExplorerLink network={network} resource="tx" value={transactionHash} className="text-blue hover:underline">View deployment</ExplorerLink>}</> : deploymentMessage}</p>}
     </section>
   );
 }
 
 function PolicyFundingPanel({ account, network, collateral, collateralLabel, chainId: targetChainId }: { account: Address; network: "mainnet" | "sepolia"; collateral: Address | undefined; collateralLabel: string; chainId: 8453 | 84532 }) {
-  const { address: owner, chainId } = useAccount();
+  const { address: owner, connector } = useAccount();
   const { switchChainAsync } = useSwitchChain();
   const { sendTransactionAsync } = useSendTransaction();
   const { writeContractAsync } = useWriteContract();
@@ -128,10 +135,11 @@ function PolicyFundingPanel({ account, network, collateral, collateralLabel, cha
 
   const fund = async (asset: "ETH" | "USDC") => {
     if (!owner || status.kind === "pending") return;
-    setStatus({ kind: "pending", message: asset === "ETH" ? "Confirm ETH transfer in wallet…" : "Confirm test USDC transfer in wallet…" });
+    let hash: Hex | undefined;
+    let receiptRead = false;
+    setStatus({ kind: "pending", message: asset === "ETH" ? "Confirm ETH transfer in wallet…" : `Confirm ${collateralLabel} transfer in wallet…` });
     try {
-      if (chainId !== targetChainId) await switchChainAsync({ chainId: targetChainId });
-      let hash: Hex;
+      await ensureWalletChain(targetChainId, connector, switchChainAsync);
       if (asset === "ETH") {
         hash = await sendTransactionAsync({
           chainId: targetChainId,
@@ -144,17 +152,26 @@ function PolicyFundingPanel({ account, network, collateral, collateralLabel, cha
           address: collateral,
           abi: erc20Abi,
           functionName: "transfer",
-          args: [account, positiveAmount(usdcAmount, 6, "test USDC")],
+          args: [account, positiveAmount(usdcAmount, 6, collateralLabel)],
           chainId: targetChainId,
         });
       }
       setStatus({ kind: "pending", message: `Waiting for ${network === "mainnet" ? "Base mainnet" : "Base Sepolia"} confirmation…` });
       const receipt = await waitForTransactionReceipt(wagmiConfig, { chainId: targetChainId, hash });
+      receiptRead = true;
       if (receipt.status !== "success") throw new Error("The transfer reverted on-chain.");
-      await Promise.all([refetchEth(), refetchUsdc()]);
+      await Promise.all([refetchEth(), refetchUsdc()]).catch(() => undefined);
       setStatus({ kind: "success", message: `${asset} funding confirmed.`, hash });
     } catch (error) {
-      setStatus({ kind: "error", message: error instanceof Error && error.message.startsWith("The Base") ? error.message : "Funding was not completed. No funds moved." });
+      setStatus({
+        kind: "error",
+        hash,
+        message: hash && !receiptRead
+          ? "Funding transaction was submitted, but confirmation could not be read. Check the linked transaction before retrying."
+          : hash
+            ? "Funding transaction reverted on-chain. No funds were transferred; network gas may have been charged."
+            : `Funding was not completed: ${walletActionError(error, "the wallet did not submit a transaction.")}`,
+      });
     }
   };
 

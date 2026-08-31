@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useChainId, useReadContract, useSignTypedData, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
+import { useAccount, useReadContract, useSignTypedData, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 import { hashStruct, parseUnits, zeroHash, type Address, type Hex } from "viem";
 import { mandateAccountAbi } from "@/lib/generated/contracts";
 import { MANDATE_EIP712_TYPES, mandateDomain, mandateMessage, type Mandate } from "@/lib/mandate";
@@ -12,6 +12,7 @@ import type { TradeSide } from "@/lib/trade";
 import { ExplorerLink } from "./ExplorerLink";
 import { policyNetwork } from "@/lib/policyNetwork";
 import type { ExecutionNetwork } from "@/lib/explorer";
+import { ensureWalletChain, walletActionError } from "@/lib/walletChain";
 
 type Terms = Omit<MandateDraftTerms, "side"> & { side: TradeSide };
 
@@ -38,18 +39,18 @@ export function MandateSigningPanel({ owner, account, network }: { owner: Addres
   const [drafting, setDrafting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const effectiveTerms = policy.autonomousSide === "put" ? { ...terms, side: "put" as const } : terms;
-  const chainId = useChainId();
+  const { connector } = useAccount();
   const { switchChainAsync, isPending: isSwitching } = useSwitchChain();
   const { signTypedDataAsync, isPending: isSigning } = useSignTypedData();
   const { writeContractAsync, data: transactionHash, isPending: isSubmitting } = useWriteContract();
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ chainId: policy.chainId, hash: transactionHash });
-  const { data: activeMandateHash, refetch: refetchActiveMandate } = useReadContract({
+  const { isError: transactionFailed, error: transactionError, isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ chainId: policy.chainId, hash: transactionHash });
+  const { data: activeMandateHash, error: activeMandateError, isPending: isReadingMandate, refetch: refetchActiveMandate } = useReadContract({
     address: account,
     abi: mandateAccountAbi,
     functionName: "activeMandateHash",
     chainId: policy.chainId,
   });
-  const { data: control, refetch: refetchControl } = useReadContract({
+  const { data: control, error: controlError, isPending: isReadingControl, refetch: refetchControl } = useReadContract({
     address: account,
     abi: mandateAccountAbi,
     functionName: "controls",
@@ -57,7 +58,7 @@ export function MandateSigningPanel({ owner, account, network }: { owner: Addres
     chainId: policy.chainId,
     query: { enabled: Boolean(activeMandateHash && activeMandateHash !== zeroHash) },
   });
-  const { data: riskState } = useReadContract({
+  const { data: riskState, error: riskStateError, isPending: isReadingRiskState } = useReadContract({
     address: account,
     abi: mandateAccountAbi,
     functionName: "riskStates",
@@ -86,7 +87,7 @@ export function MandateSigningPanel({ owner, account, network }: { owner: Addres
     setError(null);
     setSigned(null);
     try {
-      if (chainId !== policy.chainId) await switchChainAsync({ chainId: policy.chainId });
+      await ensureWalletChain(policy.chainId, connector, switchChainAsync);
       const mandate = buildMandate(owner, account, effectiveTerms, nonce, policy.optionBook, policy.collateral, policy.agent);
       const signature = await signTypedDataAsync({
         domain: mandateDomain(policy.chainId, account),
@@ -95,8 +96,8 @@ export function MandateSigningPanel({ owner, account, network }: { owner: Addres
         message: mandateMessage(mandate),
       });
       setSigned({ mandate, signature });
-    } catch {
-      setError("Mandate signing was not completed. No policy was activated.");
+    } catch (error) {
+      setError(`Mandate signing was not completed: ${walletActionError(error, "no policy was activated.")}`);
     }
   };
 
@@ -104,7 +105,7 @@ export function MandateSigningPanel({ owner, account, network }: { owner: Addres
     if (!signed) return;
     setError(null);
     try {
-      if (chainId !== policy.chainId) await switchChainAsync({ chainId: policy.chainId });
+      await ensureWalletChain(policy.chainId, connector, switchChainAsync);
       await writeContractAsync({
         address: account,
         abi: mandateAccountAbi,
@@ -112,8 +113,8 @@ export function MandateSigningPanel({ owner, account, network }: { owner: Addres
         args: [mandateMessage(signed.mandate), signed.signature],
         chainId: policy.chainId,
       });
-    } catch {
-      setError("Mandate registration was not completed. No policy changed.");
+    } catch (error) {
+      setError(`Mandate registration was not completed: ${walletActionError(error, "no policy changed.")}`);
     }
   };
 
@@ -121,10 +122,10 @@ export function MandateSigningPanel({ owner, account, network }: { owner: Addres
     if (!active) return;
     setError(null);
     try {
-      if (chainId !== policy.chainId) await switchChainAsync({ chainId: policy.chainId });
+      await ensureWalletChain(policy.chainId, connector, switchChainAsync);
       await writeContractAsync({ address: account, abi: mandateAccountAbi, functionName, args: [active], chainId: policy.chainId });
-    } catch {
-      setError("Mandate control was not completed. The on-chain policy is unchanged.");
+    } catch (error) {
+      setError(`Mandate control was not completed: ${walletActionError(error, "the on-chain policy is unchanged.")}`);
     }
   };
 
@@ -182,7 +183,7 @@ export function MandateSigningPanel({ owner, account, network }: { owner: Addres
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button type="button" onClick={() => void createDraft()} disabled={busy || drafting} className="h-9 rounded-lg bg-panel3 px-3 text-[12px] font-semibold text-blue hover:bg-panel2 disabled:cursor-wait disabled:opacity-60">{drafting ? "Reading fresh OptionBook…" : "Generate AI draft"}</button>
-            <button type="button" onClick={() => void signMandate()} disabled={busy} className="h-9 rounded-lg bg-blue px-3 text-[12px] font-semibold text-white hover:brightness-110 disabled:cursor-wait disabled:opacity-60">
+            <button type="button" onClick={() => void signMandate()} disabled={busy || isReadingMandate || Boolean(activeMandateError)} className="h-9 rounded-lg bg-blue px-3 text-[12px] font-semibold text-white hover:brightness-110 disabled:cursor-wait disabled:opacity-60">
               {isSwitching ? "Switching network…" : isSigning ? "Confirm in wallet…" : "Review and sign mandate"}
             </button>
             <span className="text-[11px] text-faint">The agent cannot change these terms.</span>
@@ -190,11 +191,14 @@ export function MandateSigningPanel({ owner, account, network }: { owner: Addres
         </>
       )}
 
-      {signed && signedHash !== active && <div className="mt-3 rounded-lg border border-calm/30 bg-calm/10 p-3 text-[12px] text-calm"><p>Signature ready. Registering records this exact policy on-chain{active ? " and supersedes the active policy" : ""}; it does not fund the account.</p><button type="button" onClick={() => void registerMandate()} disabled={busy} className="mt-2 h-8 rounded-lg bg-calm px-3 text-[11px] font-semibold text-white disabled:cursor-wait disabled:opacity-60">{isSubmitting ? "Confirm in wallet…" : isConfirming ? "Registering policy…" : "Register signed mandate"}</button></div>}
+      {signed && signedHash !== active && <div className="mt-3 rounded-lg border border-calm/30 bg-calm/10 p-3 text-[12px] text-calm"><p>Signature ready. Registering records this exact policy on-chain{active ? " and supersedes the active policy" : ""}; it does not fund the account.</p><button type="button" onClick={() => void registerMandate()} disabled={busy || isReadingMandate || Boolean(activeMandateError)} className="mt-2 h-8 rounded-lg bg-calm px-3 text-[11px] font-semibold text-white disabled:cursor-wait disabled:opacity-60">{isSubmitting ? "Confirm in wallet…" : isConfirming ? "Registering policy…" : "Register signed mandate"}</button></div>}
+      {isConfirming && transactionHash && <p className="mt-3 rounded-lg border border-edge bg-panel2 p-3 text-[12px] text-muted">Policy transaction submitted; awaiting Base confirmation. <ExplorerLink network={network} resource="tx" value={transactionHash} className="underline">View transaction</ExplorerLink></p>}
       {signed && active && signedHash === active && <p className="mt-3 rounded-lg border border-calm/30 bg-calm/10 p-3 text-[12px] text-calm">This signed mandate is active on-chain. It is still unfunded. {transactionHash && <ExplorerLink network={network} resource="tx" value={transactionHash} className="underline">View registration</ExplorerLink>}</p>}
-      {active && <div className="mt-3 rounded-lg border border-edge bg-panel2 p-3 text-[12px] text-muted"><p>Active policy <span className="font-mono text-fg">{shortAddr(active)}</span>{control?.[0] ? " · paused" : " · executable only within its limits"}</p><div className="mt-2 flex flex-wrap gap-2"><button type="button" onClick={() => void changeControl(control?.[0] ? "resumeMandate" : "pauseMandate")} disabled={busy} className="h-8 rounded-lg bg-panel3 px-3 text-[11px] font-semibold text-fg disabled:cursor-wait disabled:opacity-60">{control?.[0] ? "Resume" : "Pause"}</button><button type="button" onClick={() => void changeControl("revokeMandate")} disabled={busy} className="h-8 rounded-lg border border-crit/40 px-3 text-[11px] font-semibold text-crit disabled:cursor-wait disabled:opacity-60">Revoke</button></div></div>}
-      {active && <div className="mt-3 rounded-lg border border-blue/25 bg-bluesoft/30 p-3 text-[12px] text-muted"><p className="text-[10px] font-semibold uppercase tracking-wide text-blue">Step 4 · Agent monitoring</p><p className="mt-1">The external {network === "mainnet" ? "Thetanuts" : "shadow"} worker checks the live book and risk every 10–15 seconds. It can only submit after this account is funded, risk stays above the signed threshold, and a fresh eligible quote exists.</p><p className="mt-1 text-[11px] text-faint">On-chain risk evidence: {riskState?.[1] ? `${Number(riskState[1]) / 100} / 100` : "not observed yet"} · pause or revoke above takes effect before every fill.</p></div>}
-      {error && <p className="mt-3 rounded-lg border border-crit/30 bg-crit/10 p-3 text-[12px] text-crit">{error}</p>}
+      {isReadingMandate && <p className="mt-3 text-[12px] text-muted">Checking the current on-chain policy…</p>}
+      {activeMandateError && <p className="mt-3 rounded-lg border border-crit/30 bg-crit/10 p-3 text-[12px] text-crit">Could not verify the current on-chain policy. Signing and registration are disabled until the Base RPC read recovers.</p>}
+      {active && <div className="mt-3 rounded-lg border border-edge bg-panel2 p-3 text-[12px] text-muted"><p>Active policy <span className="font-mono text-fg">{shortAddr(active)}</span>{control?.[0] ? " · paused" : " · executable only within its limits"}</p>{isReadingControl ? <p className="mt-2">Checking pause/revocation state…</p> : controlError ? <p className="mt-2 text-crit">Could not verify pause/revocation state. Controls are disabled until the Base RPC read recovers.</p> : <div className="mt-2 flex flex-wrap gap-2"><button type="button" onClick={() => void changeControl(control?.[0] ? "resumeMandate" : "pauseMandate")} disabled={busy} className="h-8 rounded-lg bg-panel3 px-3 text-[11px] font-semibold text-fg disabled:cursor-wait disabled:opacity-60">{control?.[0] ? "Resume" : "Pause"}</button><button type="button" onClick={() => void changeControl("revokeMandate")} disabled={busy} className="h-8 rounded-lg border border-crit/40 px-3 text-[11px] font-semibold text-crit disabled:cursor-wait disabled:opacity-60">Revoke</button></div>}</div>}
+      {active && <div className="mt-3 rounded-lg border border-blue/25 bg-bluesoft/30 p-3 text-[12px] text-muted"><p className="text-[10px] font-semibold uppercase tracking-wide text-blue">Step 4 · Agent monitoring</p><p className="mt-1">The external {network === "mainnet" ? "Thetanuts" : "shadow"} worker checks the live book and risk every 10–15 seconds. It can only submit after this account is funded, risk stays above the signed threshold, and a fresh eligible quote exists.</p><p className="mt-1 text-[11px] text-faint">On-chain risk evidence: {isReadingRiskState ? "checking…" : riskStateError ? "unavailable — Base RPC read failed" : riskState?.[1] ? `${Number(riskState[1]) / 100} / 100` : "not observed yet"} · pause or revoke above takes effect before every fill.</p></div>}
+      {(transactionFailed || error) && <p className="mt-3 rounded-lg border border-crit/30 bg-crit/10 p-3 text-[12px] text-crit">{transactionFailed ? `Policy transaction did not succeed on-chain: ${walletActionError(transactionError, "check the linked transaction before retrying.")} The active policy is unchanged; network gas may have been charged.` : error}</p>}
     </section>
   );
 }

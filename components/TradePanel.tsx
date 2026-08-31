@@ -26,6 +26,7 @@ import { erc20Abi, useReadErc20BalanceOf } from "@/lib/generated/contracts";
 import { fmtContracts, fmtExpiryDate, fmtIv, fmtStrike, fmtUsd, riskColor } from "@/lib/format";
 import { ExplorerLink } from "./ExplorerLink";
 import { useExecutionNetwork } from "./ExecutionNetworkProvider";
+import { ensureWalletChain } from "@/lib/walletChain";
 
 const QUOTE_DEBOUNCE_MS = 250;
 const QUOTE_REFRESH_MS = 15_000;
@@ -144,7 +145,7 @@ function periodLabel(p: TradePeriod) {
 
 export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: boolean; hedgeIntent: HedgeIntent | null }) {
   const { network } = useExecutionNetwork();
-  const { address: walletAddress, chainId } = useAccount();
+  const { address: walletAddress, connector } = useAccount();
   const { switchChainAsync } = useSwitchChain();
   const { sendTransactionAsync } = useSendTransaction();
   const initialHedge = hedgeIntent?.asset === asset ? hedgeIntent : null;
@@ -213,7 +214,7 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
 
   const ensureChain = async (targetChainId: GammaShieldChainId): Promise<Address> => {
     if (!walletAddress) throw new Error("Connect a wallet from the top bar first.");
-    if (chainId !== targetChainId) await switchChainAsync({ chainId: targetChainId });
+    await ensureWalletChain(targetChainId, connector, switchChainAsync);
     return walletAddress;
   };
 
