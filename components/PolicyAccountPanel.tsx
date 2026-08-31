@@ -4,10 +4,11 @@ import { useEffect, useState } from "react";
 import { useAccount, useBalance, useBytecode, useReadContract, useSendTransaction, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 import { waitForTransactionReceipt } from "wagmi/actions";
 import { formatEther, formatUnits, parseEther, parseUnits, zeroAddress, zeroHash, type Address, type Hex } from "viem";
-import { erc20Abi, mandateAccountFactoryAbi, useReadErc20BalanceOf } from "@/lib/generated/contracts";
+import { erc20Abi, mandateAccountAbi, mandateAccountFactoryAbi, useReadErc20BalanceOf } from "@/lib/generated/contracts";
 import { shortAddr } from "@/lib/format";
 import { wagmiConfig } from "@/lib/wagmi";
 import { MandateSigningPanel } from "./MandateSigningPanel";
+import { AgentMonitoringPanel } from "./AgentMonitoringPanel";
 import { ExplorerLink } from "./ExplorerLink";
 import { useExecutionNetwork } from "./ExecutionNetworkProvider";
 import { policyNetwork } from "@/lib/policyNetwork";
@@ -38,6 +39,14 @@ export function PolicyAccountPanel() {
   }, [isSuccess, refetchBytecode]);
 
   const deployed = bytecode != null && bytecode !== "0x";
+  const { data: activeMandateHash } = useReadContract({
+    address: accountAddress,
+    abi: mandateAccountAbi,
+    functionName: "activeMandateHash",
+    chainId: policy.chainId,
+    query: { enabled: deployed && Boolean(accountAddress) },
+  });
+  const activeMandate = activeMandateHash && activeMandateHash !== zeroHash ? activeMandateHash : null;
   const accountStateUnknown = Boolean(bytecodeError);
   const deploymentMessage = deploymentFailed
     ? `The deployment transaction did not succeed on-chain: ${walletActionError(deploymentError, "check the linked transaction before retrying.")} No policy account was created; network gas may have been charged.`
@@ -106,10 +115,11 @@ export function PolicyAccountPanel() {
           {isConfirming && transactionHash && <p className="rounded-lg border border-edge bg-panel2 p-3 text-[12px] text-muted">Deployment transaction submitted; awaiting Base confirmation. <ExplorerLink network={network} resource="tx" value={transactionHash} className="underline">View transaction</ExplorerLink></p>}
           {deployed && accountAddress && <MandateSigningPanel owner={address} account={accountAddress} network={network} />}
           {deployed && accountAddress && <PolicyFundingPanel account={accountAddress} network={network} collateral={policy.collateral} collateralLabel={policy.collateralLabel} chainId={policy.chainId} />}
+          {deployed && accountAddress && activeMandate && <AgentMonitoringPanel account={accountAddress} mandateHash={activeMandate} network={network} />}
         </>
       )}
 
-      {(isSuccess || deploymentMessage) && <p className="rounded-lg border border-edge bg-panel2 p-3 text-[12px] text-muted">{isSuccess ? <>Policy account deployed. It is unfunded and cannot execute until you register a mandate. {transactionHash && <ExplorerLink network={network} resource="tx" value={transactionHash} className="text-blue hover:underline">View deployment</ExplorerLink>}</> : deploymentMessage}</p>}
+      {(isSuccess || deploymentMessage) && <p className="rounded-lg border border-edge bg-panel2 p-3 text-[12px] text-muted">{isSuccess ? <>Policy account deployed. A registered mandate and sufficient ETH/USDC are required before agent actions are eligible. {transactionHash && <ExplorerLink network={network} resource="tx" value={transactionHash} className="text-blue hover:underline">View deployment</ExplorerLink>}</> : deploymentMessage}</p>}
     </section>
   );
 }
