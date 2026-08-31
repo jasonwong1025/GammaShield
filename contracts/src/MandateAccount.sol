@@ -207,7 +207,7 @@ contract MandateAccount {
         (bytes32 mandateHash_, RiskAttestation memory risk, bytes memory riskSignature) = abi.decode(encodedCall, (bytes32, RiskAttestation, bytes));
         if (mandateHash_ == bytes32(0) || mandateHash_ != activeMandateHash) return (false, 0);
         Mandate memory mandate = mandates[mandateHash_];
-        if (_recover(userOpHash, agentSignature) != mandate.agent || !_isRiskValid(mandateHash_, mandate, risk, riskSignature)) return (false, 0);
+        if (_recover(userOpHash, agentSignature) != mandate.agent || !_isRiskObservationValid(mandateHash_, mandate, risk, riskSignature)) return (false, 0);
         return (true, risk.validUntil);
     }
 
@@ -261,11 +261,13 @@ contract MandateAccount {
     /// UserOperation is required before the account can use that risk state.
     function recordRisk(bytes32 hash, RiskAttestation calldata risk, bytes calldata signature) external onlyEntryPoint {
         Mandate memory mandate = _requireActiveMandate(hash);
-        _requireRisk(hash, mandate, risk, signature);
+        _requireRiskObservation(hash, mandate, risk, signature);
 
         RiskState storage state = riskStates[hash];
-        bool continuous = state.eligibleSince != 0 && state.validUntil >= block.timestamp && risk.observedAt >= state.observedAt;
-        state.eligibleSince = continuous ? state.eligibleSince : uint64(block.timestamp);
+        bool eligible = risk.riskScoreBps >= mandate.riskThresholdBps;
+        bool continuous = eligible && state.eligibleSince != 0 && state.scoreBps >= mandate.riskThresholdBps &&
+            state.validUntil >= block.timestamp && risk.observedAt >= state.observedAt;
+        state.eligibleSince = continuous ? state.eligibleSince : (eligible ? uint64(block.timestamp) : 0);
         state.scoreBps = risk.riskScoreBps;
         state.observedAt = risk.observedAt;
         state.validUntil = risk.validUntil;
@@ -344,6 +346,10 @@ contract MandateAccount {
         require(_isRiskValid(mandateHash_, mandate, risk, signature), "invalid risk attestation");
     }
 
+    function _requireRiskObservation(bytes32 mandateHash_, Mandate memory mandate, RiskAttestation calldata risk, bytes calldata signature) private view {
+        require(_isRiskObservationValid(mandateHash_, mandate, risk, signature), "invalid risk observation");
+    }
+
     function _requireQuote(Mandate memory mandate, IShadowFill.ShadowQuote calldata quote) private view {
         require(_isQuoteValid(mandate, quote), "quote violates mandate");
     }
@@ -362,7 +368,15 @@ contract MandateAccount {
 
     function _isRiskValid(bytes32 mandateHash_, Mandate memory mandate, RiskAttestation memory risk, bytes memory signature) private view returns (bool) {
         if (
-            risk.mandateHash != mandateHash_ || risk.riskScoreBps < mandate.riskThresholdBps || risk.observedAt > block.timestamp ||
+            risk.riskScoreBps < mandate.riskThresholdBps ||
+            !_isRiskObservationValid(mandateHash_, mandate, risk, signature)
+        ) return false;
+        return true;
+    }
+
+    function _isRiskObservationValid(bytes32 mandateHash_, Mandate memory mandate, RiskAttestation memory risk, bytes memory signature) private view returns (bool) {
+        if (
+            risk.mandateHash != mandateHash_ || risk.riskScoreBps > 10_000 || risk.observedAt > block.timestamp ||
             block.timestamp - risk.observedAt > MAX_RISK_OBSERVATION_AGE || risk.validUntil < risk.observedAt ||
             risk.validUntil - risk.observedAt > MAX_RISK_OBSERVATION_AGE || risk.validUntil < block.timestamp ||
             risk.persistenceSeconds < mandate.persistenceSeconds

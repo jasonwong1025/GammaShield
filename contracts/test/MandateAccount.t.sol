@@ -140,6 +140,32 @@ contract MandateAccountTest {
         require(_validateAgent(mandate, second, _sign(RISK_KEY, _typed(account.riskDomainSeparator(), _riskHash(second))), quote, _signQuote(quote), keccak256("risk gap")) == 1, "risk gap bypassed");
     }
 
+    function testSubThresholdObservationResetsPersistenceTimer() public {
+        MandateAccount.Mandate memory mandate = _mandate(3e6, 5e6);
+        bytes32 mandateHash = account.mandateHash(mandate);
+        bytes memory mandateSignature = _sign(OWNER_KEY, _typed(account.mandateDomainSeparator(), mandateHash));
+        vm.prank(owner);
+        account.registerMandate(mandate, mandateSignature);
+        MandateAccount.RiskAttestation memory high = _risk(mandateHash);
+        account.recordRisk(mandateHash, high, _sign(RISK_KEY, _typed(account.riskDomainSeparator(), _riskHash(high))));
+
+        vm.warp(block.timestamp + 1 minutes);
+        MandateAccount.RiskAttestation memory low = _risk(mandateHash);
+        low.riskScoreBps = 7_499;
+        bytes memory lowSignature = _sign(RISK_KEY, _typed(account.riskDomainSeparator(), _riskHash(low)));
+        require(_validateRiskRecord(mandate, low, lowSignature, keccak256("sub-threshold observation")) != 1, "sub-threshold observation rejected");
+        account.recordRisk(mandateHash, low, lowSignature);
+        (, uint64 eligibleSince,,) = account.riskStates(mandateHash);
+        require(eligibleSince == 0, "sub-threshold risk did not reset persistence");
+
+        high = _risk(mandateHash);
+        account.recordRisk(mandateHash, high, _sign(RISK_KEY, _typed(account.riskDomainSeparator(), _riskHash(high))));
+        (, eligibleSince,,) = account.riskStates(mandateHash);
+        require(eligibleSince == block.timestamp, "new high-risk period did not restart persistence");
+        IShadowFill.ShadowQuote memory quote = _quote(2e6, 1e6);
+        require(_validateAgent(mandate, high, _sign(RISK_KEY, _typed(account.riskDomainSeparator(), _riskHash(high))), quote, _signQuote(quote), keccak256("post-reset persistence")) == 1, "sub-threshold gap bypassed");
+    }
+
     function testMandateHashMatchesViemEip712Encoding() public view {
         MandateAccount.Mandate memory mandate = _mandate(3e6, 5e6);
         mandate.owner = address(1);

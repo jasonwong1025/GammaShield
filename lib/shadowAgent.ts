@@ -2,12 +2,13 @@
 // from chain, then submits a policy-bound ERC-4337 UserOperation through Pimlico.
 
 import { ethers } from "ethers";
-import { getMarketSnapshot } from "@/lib/snapshot";
+import { getMarketSnapshot, type MarketSnapshot } from "@/lib/snapshot";
 import { getShadowQuote } from "@/lib/shadow";
 import { TRADE_PERIODS } from "@/lib/tradePeriods";
 
 const ENTRY_POINT = "0x0000000071727De22E5E9d8BAf0edAc6f37da032";
 const RISK_LIFETIME_SECONDS = 120;
+const RISK_REFRESH_SECONDS = 90;
 const INITIAL_GAS = { callGasLimit: 300_000n, verificationGasLimit: 600_000n, preVerificationGas: 100_000n };
 
 const ACCOUNT_ABI = [
@@ -46,6 +47,7 @@ type Mandate = {
   expiresAt: bigint;
 };
 type Control = { spentPremium: bigint; lastExecutionAt: bigint };
+type RiskState = { scoreBps: bigint; eligibleSince: bigint; observedAt: bigint; validUntil: bigint };
 type Gas = { callGasLimit: bigint; verificationGasLimit: bigint; preVerificationGas: bigint };
 type UserOperation = {
   sender: string;
@@ -68,7 +70,7 @@ export type ShadowAgentResult = {
   mandateHash: string;
   score: number;
   threshold: number;
-  outcome: "risk-below-threshold" | "gas-unfunded" | "risk-observation-submitted" | "quote-unavailable" | "fill-submitted";
+  outcome: "risk-below-threshold" | "risk-reset-submitted" | "risk-persistence-pending" | "gas-unfunded" | "risk-observation-submitted" | "quote-unavailable" | "fill-submitted";
   userOpHash?: string;
   detail?: string;
 };
@@ -81,10 +83,11 @@ export async function runShadowAgents(): Promise<ShadowAgentResult[]> {
   // ponytail: scans this single demo factory; add an indexed event store before serving enough accounts to make this expensive.
   const events = await factory.queryFilter(factory.filters.AccountCreated(), config.deploymentBlock);
   const accounts = [...new Set(events.flatMap((event) => "args" in event && event.args?.account ? [ethers.getAddress(event.args.account)] : []))];
+  const snapshot = await getMarketSnapshot({ fresh: true });
   const results: ShadowAgentResult[] = [];
   for (const account of accounts) {
     try {
-      results.push(await runShadowAgent(account, config, provider, agent));
+      results.push(await runShadowAgent(account, config, provider, agent, snapshot));
     } catch (error) {
       if (error instanceof Error && error.message === "active mandate is not eligible for shadow execution") continue;
       throw error;
@@ -93,20 +96,15 @@ export async function runShadowAgents(): Promise<ShadowAgentResult[]> {
   return results;
 }
 
-async function runShadowAgent(accountAddress: string, config: ReturnType<typeof runtimeConfig>, provider: ethers.JsonRpcProvider, agent: ethers.Wallet): Promise<ShadowAgentResult> {
+async function runShadowAgent(accountAddress: string, config: ReturnType<typeof runtimeConfig>, provider: ethers.JsonRpcProvider, agent: ethers.Wallet, snapshot: MarketSnapshot): Promise<ShadowAgentResult> {
   const account = new ethers.Contract(accountAddress, ACCOUNT_ABI, provider);
   const policy = await readPolicy(account, accountAddress, agent.address, config);
-  const snapshot = await getMarketSnapshot({ fresh: true });
   const score = snapshot.assets[policy.mandate.asset as "BTC" | "ETH"].score;
   const scoreBps = Math.round(score * 100);
   const base = { account: accountAddress, mandateHash: policy.hash, score, threshold: Number(policy.mandate.riskThresholdBps) / 100 };
-  if (scoreBps < Number(policy.mandate.riskThresholdBps)) return { ...base, outcome: "risk-below-threshold" };
-
-  if ((await provider.getBalance(accountAddress)) === 0n) {
-    return { ...base, outcome: "gas-unfunded", detail: "Fund the policy account with Base Sepolia ETH before scheduling agent runs." };
-  }
-
   const now = BigInt(Math.floor(Date.now() / 1000));
+  const state = riskState(await account.riskStates(policy.hash));
+  const threshold = policy.mandate.riskThresholdBps;
   const risk = {
     mandateHash: policy.hash,
     riskScoreBps: scoreBps,
@@ -123,13 +121,28 @@ async function runShadowAgent(accountAddress: string, config: ReturnType<typeof 
     risk,
   );
 
-  const state = await account.riskStates(policy.hash);
-  const persistent = BigInt(state.eligibleSince) !== 0n && BigInt(state.scoreBps) >= policy.mandate.riskThresholdBps &&
-    BigInt(state.validUntil) >= now && now >= BigInt(state.eligibleSince) + policy.mandate.persistenceSeconds;
-  if (!persistent) {
+  if (scoreBps < Number(threshold)) {
+    if (state.scoreBps < threshold || state.validUntil < now) return { ...base, outcome: "risk-below-threshold" };
+    if ((await provider.getBalance(accountAddress)) === 0n) {
+      return { ...base, outcome: "gas-unfunded", detail: "Fund the policy account with Base Sepolia ETH before the agent can reset an active risk observation." };
+    }
+    const callData = account.interface.encodeFunctionData("recordRisk", [policy.hash, risk, riskSignature]);
+    return { ...base, outcome: "risk-reset-submitted", userOpHash: await submitUserOperation(provider, agent, accountAddress, callData, config.pimlicoApiKey) };
+  }
+
+  if ((await provider.getBalance(accountAddress)) === 0n) {
+    return { ...base, outcome: "gas-unfunded", detail: "Fund the policy account with Base Sepolia ETH before scheduling agent runs." };
+  }
+
+  const persistent = state.eligibleSince !== 0n && state.scoreBps >= threshold && state.validUntil >= now &&
+    now >= state.eligibleSince + policy.mandate.persistenceSeconds;
+  const refreshAt = BigInt(RISK_LIFETIME_SECONDS - RISK_REFRESH_SECONDS);
+  const needsObservation = state.eligibleSince === 0n || state.scoreBps < threshold || state.validUntil <= now + refreshAt;
+  if (needsObservation) {
     const callData = account.interface.encodeFunctionData("recordRisk", [policy.hash, risk, riskSignature]);
     return { ...base, outcome: "risk-observation-submitted", userOpHash: await submitUserOperation(provider, agent, accountAddress, callData, config.pimlicoApiKey) };
   }
+  if (!persistent) return { ...base, outcome: "risk-persistence-pending" };
 
   const period = TRADE_PERIODS.find((days) => {
     const tenor = BigInt(days * 86400);
@@ -169,6 +182,10 @@ async function runShadowAgent(accountAddress: string, config: ReturnType<typeof 
 
   const callData = account.interface.encodeFunctionData("executeShadow", [policy.hash, risk, riskSignature, signedQuote, fill[1]]);
   return { ...base, outcome: "fill-submitted", userOpHash: await submitUserOperation(provider, agent, accountAddress, callData, config.pimlicoApiKey) };
+}
+
+function riskState(raw: { scoreBps: bigint; eligibleSince: bigint; observedAt: bigint; validUntil: bigint }): RiskState {
+  return { scoreBps: BigInt(raw.scoreBps), eligibleSince: BigInt(raw.eligibleSince), observedAt: BigInt(raw.observedAt), validUntil: BigInt(raw.validUntil) };
 }
 
 async function readPolicy(account: ethers.Contract, accountAddress: string, agentAddress: string, config: ReturnType<typeof runtimeConfig>) {
