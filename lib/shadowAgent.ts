@@ -2,21 +2,15 @@
 // from chain, then submits a policy-bound ERC-4337 UserOperation through Pimlico.
 
 import { ethers } from "ethers";
-import { toPackedUserOperation, type UserOperation as ViemUserOperation } from "viem/account-abstraction";
 import { mandateAccountAbi } from "@/lib/generated/contracts";
 import { getMarketSnapshot, type MarketSnapshot } from "@/lib/snapshot";
 import { getShadowQuote } from "@/lib/shadow";
 import { TRADE_PERIODS } from "@/lib/tradePeriods";
+import { getPolicyUserOperationReceipt, submitPolicyUserOperation } from "@/lib/policyAgent4337";
 
 const ENTRY_POINT = "0x0000000071727De22E5E9d8BAf0edAc6f37da032";
 const RISK_LIFETIME_SECONDS = 120;
 const RISK_REFRESH_SECONDS = 90;
-const INITIAL_GAS = { callGasLimit: 300_000n, verificationGasLimit: 600_000n, preVerificationGas: 100_000n };
-
-const ENTRY_POINT_ABI = [
-  "function getNonce(address sender,uint192 key) view returns (uint256)",
-  "function getUserOpHash((address sender,uint256 nonce,bytes initCode,bytes callData,bytes32 accountGasLimits,uint256 preVerificationGas,bytes32 gasFees,bytes paymasterAndData,bytes signature) userOp) view returns (bytes32)",
-] as const;
 const ERC20_ABI = ["function balanceOf(address) view returns (uint256)"] as const;
 const FILL_ABI = [
   "function fillShadow((bytes32 fillId,bytes32 sourceHash,bytes32 asset,address buyer,bool isCall,uint128 strikeE8,uint64 expiry,uint64 validUntil,uint128 contractsE6,uint128 premiumUsdc),bytes)",
@@ -40,22 +34,6 @@ type Mandate = {
 };
 type Control = { spentPremium: bigint; lastExecutionAt: bigint };
 type RiskState = { scoreBps: bigint; eligibleSince: bigint; observedAt: bigint; validUntil: bigint };
-type Gas = { callGasLimit: bigint; verificationGasLimit: bigint; preVerificationGas: bigint };
-type UserOperation = {
-  sender: string;
-  nonce: string;
-  callData: string;
-  callGasLimit: string;
-  verificationGasLimit: string;
-  preVerificationGas: string;
-  maxPriorityFeePerGas: string;
-  maxFeePerGas: string;
-  paymaster: null;
-  paymasterVerificationGasLimit: null;
-  paymasterPostOpGasLimit: null;
-  paymasterData: null;
-  signature: string;
-};
 
 export type ShadowAgentResult = {
   account: string;
@@ -102,10 +80,8 @@ async function accountCreatedEvents(factory: ethers.Contract, fromBlock: number,
 }
 
 export async function getShadowUserOperationReceipt(userOpHash: string) {
-  if (!ethers.isHexString(userOpHash, 32)) throw new Error("invalid UserOperation hash");
   const config = runtimeConfig();
-  const endpoint = `https://api.pimlico.io/v2/84532/rpc?apikey=${encodeURIComponent(config.pimlicoApiKey)}`;
-  return pimlicoRpc<unknown>(endpoint, "pimlico_getUserOperationReceipt", [userOpHash]);
+  return getPolicyUserOperationReceipt(84532, config.pimlicoApiKey, userOpHash);
 }
 
 async function runShadowAgent(accountAddress: string, config: ReturnType<typeof runtimeConfig>, provider: ethers.JsonRpcProvider, agent: ethers.Wallet, snapshot: MarketSnapshot): Promise<ShadowAgentResult | null> {
@@ -140,7 +116,7 @@ async function runShadowAgent(accountAddress: string, config: ReturnType<typeof 
       return { ...base, outcome: "gas-unfunded", detail: "Fund the policy account with Base Sepolia ETH before the agent can reset an active risk observation." };
     }
     const callData = account.interface.encodeFunctionData("recordRisk", [policy.hash, risk, riskSignature]);
-    return { ...base, outcome: "risk-reset-submitted", userOpHash: await submitUserOperation(provider, agent, accountAddress, callData, config.pimlicoApiKey) };
+    return { ...base, outcome: "risk-reset-submitted", userOpHash: await submitPolicyUserOperation({ chainId: 84532, provider, agent, sender: accountAddress, callData, pimlicoApiKey: config.pimlicoApiKey }) };
   }
 
   if ((await provider.getBalance(accountAddress)) === 0n) {
@@ -153,7 +129,7 @@ async function runShadowAgent(accountAddress: string, config: ReturnType<typeof 
   const needsObservation = state.eligibleSince === 0n || state.scoreBps < threshold || state.validUntil <= now + refreshAt;
   if (needsObservation) {
     const callData = account.interface.encodeFunctionData("recordRisk", [policy.hash, risk, riskSignature]);
-    return { ...base, outcome: "risk-observation-submitted", userOpHash: await submitUserOperation(provider, agent, accountAddress, callData, config.pimlicoApiKey) };
+    return { ...base, outcome: "risk-observation-submitted", userOpHash: await submitPolicyUserOperation({ chainId: 84532, provider, agent, sender: accountAddress, callData, pimlicoApiKey: config.pimlicoApiKey }) };
   }
   if (!persistent) return { ...base, outcome: "risk-persistence-pending" };
 
@@ -194,7 +170,7 @@ async function runShadowAgent(accountAddress: string, config: ReturnType<typeof 
   if ((await usdc.balanceOf(accountAddress)) < premium) return { ...base, outcome: "quote-unavailable", detail: "Policy account lacks enough test USDC for the exact quote." };
 
   const callData = account.interface.encodeFunctionData("executeShadow", [policy.hash, risk, riskSignature, signedQuote, fill[1]]);
-  return { ...base, outcome: "fill-submitted", userOpHash: await submitUserOperation(provider, agent, accountAddress, callData, config.pimlicoApiKey) };
+  return { ...base, outcome: "fill-submitted", userOpHash: await submitPolicyUserOperation({ chainId: 84532, provider, agent, sender: accountAddress, callData, pimlicoApiKey: config.pimlicoApiKey }) };
 }
 
 function riskState(raw: { scoreBps: bigint; eligibleSince: bigint; observedAt: bigint; validUntil: bigint }): RiskState {
@@ -221,65 +197,6 @@ async function readPolicy(account: ethers.Contract, accountAddress: string, agen
     control.paused || control.revoked || now >= mandate.expiresAt
   ) return null;
   return { hash: hash as string, mandate, control: { spentPremium: BigInt(control.spentPremium), lastExecutionAt: BigInt(control.lastExecutionAt) } satisfies Control };
-}
-
-async function submitUserOperation(provider: ethers.JsonRpcProvider, agent: ethers.Wallet, sender: string, callData: string, apiKey: string) {
-  const entryPoint = new ethers.Contract(ENTRY_POINT, ENTRY_POINT_ABI, provider);
-  const nonce = BigInt(await entryPoint.getNonce(sender, 0));
-  const endpoint = `https://api.pimlico.io/v2/84532/rpc?apikey=${encodeURIComponent(apiKey)}`;
-  const prices = await pimlicoRpc<{ fast?: { maxFeePerGas?: string; maxPriorityFeePerGas?: string } }>(endpoint, "pimlico_getUserOperationGasPrice", []);
-  const maxFeePerGas = hexBigInt(prices.fast?.maxFeePerGas, "Pimlico max fee");
-  const maxPriorityFeePerGas = hexBigInt(prices.fast?.maxPriorityFeePerGas, "Pimlico priority fee");
-  const draft = await signUserOperation(entryPoint, agent, sender, nonce, callData, INITIAL_GAS, maxFeePerGas, maxPriorityFeePerGas);
-  const estimated = await pimlicoRpc<Record<string, string>>(endpoint, "eth_estimateUserOperationGas", [draft, ENTRY_POINT]);
-  const gas: Gas = {
-    callGasLimit: hexBigInt(estimated.callGasLimit, "call gas"), verificationGasLimit: hexBigInt(estimated.verificationGasLimit, "verification gas"),
-    preVerificationGas: hexBigInt(estimated.preVerificationGas, "pre-verification gas"),
-  };
-  const final = await signUserOperation(entryPoint, agent, sender, nonce, callData, gas, maxFeePerGas, maxPriorityFeePerGas);
-  await pimlicoRpc(endpoint, "eth_estimateUserOperationGas", [final, ENTRY_POINT]);
-  return pimlicoRpc<string>(endpoint, "eth_sendUserOperation", [final, ENTRY_POINT]);
-}
-
-async function signUserOperation(entryPoint: ethers.Contract, agent: ethers.Wallet, sender: string, nonce: bigint, callData: string, gas: Gas, maxFeePerGas: bigint, maxPriorityFeePerGas: bigint): Promise<UserOperation> {
-  const unsigned = userOperation(sender, nonce, callData, gas, maxFeePerGas, maxPriorityFeePerGas, "0x");
-  const hash = await entryPoint.getUserOpHash(packUserOperation(unsigned));
-  return { ...unsigned, signature: agent.signingKey.sign(hash).serialized };
-}
-
-function userOperation(sender: string, nonce: bigint, callData: string, gas: Gas, maxFeePerGas: bigint, maxPriorityFeePerGas: bigint, signature: string): UserOperation {
-  return {
-    sender, nonce: ethers.toBeHex(nonce), callData, callGasLimit: ethers.toBeHex(gas.callGasLimit), verificationGasLimit: ethers.toBeHex(gas.verificationGasLimit),
-    preVerificationGas: ethers.toBeHex(gas.preVerificationGas), maxFeePerGas: ethers.toBeHex(maxFeePerGas), maxPriorityFeePerGas: ethers.toBeHex(maxPriorityFeePerGas),
-    paymaster: null, paymasterVerificationGasLimit: null, paymasterPostOpGasLimit: null, paymasterData: null, signature,
-  };
-}
-
-function packUserOperation(op: UserOperation) {
-  return toPackedUserOperation({
-    sender: op.sender as `0x${string}`,
-    nonce: BigInt(op.nonce),
-    callData: op.callData as `0x${string}`,
-    callGasLimit: BigInt(op.callGasLimit),
-    verificationGasLimit: BigInt(op.verificationGasLimit),
-    preVerificationGas: BigInt(op.preVerificationGas),
-    maxPriorityFeePerGas: BigInt(op.maxPriorityFeePerGas),
-    maxFeePerGas: BigInt(op.maxFeePerGas),
-    signature: op.signature as `0x${string}`,
-  } satisfies ViemUserOperation<"0.7">);
-}
-
-async function pimlicoRpc<T>(endpoint: string, method: string, params: unknown[]): Promise<T> {
-  const response = await fetch(endpoint, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }), cache: "no-store" });
-  if (!response.ok) throw new Error(`Pimlico request failed (${response.status})`);
-  const body = await response.json() as { result?: T; error?: { message?: string } };
-  if (body.error || body.result === undefined) throw new Error(body.error?.message ?? `Pimlico ${method} failed`);
-  return body.result;
-}
-
-function hexBigInt(value: string | undefined, label: string) {
-  if (!value || !/^0x[0-9a-f]+$/i.test(value)) throw new Error(`${label} is unavailable`);
-  return BigInt(value);
 }
 
 function runtimeConfig() {
