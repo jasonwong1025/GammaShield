@@ -10,7 +10,7 @@
     "start": "next start",
     "lint": "eslint",
     "check:mandate": "node --experimental-strip-types scripts/mandate-self-check.mts",
-    "agent:shadow": "node scripts/shadow-agent-worker.mjs",
+    "agent:shadow": "node --env-file-if-exists=.env.local scripts/shadow-agent-worker.mjs",
     "wagmi:generate": "wagmi generate"
   },
   "dependencies": {
