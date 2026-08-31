@@ -89,7 +89,8 @@ async function getAiTiming(asset: OptionsAsset, quote: Awaited<ReturnType<typeof
       body: JSON.stringify({
         model: process.env.GONKAROUTER_MODEL ?? "deepseek-ai/DeepSeek-V4-Flash-0731",
         temperature: 0.1,
-        max_tokens: 220,
+        // Gonka's reasoning models require room for their internal reasoning before JSON output.
+        max_tokens: 1024,
         messages: [
           { role: "system", content: "You draft advisory, user-signed crypto-options execution policies. Do not propose an execution, RFQ, approval, or transfer. Return only JSON: {riskScore:number 50-95,persistenceMinutes:number 1-60,cooldownMinutes:number 5-1440,validityHours:number 1-168,rationale:string <=220 chars}. A MM estimate is not executable; a later agent must use a fresh listed Thetanuts OptionBook order." },
           { role: "user", content: JSON.stringify({ asset, liveQuote: { strike: quote.strike, expiryDays: daysToExpiry, contracts: quote.contracts, premiumUsd: quote.totalCostUsd, source: quote.source === "book" ? "listed OptionBook" : "Thetanuts MM estimate (RFQ-only)" }, marketImpact: quote.impact }) },
