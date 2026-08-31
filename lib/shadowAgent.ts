@@ -2,6 +2,8 @@
 // from chain, then submits a policy-bound ERC-4337 UserOperation through Pimlico.
 
 import { ethers } from "ethers";
+import { toPackedUserOperation, type UserOperation as ViemUserOperation } from "viem/account-abstraction";
+import { mandateAccountAbi } from "@/lib/generated/contracts";
 import { getMarketSnapshot, type MarketSnapshot } from "@/lib/snapshot";
 import { getShadowQuote } from "@/lib/shadow";
 import { TRADE_PERIODS } from "@/lib/tradePeriods";
@@ -11,16 +13,6 @@ const RISK_LIFETIME_SECONDS = 120;
 const RISK_REFRESH_SECONDS = 90;
 const INITIAL_GAS = { callGasLimit: 300_000n, verificationGasLimit: 600_000n, preVerificationGas: 100_000n };
 
-const ACCOUNT_ABI = [
-  "function entryPoint() view returns (address)",
-  "function riskAttester() view returns (address)",
-  "function activeMandateHash() view returns (bytes32)",
-  "function getMandate(bytes32) view returns ((address owner,address account,address agent,address optionBook,address collateral,bytes32 asset,uint8 side,uint256 maxPremiumPerFill,uint256 maxPremiumTotal,uint256 maxContractsPerFill,uint64 minTenorSeconds,uint64 maxTenorSeconds,uint16 riskThresholdBps,uint64 persistenceSeconds,uint64 minExecutionIntervalSeconds,uint64 validAfter,uint64 expiresAt,uint256 nonce))",
-  "function controls(bytes32) view returns (bool paused,bool revoked,uint256 spentPremium,uint64 lastExecutionAt)",
-  "function riskStates(bytes32) view returns (uint16 scoreBps,uint64 eligibleSince,uint64 observedAt,uint64 validUntil)",
-  "function recordRisk(bytes32,(bytes32 mandateHash,uint16 riskScoreBps,uint64 observedAt,uint64 validUntil,uint64 persistenceSeconds),bytes)",
-  "function executeShadow(bytes32,(bytes32 mandateHash,uint16 riskScoreBps,uint64 observedAt,uint64 validUntil,uint64 persistenceSeconds),bytes,(bytes32 fillId,bytes32 sourceHash,bytes32 asset,address buyer,bool isCall,uint128 strikeE8,uint64 expiry,uint64 validUntil,uint128 contractsE6,uint128 premiumUsdc),bytes)",
-] as const;
 const ENTRY_POINT_ABI = [
   "function getNonce(address sender,uint192 key) view returns (uint256)",
   "function getUserOpHash((address sender,uint256 nonce,bytes initCode,bytes callData,bytes32 accountGasLimits,uint256 preVerificationGas,bytes32 gasFees,bytes paymasterAndData,bytes signature) userOp) view returns (bytes32)",
@@ -117,7 +109,7 @@ export async function getShadowUserOperationReceipt(userOpHash: string) {
 }
 
 async function runShadowAgent(accountAddress: string, config: ReturnType<typeof runtimeConfig>, provider: ethers.JsonRpcProvider, agent: ethers.Wallet, snapshot: MarketSnapshot): Promise<ShadowAgentResult | null> {
-  const account = new ethers.Contract(accountAddress, ACCOUNT_ABI, provider);
+  const account = new ethers.Contract(accountAddress, mandateAccountAbi, provider);
   const policy = await readPolicy(account, accountAddress, agent.address, config);
   if (!policy) return null;
   const score = snapshot.assets[policy.mandate.asset as "BTC" | "ETH"].score;
@@ -264,16 +256,17 @@ function userOperation(sender: string, nonce: bigint, callData: string, gas: Gas
 }
 
 function packUserOperation(op: UserOperation) {
-  return {
-    sender: op.sender, nonce: BigInt(op.nonce), initCode: "0x", callData: op.callData,
-    accountGasLimits: pack128(BigInt(op.verificationGasLimit), BigInt(op.callGasLimit)), preVerificationGas: BigInt(op.preVerificationGas),
-    gasFees: pack128(BigInt(op.maxPriorityFeePerGas), BigInt(op.maxFeePerGas)), paymasterAndData: "0x", signature: op.signature,
-  };
-}
-
-function pack128(high: bigint, low: bigint) {
-  if (high < 0n || low < 0n || high >= 1n << 128n || low >= 1n << 128n) throw new Error("UserOperation gas value is out of range");
-  return ethers.concat([ethers.zeroPadValue(ethers.toBeHex(high), 16), ethers.zeroPadValue(ethers.toBeHex(low), 16)]);
+  return toPackedUserOperation({
+    sender: op.sender as `0x${string}`,
+    nonce: BigInt(op.nonce),
+    callData: op.callData as `0x${string}`,
+    callGasLimit: BigInt(op.callGasLimit),
+    verificationGasLimit: BigInt(op.verificationGasLimit),
+    preVerificationGas: BigInt(op.preVerificationGas),
+    maxPriorityFeePerGas: BigInt(op.maxPriorityFeePerGas),
+    maxFeePerGas: BigInt(op.maxFeePerGas),
+    signature: op.signature as `0x${string}`,
+  } satisfies ViemUserOperation<"0.7">);
 }
 
 async function pimlicoRpc<T>(endpoint: string, method: string, params: unknown[]): Promise<T> {
