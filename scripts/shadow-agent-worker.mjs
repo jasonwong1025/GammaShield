@@ -35,8 +35,19 @@ async function tick() {
   }
   if (changed) await writeState(state);
 
-  const response = await request("/api/shadow/agent", { pendingAccounts: Object.keys(state.pending) });
-  if (!Array.isArray(response.results)) throw new Error("shadow-agent endpoint returned an invalid result");
+  const response = await request("/api/shadow/agent", {
+    pendingAccounts: Object.keys(state.pending),
+    knownAccounts: state.accounts,
+    discoveryFromBlock: state.scannedToBlock == null ? undefined : state.scannedToBlock + 1,
+  });
+  if (!Array.isArray(response.results) || !Array.isArray(response.accounts) || !Number.isSafeInteger(response.scannedToBlock)) throw new Error("shadow-agent endpoint returned an invalid result");
+  const accounts = response.accounts.filter((account) => typeof account === "string" && /^0x[0-9a-fA-F]{40}$/.test(account));
+  if (accounts.length !== response.accounts.length || accounts.length > 1_000) throw new Error("shadow-agent endpoint returned an invalid account list");
+  if (JSON.stringify(accounts) !== JSON.stringify(state.accounts) || state.scannedToBlock !== response.scannedToBlock) {
+    state.accounts = accounts;
+    state.scannedToBlock = response.scannedToBlock;
+    changed = true;
+  }
   for (const result of response.results) {
     if (!isResult(result) || !result.userOpHash || state.pending[result.account]) continue;
     state.pending[result.account] = { userOpHash: result.userOpHash, submittedAt: new Date().toISOString(), outcome: result.outcome };
@@ -61,9 +72,13 @@ async function readState() {
   try {
     const value = JSON.parse(await readFile(config.statePath, "utf8"));
     if (!isState(value)) throw new Error("invalid state journal");
-    return value;
+    return {
+      ...value,
+      accounts: Array.isArray(value.accounts) && value.accounts.length <= 1_000 && value.accounts.every((account) => typeof account === "string" && /^0x[0-9a-fA-F]{40}$/.test(account)) ? value.accounts : [],
+      scannedToBlock: Number.isSafeInteger(value.scannedToBlock) && value.scannedToBlock >= 0 ? value.scannedToBlock : null,
+    };
   } catch (error) {
-    if (error?.code === "ENOENT") return { version: 1, pending: {}, recent: [] };
+    if (error?.code === "ENOENT") return emptyState();
     throw error;
   }
 }
@@ -78,6 +93,10 @@ async function writeState(state) {
 function isState(value) {
   return value && typeof value === "object" && value.version === 1 && value.pending && typeof value.pending === "object" && !Array.isArray(value.pending) && Array.isArray(value.recent) &&
     Object.entries(value.pending).every(([account, pending]) => /^0x[0-9a-fA-F]{40}$/.test(account) && pending && typeof pending === "object" && /^0x[0-9a-fA-F]{64}$/.test(pending.userOpHash) && typeof pending.submittedAt === "string" && typeof pending.outcome === "string");
+}
+
+function emptyState() {
+  return { version: 1, pending: {}, recent: [], accounts: [], scannedToBlock: null };
 }
 
 function isResult(value) {

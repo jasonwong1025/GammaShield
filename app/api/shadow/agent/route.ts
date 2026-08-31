@@ -10,8 +10,7 @@ export async function POST(request: Request) {
     return Response.json({ error: "unauthorized" }, { status: 401 });
   }
   try {
-    const pendingAccounts = await pendingAccountsFrom(request);
-    return Response.json({ results: await runShadowAgents({ pendingAccounts }) }, { headers: { "Cache-Control": "no-store" } });
+    return Response.json(await runShadowAgents(await agentOptionsFrom(request)), { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "shadow agent failed" }, { status: 502 });
   }
@@ -30,17 +29,19 @@ export async function GET(request: Request) {
   }
 }
 
-async function pendingAccountsFrom(request: Request) {
+async function agentOptionsFrom(request: Request) {
   const contentType = request.headers.get("content-type") ?? "";
-  if (!contentType.includes("application/json")) return [];
+  if (!contentType.includes("application/json")) return {};
   const body: unknown = await request.json();
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("invalid shadow-agent request body");
-  const pending = (body as { pendingAccounts?: unknown }).pendingAccounts;
-  if (pending === undefined) return [];
-  if (!Array.isArray(pending) || pending.length > 1_000 || pending.some((account) => typeof account !== "string" || !/^0x[0-9a-fA-F]{40}$/.test(account))) {
-    throw new Error("invalid pending account list");
+  const { pendingAccounts, knownAccounts, discoveryFromBlock } = body as { pendingAccounts?: unknown; knownAccounts?: unknown; discoveryFromBlock?: unknown };
+  for (const accounts of [pendingAccounts, knownAccounts]) {
+    if (accounts !== undefined && (!Array.isArray(accounts) || accounts.length > 1_000 || accounts.some((account) => typeof account !== "string" || !/^0x[0-9a-fA-F]{40}$/.test(account)))) {
+      throw new Error("invalid agent account list");
+    }
   }
-  return pending;
+  if (discoveryFromBlock !== undefined && (typeof discoveryFromBlock !== "number" || !Number.isSafeInteger(discoveryFromBlock) || discoveryFromBlock < 0)) throw new Error("invalid discovery block");
+  return { pendingAccounts: pendingAccounts as string[] | undefined, knownAccounts: knownAccounts as string[] | undefined, discoveryFromBlock: discoveryFromBlock as number | undefined };
 }
 
 function authorized(header: string | null, secret: string) {

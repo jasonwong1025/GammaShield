@@ -75,15 +75,18 @@ export type ShadowAgentResult = {
   detail?: string;
 };
 
-export async function runShadowAgents(options: { pendingAccounts?: Iterable<string> } = {}): Promise<ShadowAgentResult[]> {
+export async function runShadowAgents(options: { pendingAccounts?: Iterable<string>; knownAccounts?: Iterable<string>; discoveryFromBlock?: number } = {}) {
   const config = runtimeConfig();
   const provider = new ethers.JsonRpcProvider(config.rpcUrl);
   const agent = new ethers.Wallet(config.privateKey);
   const factory = new ethers.Contract(config.factory, ["event AccountCreated(address indexed account,address indexed owner,bytes32 indexed salt)"], provider);
   // ponytail: scans this single demo factory; add an indexed event store before serving enough accounts to make this expensive.
-  const events = await factory.queryFilter(factory.filters.AccountCreated(), config.deploymentBlock);
-  const accounts = [...new Set(events.flatMap((event) => "args" in event && event.args?.account ? [ethers.getAddress(event.args.account)] : []))];
-  const pendingAccounts = new Set([...options.pendingAccounts ?? []].filter(ethers.isAddress).map((account) => ethers.getAddress(account).toLowerCase()));
+  const latestBlock = await provider.getBlockNumber();
+  const discoveryFromBlock = Math.max(config.deploymentBlock, options.discoveryFromBlock ?? config.deploymentBlock);
+  const events = await accountCreatedEvents(factory, discoveryFromBlock, latestBlock);
+  const knownAccounts = [...(options.knownAccounts ?? [])].filter((account): account is string => typeof account === "string" && ethers.isAddress(account)).map((account) => ethers.getAddress(account));
+  const accounts = [...new Set([...knownAccounts, ...events.flatMap((event) => "args" in event && event.args?.account ? [ethers.getAddress(event.args.account)] : [])])];
+  const pendingAccounts = new Set([...(options.pendingAccounts ?? [])].filter((account): account is string => typeof account === "string" && ethers.isAddress(account)).map((account) => ethers.getAddress(account).toLowerCase()));
   const snapshot = await getMarketSnapshot({ fresh: true });
   const results: ShadowAgentResult[] = [];
   for (const account of accounts) {
@@ -98,7 +101,16 @@ export async function runShadowAgents(options: { pendingAccounts?: Iterable<stri
       throw error;
     }
   }
-  return results;
+  return { results, accounts, scannedToBlock: latestBlock };
+}
+
+async function accountCreatedEvents(factory: ethers.Contract, fromBlock: number, toBlock: number): Promise<Array<{ args?: { account?: string } }>> {
+  if (fromBlock > toBlock) return [];
+  const events: Array<{ args?: { account?: string } }> = [];
+  for (let start = fromBlock; start <= toBlock; start += 10_000) {
+    events.push(...await factory.queryFilter(factory.filters.AccountCreated(), start, Math.min(start + 9_999, toBlock)) as Array<{ args?: { account?: string } }>);
+  }
+  return events;
 }
 
 export async function getShadowUserOperationReceipt(userOpHash: string) {
