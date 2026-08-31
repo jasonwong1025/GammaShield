@@ -49,7 +49,11 @@ async function tick() {
     changed = true;
   }
   for (const result of response.results) {
-    if (!isResult(result) || !result.userOpHash || state.pending[result.account]) continue;
+    if (!isResult(result) || state.pending[result.account]) continue;
+    if (!result.userOpHash) {
+      if (result.outcome.endsWith("-simulated")) console.log(`${result.account} ${result.outcome}: ${result.detail ?? "not broadcast"}`);
+      continue;
+    }
     state.pending[result.account] = { userOpHash: result.userOpHash, submittedAt: new Date().toISOString(), outcome: result.outcome };
     changed = true;
     console.log(`${result.account} ${result.outcome}: ${result.userOpHash}`);

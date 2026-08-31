@@ -108,7 +108,7 @@ async function runShadowAgent(accountAddress: string, config: ReturnType<typeof 
       return { ...base, outcome: "gas-unfunded", detail: "Fund the policy account with Base Sepolia ETH before the agent can reset an active risk observation." };
     }
     const callData = account.interface.encodeFunctionData("recordRisk", [policy.hash, risk, riskSignature]);
-    return { ...base, outcome: "risk-reset-submitted", userOpHash: await submitPolicyUserOperation({ chainId: 84532, provider, agent, sender: accountAddress, callData, pimlicoApiKey: config.pimlicoApiKey }) };
+    return { ...base, outcome: "risk-reset-submitted", userOpHash: (await submitPolicyUserOperation({ chainId: 84532, provider, agent, sender: accountAddress, callData, pimlicoApiKey: config.pimlicoApiKey })) ?? undefined };
   }
 
   if ((await provider.getBalance(accountAddress)) === 0n) {
@@ -121,7 +121,7 @@ async function runShadowAgent(accountAddress: string, config: ReturnType<typeof 
   const needsObservation = state.eligibleSince === 0n || state.scoreBps < threshold || state.validUntil <= now + refreshAt;
   if (needsObservation) {
     const callData = account.interface.encodeFunctionData("recordRisk", [policy.hash, risk, riskSignature]);
-    return { ...base, outcome: "risk-observation-submitted", userOpHash: await submitPolicyUserOperation({ chainId: 84532, provider, agent, sender: accountAddress, callData, pimlicoApiKey: config.pimlicoApiKey }) };
+    return { ...base, outcome: "risk-observation-submitted", userOpHash: (await submitPolicyUserOperation({ chainId: 84532, provider, agent, sender: accountAddress, callData, pimlicoApiKey: config.pimlicoApiKey })) ?? undefined };
   }
   if (!persistent) return { ...base, outcome: "risk-persistence-pending" };
 
@@ -162,7 +162,7 @@ async function runShadowAgent(accountAddress: string, config: ReturnType<typeof 
   if ((await usdc.balanceOf(accountAddress)) < premium) return { ...base, outcome: "quote-unavailable", detail: "Policy account lacks enough test USDC for the exact quote." };
 
   const callData = account.interface.encodeFunctionData("executeShadow", [policy.hash, risk, riskSignature, signedQuote, fill[1]]);
-  return { ...base, outcome: "fill-submitted", userOpHash: await submitPolicyUserOperation({ chainId: 84532, provider, agent, sender: accountAddress, callData, pimlicoApiKey: config.pimlicoApiKey }) };
+  return { ...base, outcome: "fill-submitted", userOpHash: (await submitPolicyUserOperation({ chainId: 84532, provider, agent, sender: accountAddress, callData, pimlicoApiKey: config.pimlicoApiKey })) ?? undefined };
 }
 
 function riskState(raw: { scoreBps: bigint; eligibleSince: bigint; observedAt: bigint; validUntil: bigint }): RiskState {

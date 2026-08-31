@@ -19,7 +19,7 @@ const ERC20_ABI = ["function balanceOf(address) view returns (uint256)"] as cons
 type Mandate = { agent: string; optionBook: string; collateral: string; asset: "BTC" | "ETH"; side: number; maxPremiumPerFill: bigint; maxPremiumTotal: bigint; maxContractsPerFill: bigint; minTenorSeconds: bigint; maxTenorSeconds: bigint; riskThresholdBps: bigint; persistenceSeconds: bigint; minExecutionIntervalSeconds: bigint; expiresAt: bigint };
 type Control = { spentPremium: bigint; lastExecutionAt: bigint };
 type RiskState = { scoreBps: bigint; eligibleSince: bigint; validUntil: bigint };
-export type ThetanutsAgentResult = { account: string; mandateHash?: string; score?: number; threshold?: number; outcome: "pending-user-operation" | "risk-below-threshold" | "risk-reset-submitted" | "risk-persistence-pending" | "gas-unfunded" | "risk-observation-submitted" | "quote-unavailable" | "fill-submitted"; userOpHash?: string; detail?: string };
+export type ThetanutsAgentResult = { account: string; mandateHash?: string; score?: number; threshold?: number; outcome: "pending-user-operation" | "risk-below-threshold" | "risk-reset-submitted" | "risk-reset-simulated" | "risk-persistence-pending" | "gas-unfunded" | "risk-observation-submitted" | "risk-observation-simulated" | "quote-unavailable" | "fill-submitted" | "fill-simulated"; userOpHash?: string; detail?: string };
 
 export async function runThetanutsAgents(options: { pendingAccounts?: Iterable<string>; knownAccounts?: Iterable<string>; discoveryFromBlock?: number } = {}) {
   const config = runtimeConfig();
@@ -62,12 +62,12 @@ async function runThetanutsAgent(accountAddress: string, config: ReturnType<type
   const base = { account: accountAddress, mandateHash: policy.hash, score, threshold: Number(policy.mandate.riskThresholdBps) / 100 };
   if (scoreBps < Number(policy.mandate.riskThresholdBps)) {
     if (state.scoreBps < policy.mandate.riskThresholdBps || state.validUntil < now) return { ...base, outcome: "risk-below-threshold" };
-    return submitRisk(account, policy.hash, risk, riskSignature, provider, agent, accountAddress, config, "risk-reset-submitted", base);
+    return submitRisk(account, policy.hash, risk, riskSignature, provider, agent, accountAddress, config, config.dryRun ? "risk-reset-simulated" : "risk-reset-submitted", base);
   }
   if ((await provider.getBalance(accountAddress)) === 0n) return { ...base, outcome: "gas-unfunded", detail: "Fund the policy account with Base ETH before scheduling agent runs." };
   const persistent = state.eligibleSince !== 0n && state.scoreBps >= policy.mandate.riskThresholdBps && state.validUntil >= now && now >= state.eligibleSince + policy.mandate.persistenceSeconds;
   if (state.eligibleSince === 0n || state.scoreBps < policy.mandate.riskThresholdBps || state.validUntil <= now + BigInt(RISK_LIFETIME_SECONDS - RISK_REFRESH_SECONDS)) {
-    return submitRisk(account, policy.hash, risk, riskSignature, provider, agent, accountAddress, config, "risk-observation-submitted", base);
+    return submitRisk(account, policy.hash, risk, riskSignature, provider, agent, accountAddress, config, config.dryRun ? "risk-observation-simulated" : "risk-observation-submitted", base);
   }
   if (!persistent) return { ...base, outcome: "risk-persistence-pending" };
   const period = TRADE_PERIODS.find((days) => BigInt(days * 86400) >= policy.mandate.minTenorSeconds && BigInt(days * 86400) <= policy.mandate.maxTenorSeconds);
@@ -88,13 +88,15 @@ async function runThetanutsAgent(accountAddress: string, config: ReturnType<type
   const signedQuote = { mandateHash: policy.hash, fillCalldataHash: ethers.keccak256(quote.txs.fill.data), premium, contracts: BigInt(order.numContracts), observedAt: now, validUntil: now + BigInt(RISK_LIFETIME_SECONDS) };
   const quoteSignature = await agent.signTypedData({ name: "GammaShield Thetanuts Quote", version: "1", chainId: 8453, verifyingContract: accountAddress }, { ThetanutsQuote: [{ name: "mandateHash", type: "bytes32" }, { name: "fillCalldataHash", type: "bytes32" }, { name: "premium", type: "uint256" }, { name: "contracts", type: "uint256" }, { name: "observedAt", type: "uint64" }, { name: "validUntil", type: "uint64" }] }, signedQuote);
   const callData = account.interface.encodeFunctionData("executeThetanuts", [policy.hash, risk, riskSignature, signedQuote, quoteSignature, quote.txs.fill.data]);
-  return { ...base, outcome: "fill-submitted", userOpHash: await submitPolicyUserOperation({ chainId: 8453, provider, agent, sender: accountAddress, callData, pimlicoApiKey: config.pimlicoApiKey }) };
+  const userOpHash = await submitPolicyUserOperation({ chainId: 8453, provider, agent, sender: accountAddress, callData, pimlicoApiKey: config.pimlicoApiKey, dryRun: config.dryRun });
+  return config.dryRun ? { ...base, outcome: "fill-simulated", detail: "Pimlico accepted the UserOperation estimate; it was not broadcast." } : { ...base, outcome: "fill-submitted", userOpHash: userOpHash ?? undefined };
 }
 
-async function submitRisk(account: ethers.Contract, hash: string, risk: Record<string, bigint | number | string>, riskSignature: string, provider: ethers.JsonRpcProvider, agent: ethers.Wallet, sender: string, config: ReturnType<typeof runtimeConfig>, outcome: "risk-reset-submitted" | "risk-observation-submitted", base: Omit<ThetanutsAgentResult, "outcome" | "userOpHash">) {
+async function submitRisk(account: ethers.Contract, hash: string, risk: Record<string, bigint | number | string>, riskSignature: string, provider: ethers.JsonRpcProvider, agent: ethers.Wallet, sender: string, config: ReturnType<typeof runtimeConfig>, outcome: "risk-reset-submitted" | "risk-reset-simulated" | "risk-observation-submitted" | "risk-observation-simulated", base: Omit<ThetanutsAgentResult, "outcome" | "userOpHash">) {
   if ((await provider.getBalance(sender)) === 0n) return { ...base, outcome: "gas-unfunded" as const, detail: "Fund the policy account with Base ETH before the agent can update risk evidence." };
   const callData = account.interface.encodeFunctionData("recordRisk", [hash, risk, riskSignature]);
-  return { ...base, outcome, userOpHash: await submitPolicyUserOperation({ chainId: 8453, provider, agent, sender, callData, pimlicoApiKey: config.pimlicoApiKey }) };
+  const userOpHash = await submitPolicyUserOperation({ chainId: 8453, provider, agent, sender, callData, pimlicoApiKey: config.pimlicoApiKey, dryRun: config.dryRun });
+  return config.dryRun ? { ...base, outcome, detail: "Pimlico accepted the UserOperation estimate; it was not broadcast." } : { ...base, outcome, userOpHash: userOpHash ?? undefined };
 }
 
 async function readPolicy(account: ethers.Contract, agentAddress: string) {
@@ -117,5 +119,5 @@ function runtimeConfig() {
   const factory = process.env.NEXT_PUBLIC_BASE_MANDATE_FACTORY_ADDRESS;
   const deploymentBlock = process.env.BASE_MANDATE_FACTORY_DEPLOYMENT_BLOCK;
   if (!rpcUrl || !privateKey || !pimlicoApiKey || !factory || !deploymentBlock || !/^\d+$/.test(deploymentBlock) || !ethers.isAddress(factory)) throw new Error("Base-mainnet agent configuration is incomplete");
-  return { rpcUrl, privateKey: privateKey.startsWith("0x") ? privateKey : `0x${privateKey}`, pimlicoApiKey, factory: ethers.getAddress(factory), deploymentBlock: Number(deploymentBlock) };
+  return { rpcUrl, privateKey: privateKey.startsWith("0x") ? privateKey : `0x${privateKey}`, pimlicoApiKey, factory: ethers.getAddress(factory), deploymentBlock: Number(deploymentBlock), dryRun: process.env.BASE_AGENT_DRY_RUN !== "false" };
 }
