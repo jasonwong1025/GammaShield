@@ -190,13 +190,13 @@ export function WhatIfChat({ snap, onNavigateToHedge }: Props) {
                     </span>
                     <p className="text-[11.5px]">{m.data.strategicAdvice}</p>
                   </div>
-                  {m.data.amplification > 1.15 && onNavigateToHedge && (
+                  {m.data.source === "gonka" && m.data.amplification > 1.15 && m.data.optimalContract && onNavigateToHedge && (
                     <button
                       type="button"
                       onClick={onNavigateToHedge}
                       className="shrink-0 px-3 py-1 text-[11.5px] font-medium rounded-md bg-crit text-white hover:brightness-110 transition"
                     >
-                      Hedge Downside 🛡️
+                      Review live order
                     </button>
                   )}
                 </div>

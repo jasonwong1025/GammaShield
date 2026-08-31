@@ -3,7 +3,7 @@
 // Cost-to-Protection Efficiency Ratio against the Gamma Flip level, spot price,
 // and implied volatility, and selects the mathematically optimal contract.
 
-import type { Asset } from "./assets";
+import { isOptionsAsset, type Asset } from "./assets";
 import { getMarketSnapshot, type FeedRow, type MarketSnapshot } from "./snapshot";
 import type { AssetSnapshot } from "./engine";
 import type { PutCandidate, OptimalHedgeRecommendation } from "./optimizerTypes";
@@ -44,13 +44,19 @@ export async function getOptimalPutHedge(
   const fragilityScore = assetSnap?.score || 50;
   const nowSec = Math.floor(Date.now() / 1000);
 
-  // Filter non-expired PUT orders with listed prices
+  // Only a live, listed order where the taker buys the PUT is useful here.
+  // The live trade path still revalidates it through the SDK before any fill.
   const putRows = snapshot.feed.filter(
     (r: FeedRow) =>
       r.asset === asset &&
+      isOptionsAsset(asset) &&
       !r.isCall &&
+      r.takerIsLong &&
       r.expiryTs > nowSec &&
-      r.strike > 0,
+      r.strike > 0 &&
+      r.collateralUsd > 0 &&
+      r.pricePerContractUsd !== null &&
+      r.pricePerContractUsd > 0,
   );
 
   const candidates: PutCandidate[] = [];
@@ -58,13 +64,11 @@ export async function getOptimalPutHedge(
   for (const row of putRows) {
     const strike = row.strike;
     const daysToExpiry = Math.max(0.1, Number(((row.expiryTs - nowSec) / 86400).toFixed(1)));
-    const priceUsd = row.pricePerContractUsd || (spot * 0.015); // Fallback ~1.5% premium
+    const priceUsd = row.pricePerContractUsd;
+    if (priceUsd === null) continue;
     const otmPct = Number((((spot - strike) / spot) * 100).toFixed(1));
     const flipDist = flipStrike ? Math.abs(strike - flipStrike) / flipStrike : Math.abs(strike - spot * 0.95) / (spot * 0.95);
     const protectionCoveragePct = calculateProtectionCoverage(spot, strike, row.delta);
-
-    // Target ~1.00 - 2.00 USDC protective allocation
-    const estCostUsdc = Number(Math.min(5, Math.max(0.5, priceUsd * 0.0005)).toFixed(2));
 
     // Efficiency Model:
     // Rewards high protection coverage and proximity to the Gamma Flip level.
@@ -88,7 +92,6 @@ export async function getOptimalPutHedge(
       otmPct,
       flipDistancePct: Number((flipDist * 100).toFixed(1)),
       protectionCoveragePct,
-      estCostUsdc,
       efficiencyScore,
       isOptimal: false,
     });
@@ -101,33 +104,12 @@ export async function getOptimalPutHedge(
   if (candidates.length > 0) {
     candidates[0].isOptimal = true;
     optimalContract = candidates[0];
-  } else {
-    // Generate synthetic optimal contract for modeled assets or empty orderbooks
-    const defaultStrike = flipStrike || Math.round(spot * 0.95);
-    const defaultExpiry = nowSec + 7 * 86400;
-    optimalContract = {
-      strike: defaultStrike,
-      expiryTs: defaultExpiry,
-      daysToExpiry: 7,
-      pricePerContractUsd: spot * 0.012,
-      maker: "Thetanuts MM Grid",
-      iv: assetSnap?.avgIv || 0.65,
-      delta: -0.35,
-      gamma: 0.0008,
-      otmPct: Number((((spot - defaultStrike) / spot) * 100).toFixed(1)),
-      flipDistancePct: 0,
-      protectionCoveragePct: 85,
-      estCostUsdc: 1.20,
-      efficiencyScore: 9.4,
-      isOptimal: true,
-    };
-    candidates.push(optimalContract);
   }
 
   // Generate Quantitative Rationale
   const rationale = optimalContract
-    ? `Selected $${optimalContract.strike.toLocaleString()} Put (${optimalContract.daysToExpiry}d expiry). Provides ${optimalContract.protectionCoveragePct}% downside tail-risk coverage near the ${flipStrike ? `$${flipStrike.toLocaleString()} Gamma Flip level` : "key transition level"} for ~${optimalContract.estCostUsdc} USDC with maximal capital efficiency (Score: ${optimalContract.efficiencyScore}).`
-    : `Market orderbook depth is currently thin. Recommended default protection strike is $${(spot * 0.95).toFixed(0)} (5% OTM).`;
+    ? `Selected a currently listed $${optimalContract.strike.toLocaleString()} PUT (${optimalContract.daysToExpiry}d expiry) at a snapshot price of $${optimalContract.pricePerContractUsd.toLocaleString()}. It is a candidate only: the trade flow must obtain a fresh SDK quote before review or execution.`
+    : `No eligible listed ${asset} PUT order is currently available. No contract or price recommendation is generated.`;
 
   return {
     asset,

@@ -20,6 +20,7 @@ type ChatMessage = {
   text: string;
   rumorData?: FactCheckResult;
   whatIfData?: WhatIfResult;
+  source?: "gonka" | "deterministic";
   gonkaRequestId?: string | null;
   modelUsed?: string | null;
   timestamp: number;
@@ -96,6 +97,7 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
           mode: "simulate",
           text: data.conversationalAnswer,
           whatIfData: data,
+          source: data.source,
           gonkaRequestId: data.gonkaRequestId,
           modelUsed: data.modelUsed,
           timestamp: Date.now(),
@@ -128,6 +130,7 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
           mode: "rumor",
           text: data.verdict,
           rumorData: data,
+          source: json.source,
           gonkaRequestId: json.gonkaRequestId,
           modelUsed: json.modelUsed,
           timestamp: Date.now(),
@@ -229,7 +232,7 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
                   <>
                     <span className="size-1.5 rounded-full bg-blue" />
                     <span className="font-semibold text-fg">
-                      Gonka Copilot · {m.mode === "simulate" ? "Trade Simulator" : "Fact-Checker"}
+                      {m.source === "deterministic" ? "Deterministic market calculation" : `Gonka Copilot · ${m.mode === "simulate" ? "Trade Simulator" : "Fact-Checker"}`}
                     </span>
                   </>
                 )}
@@ -271,7 +274,7 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
                 </div>
 
                 <div className="text-[12px] text-muted leading-relaxed">
-                  <span className="font-semibold text-fg block mb-0.5">Quantitative AI Reasoning:</span>
+                  <span className="font-semibold text-fg block mb-0.5">{m.source === "gonka" ? "Quantitative AI reasoning:" : "Deterministic market-structure calculation:"}</span>
                   <p>{m.rumorData.reasoning}</p>
                 </div>
 
@@ -285,23 +288,23 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
                 >
                   <div className="flex flex-col gap-0.5">
                     <div className="flex items-center gap-1.5 font-bold text-fg">
-                      <span>{m.rumorData.shouldHedge ? "🚨 Protective Put Recommended" : "✅ No Immediate Hedge Needed"}</span>
-                      {m.rumorData.strikeSuggestion > 0 && (
+                      <span>{m.source === "deterministic" ? "No executable recommendation" : m.rumorData.shouldHedge ? "🚨 Protective PUT review suggested" : "✅ No immediate hedge suggested"}</span>
+                      {m.source === "gonka" && m.rumorData.optimalContract && (
                         <span className="font-mono px-1.5 py-0.2 rounded bg-panel border border-edge text-blue text-[11px]">
-                          ${m.rumorData.strikeSuggestion.toLocaleString()} PUT
+                          ${m.rumorData.optimalContract.strike.toLocaleString()} PUT
                         </span>
                       )}
                     </div>
                     <span className="text-muted">{m.rumorData.actionRationale}</span>
                   </div>
 
-                  {m.rumorData.shouldHedge && onNavigateToHedge && (
+                  {m.source === "gonka" && m.rumorData.shouldHedge && m.rumorData.optimalContract && onNavigateToHedge && (
                     <button
                       type="button"
-                      onClick={() => onNavigateToHedge(m.rumorData?.strikeSuggestion)}
+                      onClick={() => onNavigateToHedge(m.rumorData?.optimalContract?.strike)}
                       className="shrink-0 px-3 py-1.5 rounded-lg bg-crit text-white text-[11px] font-bold hover:brightness-110 transition shadow-xs"
                     >
-                      Hedge on Base ⚡
+                      Review live order
                     </button>
                   )}
                 </div>
@@ -349,13 +352,13 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
                     </span>
                     <p className="text-muted">{m.whatIfData.strategicAdvice}</p>
                   </div>
-                  {m.whatIfData.amplification > 1.15 && onNavigateToHedge && (
+                  {m.whatIfData.source === "gonka" && m.whatIfData.amplification > 1.15 && m.whatIfData.optimalContract && onNavigateToHedge && (
                     <button
                       type="button"
                       onClick={() => onNavigateToHedge(m.whatIfData?.optimalContract?.strike)}
                       className="shrink-0 px-3 py-1 text-[11px] font-bold rounded-lg bg-crit text-white hover:brightness-110 transition"
                     >
-                      Hedge Downside 🛡️
+                      Review live order
                     </button>
                   )}
                 </div>
@@ -364,7 +367,7 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
             )}
 
             {/* Gonka Trace Pill */}
-            {m.gonkaRequestId && (
+            {m.source === "gonka" && m.gonkaRequestId && (
               <div className="flex items-center justify-between text-[10px] font-mono text-faint pt-0.5">
                 <span>Gonka Trace ID: {m.gonkaRequestId}</span>
                 <button

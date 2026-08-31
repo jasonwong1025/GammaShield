@@ -6,6 +6,631 @@ import {
 } from 'wagmi/codegen'
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// MandateAccount
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const mandateAccountAbi = [
+  {
+    type: 'constructor',
+    inputs: [
+      { name: 'entryPoint_', internalType: 'address', type: 'address' },
+      { name: 'owner_', internalType: 'address', type: 'address' },
+      { name: 'riskAttester_', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  { type: 'receive', stateMutability: 'payable' },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'activeMandateHash',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    name: 'controls',
+    outputs: [
+      { name: 'paused', internalType: 'bool', type: 'bool' },
+      { name: 'revoked', internalType: 'bool', type: 'bool' },
+      { name: 'spentPremium', internalType: 'uint256', type: 'uint256' },
+      { name: 'lastExecutionAt', internalType: 'uint64', type: 'uint64' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'entryPoint',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'to', internalType: 'address', type: 'address' },
+      { name: 'value', internalType: 'uint256', type: 'uint256' },
+      { name: 'data', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'executeOwner',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'hash', internalType: 'bytes32', type: 'bytes32' },
+      {
+        name: 'risk',
+        internalType: 'struct MandateAccount.RiskAttestation',
+        type: 'tuple',
+        components: [
+          { name: 'mandateHash', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'riskScoreBps', internalType: 'uint16', type: 'uint16' },
+          { name: 'observedAt', internalType: 'uint64', type: 'uint64' },
+          { name: 'validUntil', internalType: 'uint64', type: 'uint64' },
+          {
+            name: 'persistenceSeconds',
+            internalType: 'uint64',
+            type: 'uint64',
+          },
+        ],
+      },
+      { name: 'riskSignature', internalType: 'bytes', type: 'bytes' },
+      {
+        name: 'quote',
+        internalType: 'struct IShadowFill.ShadowQuote',
+        type: 'tuple',
+        components: [
+          { name: 'fillId', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'sourceHash', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'asset', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'buyer', internalType: 'address', type: 'address' },
+          { name: 'isCall', internalType: 'bool', type: 'bool' },
+          { name: 'strikeE8', internalType: 'uint128', type: 'uint128' },
+          { name: 'expiry', internalType: 'uint64', type: 'uint64' },
+          { name: 'validUntil', internalType: 'uint64', type: 'uint64' },
+          { name: 'contractsE6', internalType: 'uint128', type: 'uint128' },
+          { name: 'premiumUsdc', internalType: 'uint128', type: 'uint128' },
+        ],
+      },
+      { name: 'quoteSignature', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'executeShadow',
+    outputs: [{ name: 'positionId', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'hash', internalType: 'bytes32', type: 'bytes32' },
+      {
+        name: 'risk',
+        internalType: 'struct MandateAccount.RiskAttestation',
+        type: 'tuple',
+        components: [
+          { name: 'mandateHash', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'riskScoreBps', internalType: 'uint16', type: 'uint16' },
+          { name: 'observedAt', internalType: 'uint64', type: 'uint64' },
+          { name: 'validUntil', internalType: 'uint64', type: 'uint64' },
+          {
+            name: 'persistenceSeconds',
+            internalType: 'uint64',
+            type: 'uint64',
+          },
+        ],
+      },
+      { name: 'riskSignature', internalType: 'bytes', type: 'bytes' },
+      {
+        name: 'quote',
+        internalType: 'struct MandateAccount.ThetanutsQuote',
+        type: 'tuple',
+        components: [
+          { name: 'mandateHash', internalType: 'bytes32', type: 'bytes32' },
+          {
+            name: 'fillCalldataHash',
+            internalType: 'bytes32',
+            type: 'bytes32',
+          },
+          { name: 'premium', internalType: 'uint256', type: 'uint256' },
+          { name: 'contracts', internalType: 'uint256', type: 'uint256' },
+          { name: 'observedAt', internalType: 'uint64', type: 'uint64' },
+          { name: 'validUntil', internalType: 'uint64', type: 'uint64' },
+        ],
+      },
+      { name: 'quoteSignature', internalType: 'bytes', type: 'bytes' },
+      { name: 'fillData', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'executeThetanuts',
+    outputs: [
+      { name: 'optionAddress', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'hash', internalType: 'bytes32', type: 'bytes32' }],
+    name: 'getMandate',
+    outputs: [
+      {
+        name: '',
+        internalType: 'struct MandateAccount.Mandate',
+        type: 'tuple',
+        components: [
+          { name: 'owner', internalType: 'address', type: 'address' },
+          { name: 'account', internalType: 'address', type: 'address' },
+          { name: 'agent', internalType: 'address', type: 'address' },
+          { name: 'optionBook', internalType: 'address', type: 'address' },
+          { name: 'collateral', internalType: 'address', type: 'address' },
+          { name: 'asset', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'side', internalType: 'uint8', type: 'uint8' },
+          {
+            name: 'maxPremiumPerFill',
+            internalType: 'uint256',
+            type: 'uint256',
+          },
+          { name: 'maxPremiumTotal', internalType: 'uint256', type: 'uint256' },
+          {
+            name: 'maxContractsPerFill',
+            internalType: 'uint256',
+            type: 'uint256',
+          },
+          { name: 'minTenorSeconds', internalType: 'uint64', type: 'uint64' },
+          { name: 'maxTenorSeconds', internalType: 'uint64', type: 'uint64' },
+          { name: 'riskThresholdBps', internalType: 'uint16', type: 'uint16' },
+          {
+            name: 'persistenceSeconds',
+            internalType: 'uint64',
+            type: 'uint64',
+          },
+          {
+            name: 'minExecutionIntervalSeconds',
+            internalType: 'uint64',
+            type: 'uint64',
+          },
+          { name: 'validAfter', internalType: 'uint64', type: 'uint64' },
+          { name: 'expiresAt', internalType: 'uint64', type: 'uint64' },
+          { name: 'nonce', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    name: 'isMandateRegistered',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'mandateDomainSeparator',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: 'mandate',
+        internalType: 'struct MandateAccount.Mandate',
+        type: 'tuple',
+        components: [
+          { name: 'owner', internalType: 'address', type: 'address' },
+          { name: 'account', internalType: 'address', type: 'address' },
+          { name: 'agent', internalType: 'address', type: 'address' },
+          { name: 'optionBook', internalType: 'address', type: 'address' },
+          { name: 'collateral', internalType: 'address', type: 'address' },
+          { name: 'asset', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'side', internalType: 'uint8', type: 'uint8' },
+          {
+            name: 'maxPremiumPerFill',
+            internalType: 'uint256',
+            type: 'uint256',
+          },
+          { name: 'maxPremiumTotal', internalType: 'uint256', type: 'uint256' },
+          {
+            name: 'maxContractsPerFill',
+            internalType: 'uint256',
+            type: 'uint256',
+          },
+          { name: 'minTenorSeconds', internalType: 'uint64', type: 'uint64' },
+          { name: 'maxTenorSeconds', internalType: 'uint64', type: 'uint64' },
+          { name: 'riskThresholdBps', internalType: 'uint16', type: 'uint16' },
+          {
+            name: 'persistenceSeconds',
+            internalType: 'uint64',
+            type: 'uint64',
+          },
+          {
+            name: 'minExecutionIntervalSeconds',
+            internalType: 'uint64',
+            type: 'uint64',
+          },
+          { name: 'validAfter', internalType: 'uint64', type: 'uint64' },
+          { name: 'expiresAt', internalType: 'uint64', type: 'uint64' },
+          { name: 'nonce', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    name: 'mandateHash',
+    outputs: [{ name: 'hash', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'pure',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'owner',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'hash', internalType: 'bytes32', type: 'bytes32' }],
+    name: 'pauseMandate',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'hash', internalType: 'bytes32', type: 'bytes32' },
+      {
+        name: 'risk',
+        internalType: 'struct MandateAccount.RiskAttestation',
+        type: 'tuple',
+        components: [
+          { name: 'mandateHash', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'riskScoreBps', internalType: 'uint16', type: 'uint16' },
+          { name: 'observedAt', internalType: 'uint64', type: 'uint64' },
+          { name: 'validUntil', internalType: 'uint64', type: 'uint64' },
+          {
+            name: 'persistenceSeconds',
+            internalType: 'uint64',
+            type: 'uint64',
+          },
+        ],
+      },
+      { name: 'signature', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'recordRisk',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: 'mandate',
+        internalType: 'struct MandateAccount.Mandate',
+        type: 'tuple',
+        components: [
+          { name: 'owner', internalType: 'address', type: 'address' },
+          { name: 'account', internalType: 'address', type: 'address' },
+          { name: 'agent', internalType: 'address', type: 'address' },
+          { name: 'optionBook', internalType: 'address', type: 'address' },
+          { name: 'collateral', internalType: 'address', type: 'address' },
+          { name: 'asset', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'side', internalType: 'uint8', type: 'uint8' },
+          {
+            name: 'maxPremiumPerFill',
+            internalType: 'uint256',
+            type: 'uint256',
+          },
+          { name: 'maxPremiumTotal', internalType: 'uint256', type: 'uint256' },
+          {
+            name: 'maxContractsPerFill',
+            internalType: 'uint256',
+            type: 'uint256',
+          },
+          { name: 'minTenorSeconds', internalType: 'uint64', type: 'uint64' },
+          { name: 'maxTenorSeconds', internalType: 'uint64', type: 'uint64' },
+          { name: 'riskThresholdBps', internalType: 'uint16', type: 'uint16' },
+          {
+            name: 'persistenceSeconds',
+            internalType: 'uint64',
+            type: 'uint64',
+          },
+          {
+            name: 'minExecutionIntervalSeconds',
+            internalType: 'uint64',
+            type: 'uint64',
+          },
+          { name: 'validAfter', internalType: 'uint64', type: 'uint64' },
+          { name: 'expiresAt', internalType: 'uint64', type: 'uint64' },
+          { name: 'nonce', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+      { name: 'signature', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'registerMandate',
+    outputs: [{ name: 'hash', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'hash', internalType: 'bytes32', type: 'bytes32' }],
+    name: 'resumeMandate',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'hash', internalType: 'bytes32', type: 'bytes32' }],
+    name: 'revokeMandate',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'riskAttester',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'riskDomainSeparator',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    name: 'riskStates',
+    outputs: [
+      { name: 'scoreBps', internalType: 'uint16', type: 'uint16' },
+      { name: 'eligibleSince', internalType: 'uint64', type: 'uint64' },
+      { name: 'observedAt', internalType: 'uint64', type: 'uint64' },
+      { name: 'validUntil', internalType: 'uint64', type: 'uint64' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'thetanutsQuoteDomainSeparator',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: 'userOp',
+        internalType: 'struct PackedUserOperation',
+        type: 'tuple',
+        components: [
+          { name: 'sender', internalType: 'address', type: 'address' },
+          { name: 'nonce', internalType: 'uint256', type: 'uint256' },
+          { name: 'initCode', internalType: 'bytes', type: 'bytes' },
+          { name: 'callData', internalType: 'bytes', type: 'bytes' },
+          {
+            name: 'accountGasLimits',
+            internalType: 'bytes32',
+            type: 'bytes32',
+          },
+          {
+            name: 'preVerificationGas',
+            internalType: 'uint256',
+            type: 'uint256',
+          },
+          { name: 'gasFees', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'paymasterAndData', internalType: 'bytes', type: 'bytes' },
+          { name: 'signature', internalType: 'bytes', type: 'bytes' },
+        ],
+      },
+      { name: 'userOpHash', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'missingAccountFunds', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'validateUserOp',
+    outputs: [
+      { name: 'validationData', internalType: 'uint256', type: 'uint256' },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'mandateHash',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: true,
+      },
+      {
+        name: 'fillId',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: true,
+      },
+      {
+        name: 'premiumUsdc',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'positionId',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'MandateExecuted',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'mandateHash',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: true,
+      },
+    ],
+    name: 'MandatePaused',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'mandateHash',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: true,
+      },
+      {
+        name: 'expiresAt',
+        internalType: 'uint64',
+        type: 'uint64',
+        indexed: false,
+      },
+    ],
+    name: 'MandateRegistered',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'mandateHash',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: true,
+      },
+    ],
+    name: 'MandateResumed',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'mandateHash',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: true,
+      },
+    ],
+    name: 'MandateRevoked',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'mandateHash',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: true,
+      },
+      {
+        name: 'scoreBps',
+        internalType: 'uint16',
+        type: 'uint16',
+        indexed: false,
+      },
+      {
+        name: 'eligibleSince',
+        internalType: 'uint64',
+        type: 'uint64',
+        indexed: false,
+      },
+      {
+        name: 'validUntil',
+        internalType: 'uint64',
+        type: 'uint64',
+        indexed: false,
+      },
+    ],
+    name: 'RiskObserved',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// MandateAccountFactory
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const mandateAccountFactoryAbi = [
+  {
+    type: 'constructor',
+    inputs: [
+      { name: 'entryPoint_', internalType: 'address', type: 'address' },
+      { name: 'riskAttester_', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'owner', internalType: 'address', type: 'address' },
+      { name: 'salt', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'createAccount',
+    outputs: [
+      {
+        name: 'account',
+        internalType: 'contract MandateAccount',
+        type: 'address',
+      },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'entryPoint',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'owner', internalType: 'address', type: 'address' },
+      { name: 'salt', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'getAddress',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'riskAttester',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'account',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'owner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      { name: 'salt', internalType: 'bytes32', type: 'bytes32', indexed: true },
+    ],
+    name: 'AccountCreated',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ShadowOptionBook
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -263,6 +888,434 @@ export const erc20Abi = [
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // React
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountAbi}__
+ */
+export const useReadMandateAccount = /*#__PURE__*/ createUseReadContract({
+  abi: mandateAccountAbi,
+})
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"activeMandateHash"`
+ */
+export const useReadMandateAccountActiveMandateHash =
+  /*#__PURE__*/ createUseReadContract({
+    abi: mandateAccountAbi,
+    functionName: 'activeMandateHash',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"controls"`
+ */
+export const useReadMandateAccountControls =
+  /*#__PURE__*/ createUseReadContract({
+    abi: mandateAccountAbi,
+    functionName: 'controls',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"entryPoint"`
+ */
+export const useReadMandateAccountEntryPoint =
+  /*#__PURE__*/ createUseReadContract({
+    abi: mandateAccountAbi,
+    functionName: 'entryPoint',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"getMandate"`
+ */
+export const useReadMandateAccountGetMandate =
+  /*#__PURE__*/ createUseReadContract({
+    abi: mandateAccountAbi,
+    functionName: 'getMandate',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"isMandateRegistered"`
+ */
+export const useReadMandateAccountIsMandateRegistered =
+  /*#__PURE__*/ createUseReadContract({
+    abi: mandateAccountAbi,
+    functionName: 'isMandateRegistered',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"mandateDomainSeparator"`
+ */
+export const useReadMandateAccountMandateDomainSeparator =
+  /*#__PURE__*/ createUseReadContract({
+    abi: mandateAccountAbi,
+    functionName: 'mandateDomainSeparator',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"mandateHash"`
+ */
+export const useReadMandateAccountMandateHash =
+  /*#__PURE__*/ createUseReadContract({
+    abi: mandateAccountAbi,
+    functionName: 'mandateHash',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"owner"`
+ */
+export const useReadMandateAccountOwner = /*#__PURE__*/ createUseReadContract({
+  abi: mandateAccountAbi,
+  functionName: 'owner',
+})
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"riskAttester"`
+ */
+export const useReadMandateAccountRiskAttester =
+  /*#__PURE__*/ createUseReadContract({
+    abi: mandateAccountAbi,
+    functionName: 'riskAttester',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"riskDomainSeparator"`
+ */
+export const useReadMandateAccountRiskDomainSeparator =
+  /*#__PURE__*/ createUseReadContract({
+    abi: mandateAccountAbi,
+    functionName: 'riskDomainSeparator',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"riskStates"`
+ */
+export const useReadMandateAccountRiskStates =
+  /*#__PURE__*/ createUseReadContract({
+    abi: mandateAccountAbi,
+    functionName: 'riskStates',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"thetanutsQuoteDomainSeparator"`
+ */
+export const useReadMandateAccountThetanutsQuoteDomainSeparator =
+  /*#__PURE__*/ createUseReadContract({
+    abi: mandateAccountAbi,
+    functionName: 'thetanutsQuoteDomainSeparator',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link mandateAccountAbi}__
+ */
+export const useWriteMandateAccount = /*#__PURE__*/ createUseWriteContract({
+  abi: mandateAccountAbi,
+})
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"executeOwner"`
+ */
+export const useWriteMandateAccountExecuteOwner =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: mandateAccountAbi,
+    functionName: 'executeOwner',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"executeShadow"`
+ */
+export const useWriteMandateAccountExecuteShadow =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: mandateAccountAbi,
+    functionName: 'executeShadow',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"executeThetanuts"`
+ */
+export const useWriteMandateAccountExecuteThetanuts =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: mandateAccountAbi,
+    functionName: 'executeThetanuts',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"pauseMandate"`
+ */
+export const useWriteMandateAccountPauseMandate =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: mandateAccountAbi,
+    functionName: 'pauseMandate',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"recordRisk"`
+ */
+export const useWriteMandateAccountRecordRisk =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: mandateAccountAbi,
+    functionName: 'recordRisk',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"registerMandate"`
+ */
+export const useWriteMandateAccountRegisterMandate =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: mandateAccountAbi,
+    functionName: 'registerMandate',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"resumeMandate"`
+ */
+export const useWriteMandateAccountResumeMandate =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: mandateAccountAbi,
+    functionName: 'resumeMandate',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"revokeMandate"`
+ */
+export const useWriteMandateAccountRevokeMandate =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: mandateAccountAbi,
+    functionName: 'revokeMandate',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"validateUserOp"`
+ */
+export const useWriteMandateAccountValidateUserOp =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: mandateAccountAbi,
+    functionName: 'validateUserOp',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link mandateAccountAbi}__
+ */
+export const useSimulateMandateAccount =
+  /*#__PURE__*/ createUseSimulateContract({ abi: mandateAccountAbi })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"executeOwner"`
+ */
+export const useSimulateMandateAccountExecuteOwner =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: mandateAccountAbi,
+    functionName: 'executeOwner',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"executeShadow"`
+ */
+export const useSimulateMandateAccountExecuteShadow =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: mandateAccountAbi,
+    functionName: 'executeShadow',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"executeThetanuts"`
+ */
+export const useSimulateMandateAccountExecuteThetanuts =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: mandateAccountAbi,
+    functionName: 'executeThetanuts',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"pauseMandate"`
+ */
+export const useSimulateMandateAccountPauseMandate =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: mandateAccountAbi,
+    functionName: 'pauseMandate',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"recordRisk"`
+ */
+export const useSimulateMandateAccountRecordRisk =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: mandateAccountAbi,
+    functionName: 'recordRisk',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"registerMandate"`
+ */
+export const useSimulateMandateAccountRegisterMandate =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: mandateAccountAbi,
+    functionName: 'registerMandate',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"resumeMandate"`
+ */
+export const useSimulateMandateAccountResumeMandate =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: mandateAccountAbi,
+    functionName: 'resumeMandate',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"revokeMandate"`
+ */
+export const useSimulateMandateAccountRevokeMandate =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: mandateAccountAbi,
+    functionName: 'revokeMandate',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"validateUserOp"`
+ */
+export const useSimulateMandateAccountValidateUserOp =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: mandateAccountAbi,
+    functionName: 'validateUserOp',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link mandateAccountAbi}__
+ */
+export const useWatchMandateAccountEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({ abi: mandateAccountAbi })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link mandateAccountAbi}__ and `eventName` set to `"MandateExecuted"`
+ */
+export const useWatchMandateAccountMandateExecutedEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: mandateAccountAbi,
+    eventName: 'MandateExecuted',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link mandateAccountAbi}__ and `eventName` set to `"MandatePaused"`
+ */
+export const useWatchMandateAccountMandatePausedEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: mandateAccountAbi,
+    eventName: 'MandatePaused',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link mandateAccountAbi}__ and `eventName` set to `"MandateRegistered"`
+ */
+export const useWatchMandateAccountMandateRegisteredEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: mandateAccountAbi,
+    eventName: 'MandateRegistered',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link mandateAccountAbi}__ and `eventName` set to `"MandateResumed"`
+ */
+export const useWatchMandateAccountMandateResumedEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: mandateAccountAbi,
+    eventName: 'MandateResumed',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link mandateAccountAbi}__ and `eventName` set to `"MandateRevoked"`
+ */
+export const useWatchMandateAccountMandateRevokedEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: mandateAccountAbi,
+    eventName: 'MandateRevoked',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link mandateAccountAbi}__ and `eventName` set to `"RiskObserved"`
+ */
+export const useWatchMandateAccountRiskObservedEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: mandateAccountAbi,
+    eventName: 'RiskObserved',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountFactoryAbi}__
+ */
+export const useReadMandateAccountFactory = /*#__PURE__*/ createUseReadContract(
+  { abi: mandateAccountFactoryAbi },
+)
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountFactoryAbi}__ and `functionName` set to `"entryPoint"`
+ */
+export const useReadMandateAccountFactoryEntryPoint =
+  /*#__PURE__*/ createUseReadContract({
+    abi: mandateAccountFactoryAbi,
+    functionName: 'entryPoint',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountFactoryAbi}__ and `functionName` set to `"getAddress"`
+ */
+export const useReadMandateAccountFactoryGetAddress =
+  /*#__PURE__*/ createUseReadContract({
+    abi: mandateAccountFactoryAbi,
+    functionName: 'getAddress',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountFactoryAbi}__ and `functionName` set to `"riskAttester"`
+ */
+export const useReadMandateAccountFactoryRiskAttester =
+  /*#__PURE__*/ createUseReadContract({
+    abi: mandateAccountFactoryAbi,
+    functionName: 'riskAttester',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link mandateAccountFactoryAbi}__
+ */
+export const useWriteMandateAccountFactory =
+  /*#__PURE__*/ createUseWriteContract({ abi: mandateAccountFactoryAbi })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link mandateAccountFactoryAbi}__ and `functionName` set to `"createAccount"`
+ */
+export const useWriteMandateAccountFactoryCreateAccount =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: mandateAccountFactoryAbi,
+    functionName: 'createAccount',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link mandateAccountFactoryAbi}__
+ */
+export const useSimulateMandateAccountFactory =
+  /*#__PURE__*/ createUseSimulateContract({ abi: mandateAccountFactoryAbi })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link mandateAccountFactoryAbi}__ and `functionName` set to `"createAccount"`
+ */
+export const useSimulateMandateAccountFactoryCreateAccount =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: mandateAccountFactoryAbi,
+    functionName: 'createAccount',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link mandateAccountFactoryAbi}__
+ */
+export const useWatchMandateAccountFactoryEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({ abi: mandateAccountFactoryAbi })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link mandateAccountFactoryAbi}__ and `eventName` set to `"AccountCreated"`
+ */
+export const useWatchMandateAccountFactoryAccountCreatedEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: mandateAccountFactoryAbi,
+    eventName: 'AccountCreated',
+  })
 
 /**
  * Wraps __{@link useReadContract}__ with `abi` set to __{@link shadowOptionBookAbi}__

@@ -15,8 +15,6 @@ export type PutCandidate = {
   flipDistancePct: number;
   /** Estimated tail-risk downside coverage (0 - 100%) */
   protectionCoveragePct: number;
-  /** Estimated cost for ~1-2 USDC baseline protection */
-  estCostUsdc: number;
   /** Cost-to-Protection Efficiency Ratio (higher = better protection per dollar) */
   efficiencyScore: number;
   isOptimal: boolean;

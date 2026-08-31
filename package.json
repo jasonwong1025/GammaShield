@@ -9,6 +9,10 @@
     "typecheck": "tsc --noEmit",
     "start": "next start",
     "lint": "eslint",
+    "check:mandate": "node --experimental-strip-types scripts/mandate-self-check.mts",
+    "agent:shadow": "node --env-file-if-exists=.env.local scripts/shadow-agent-worker.mjs",
+    "agent:thetanuts": "POLICY_AGENT_MODE=thetanuts node --env-file-if-exists=.env.local scripts/shadow-agent-worker.mjs",
+    "deploy:base:policy": "node --env-file-if-exists=.env.local scripts/deploy-base-mandate-factory.mjs",
     "wagmi:generate": "wagmi generate"
   },
   "dependencies": {

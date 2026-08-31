@@ -10,6 +10,7 @@ import { getMarketSnapshot, type MarketSnapshot } from "@/lib/snapshot";
 
 const QUOTE_LIFETIME_SECONDS = 60;
 const MAX_CONTRACTS = 5;
+const RECEIPT_CACHE_MS = 15_000;
 
 const BOOK_ABI = [
   "function fillShadow((bytes32 fillId,bytes32 sourceHash,bytes32 asset,address buyer,bool isCall,uint128 strikeE8,uint64 expiry,uint64 validUntil,uint128 contractsE6,uint128 premiumUsdc) quote,bytes signature)",
@@ -61,6 +62,7 @@ export type ShadowQuote = {
 
 export type ShadowPosition = {
   id: number;
+  buyer: string;
   asset: OptionsAsset;
   isCall: boolean;
   strike: number;
@@ -74,6 +76,10 @@ export type ShadowPosition = {
     source: "nearest listed IV" | "book-average IV" | "current intrinsic value";
   } | null;
 };
+
+type UnmarkedShadowPosition = Omit<ShadowPosition, "mark">;
+let receiptCache: { expiresAt: number; positions: UnmarkedShadowPosition[] } | null = null;
+let receiptRequest: Promise<UnmarkedShadowPosition[]> | null = null;
 
 function contracts(): ContractConfig {
   const optionBook = process.env.SHADOW_OPTION_BOOK_ADDRESS;
@@ -126,12 +132,14 @@ export async function getShadowQuote(
   side: TradeSide,
   count = 1,
   period: number = 7,
+  fresh = false,
+  maxPremiumUsd?: number,
 ): Promise<ShadowQuote> {
   if (!isOptionsAsset(asset as OptionsAsset)) throw new Error("only BTC and ETH have a live Thetanuts book");
   if (!ethers.isAddress(buyer)) throw new Error("invalid buyer address");
 
   const contractsCount = validContracts(count);
-  const option = await getTradeQuote(asset as OptionsAsset, side, contractsCount, validPeriod(period));
+  const option = await getTradeQuote(asset as OptionsAsset, side, contractsCount, validPeriod(period), fresh, maxPremiumUsd);
   if (option.contracts <= 0 || option.totalCostUsd <= 0) throw new Error("no fillable shadow quote is available");
 
   const config = contracts();
@@ -193,8 +201,34 @@ export async function getShadowQuote(
   };
 }
 
-export async function getShadowPositions(buyer: string): Promise<ShadowPosition[]> {
-  if (!ethers.isAddress(buyer)) throw new Error("invalid buyer address");
+export async function getShadowPositions(buyers: string | string[]): Promise<ShadowPosition[]> {
+  const requestedBuyers = Array.from(new Set((Array.isArray(buyers) ? buyers : [buyers]).map((buyer) => {
+    if (!ethers.isAddress(buyer)) throw new Error("invalid buyer address");
+    return ethers.getAddress(buyer).toLowerCase();
+  })));
+  if (!requestedBuyers.length) throw new Error("invalid buyer address");
+  const positions = (await readShadowReceiptBook()).filter((position) => requestedBuyers.includes(position.buyer.toLowerCase())).map((position) => ({ ...position, mark: null }));
+  if (!positions.length) return positions;
+
+  const snapshot = await getMarketSnapshot().catch(() => null);
+  return snapshot ? positions.map((position) => ({ ...position, mark: markPosition(position, snapshot) })) : positions;
+}
+
+async function readShadowReceiptBook(): Promise<UnmarkedShadowPosition[]> {
+  if (receiptCache && receiptCache.expiresAt > Date.now()) return receiptCache.positions;
+  if (receiptRequest) return receiptRequest;
+  const request = readShadowReceiptBookUncached();
+  receiptRequest = request;
+  try {
+    const positions = await request;
+    receiptCache = { positions, expiresAt: Date.now() + RECEIPT_CACHE_MS };
+    return positions;
+  } finally {
+    if (receiptRequest === request) receiptRequest = null;
+  }
+}
+
+async function readShadowReceiptBookUncached(): Promise<UnmarkedShadowPosition[]> {
   const config = contracts();
   const provider = new ethers.JsonRpcProvider(rpcUrl());
   const book = new ethers.Contract(config.optionBook, BOOK_ABI, provider);
@@ -215,10 +249,10 @@ export async function getShadowPositions(buyer: string): Promise<ShadowPosition[
     for (const log of logs) txHashes.set(Number(BigInt(log.topics[1])), log.transactionHash);
   }
   const positions = entries.flatMap((entry, id) => {
-    if (entry.buyer.toLowerCase() !== buyer.toLowerCase()) return [];
     const asset = ethers.decodeBytes32String(entry.asset) as OptionsAsset;
     return [{
       id,
+      buyer: ethers.getAddress(entry.buyer),
       asset,
       isCall: entry.isCall,
       strike: Number(entry.strikeE8) / 1e8,
@@ -226,13 +260,9 @@ export async function getShadowPositions(buyer: string): Promise<ShadowPosition[
       contracts: Number(entry.contractsE6) / 1e6,
       premiumUsd: Number(entry.premiumUsdc) / 1e6,
       txHash: txHashes.get(id) ?? null,
-      mark: null,
     }];
   });
-  if (!positions.length) return positions;
-
-  const snapshot = await getMarketSnapshot().catch(() => null);
-  return snapshot ? positions.map((position) => ({ ...position, mark: markPosition(position, snapshot) })) : positions;
+  return positions;
 }
 
 function markPosition(position: ShadowPosition, snapshot: MarketSnapshot): ShadowPosition["mark"] {

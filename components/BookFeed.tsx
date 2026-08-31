@@ -15,6 +15,8 @@ import {
 } from "@/lib/format";
 import { ShadowPositions } from "./ShadowPositions";
 import { ThetanutsPositions } from "./ThetanutsPositions";
+import { EXECUTION_NETWORK } from "@/lib/explorer";
+import { useExecutionNetwork } from "./ExecutionNetworkProvider";
 
 export function BookCard({
   rows,
@@ -31,12 +33,13 @@ export function BookCard({
   /** Live spot price — informational context for the AI risk read. */
   spot: number;
 }) {
-  const [tab, setTab] = useState<"book" | "expiries" | "thetanuts" | "shadow">("book");
+  const [tab, setTab] = useState<"book" | "expiries" | "positions">("book");
   const [positionsRefresh, setPositionsRefresh] = useState(0);
+  const { network } = useExecutionNetwork();
   useEffect(() => {
     const showPosition = () => {
       setPositionsRefresh((value) => value + 1);
-      setTab("thetanuts");
+      setTab("positions");
     };
     window.addEventListener("thetanuts-position-changed", showPosition);
     return () => window.removeEventListener("thetanuts-position-changed", showPosition);
@@ -52,8 +55,7 @@ export function BookCard({
             [
               ["book", bookLabel],
               ["expiries", "Expiries"],
-              ["thetanuts", "My Thetanuts positions"],
-              ["shadow", "My shadow positions"],
+              ["positions", "My positions"],
             ] as const
           ).map(([key, label]) => (
             <button
@@ -70,11 +72,11 @@ export function BookCard({
         </div>
         <span className="flex items-center gap-1.5 text-[11px] text-muted">
           {live && <span className="live-dot inline-block size-1.5 rounded-full bg-calm" />}
-          {tab === "book" ? `${filtered.length} orders` : tab === "expiries" ? `${snap.expiries.length} dates` : tab === "thetanuts" ? "Base mainnet" : "Base Sepolia"}
+          {tab === "book" ? `${filtered.length} orders` : tab === "expiries" ? `${snap.expiries.length} dates` : EXECUTION_NETWORK[network].label}
         </span>
       </div>
 
-      {tab === "book" ? <BookTable rows={filtered} asset={asset} spot={spot} /> : tab === "expiries" ? <Expiries snap={snap} /> : tab === "thetanuts" ? <ThetanutsPositions asset={asset} refreshKey={positionsRefresh} /> : <ShadowPositions asset={asset} />}
+      {tab === "book" ? <BookTable rows={filtered} asset={asset} spot={spot} /> : tab === "expiries" ? <Expiries snap={snap} /> : network === "mainnet" ? <ThetanutsPositions asset={asset} refreshKey={positionsRefresh} /> : <ShadowPositions asset={asset} />}
     </section>
   );
 }

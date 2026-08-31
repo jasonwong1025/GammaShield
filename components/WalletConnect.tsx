@@ -2,9 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useAccount, useConnect, useConnectors, useDisconnect, useSwitchChain } from "wagmi";
-import { base } from "wagmi/chains";
-
-const EXPLORER_URL = process.env.NEXT_PUBLIC_BASE_EXPLORER_URL ?? "https://basescan.org";
+import { base, baseSepolia } from "wagmi/chains";
+import { executionNetworkForChainId } from "@/lib/explorer";
+import { ExplorerLink } from "./ExplorerLink";
+import { useExecutionNetwork } from "./ExecutionNetworkProvider";
+import { chainLabel, ensureWalletChain, walletActionError } from "@/lib/walletChain";
 
 function shortAddress(address: string) {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
@@ -20,13 +22,18 @@ function walletIcon(name?: string) {
 export function WalletConnect() {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [chainMessage, setChainMessage] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
-  const { address, connector, isConnected } = useAccount();
+  const { address, chainId, connector, isConnected } = useAccount();
+  const { network } = useExecutionNetwork();
   const connectors = useConnectors();
   const { connectAsync, isPending } = useConnect();
   const { disconnect } = useDisconnect();
-  const { switchChainAsync } = useSwitchChain();
+  const { switchChainAsync, isPending: isSwitching } = useSwitchChain();
   const connectedIcon = walletIcon(connector?.name);
+  const targetChainId = network === "mainnet" ? base.id : baseSepolia.id;
+  const targetChainLabel = chainLabel(targetChainId);
+  const walletOnTargetChain = chainId === targetChainId;
 
   useEffect(() => {
     if (!open) return;
@@ -47,14 +54,26 @@ export function WalletConnect() {
   const connect = async (nextConnector: (typeof connectors)[number]) => {
     try {
       await connectAsync({ connector: nextConnector });
+      let chainReady = true;
       try {
-        await switchChainAsync({ chainId: base.id });
-      } catch {
-        // A wallet can remain connected while the read-only dashboard is open.
+        await ensureWalletChain(targetChainId, nextConnector, switchChainAsync);
+        setChainMessage(null);
+      } catch (error) {
+        chainReady = false;
+        setChainMessage(walletActionError(error, `Switch your wallet to ${targetChainLabel} before submitting transactions.`));
       }
-      setOpen(false);
-    } catch {
-      // Wallet rejection is intentionally silent.
+      if (chainReady) setOpen(false);
+    } catch (error) {
+      setChainMessage(`Wallet connection was not completed: ${walletActionError(error, "retry from this menu.")}`);
+    }
+  };
+
+  const switchWalletChain = async () => {
+    try {
+      await ensureWalletChain(targetChainId, connector, switchChainAsync);
+      setChainMessage(null);
+    } catch (error) {
+      setChainMessage(walletActionError(error, `Switch your wallet to ${targetChainLabel} before submitting transactions.`));
     }
   };
 
@@ -98,12 +117,13 @@ export function WalletConnect() {
           {isConnected && address ? (
             <div className="py-1.5">
               <div className="px-4 py-2 text-[11px] text-muted border-b border-edge/60">
-                {connector?.name ?? "Wallet"} · Base
+                {connector?.name ?? "Wallet"} · {walletOnTargetChain ? targetChainLabel : chainLabel(chainId)}
               </div>
+              {!walletOnTargetChain && <div className="border-b border-edge/60 px-4 py-3"><p className="text-[11px] text-crit">Transactions require {targetChainLabel}.</p><button type="button" onClick={() => void switchWalletChain()} disabled={isSwitching} className="mt-2 h-8 rounded-lg bg-blue px-3 text-[11px] font-semibold text-white disabled:opacity-60">{isSwitching ? "Switching…" : `Switch to ${targetChainLabel}`}</button>{chainMessage && <p className="mt-2 text-[11px] text-crit">{chainMessage}</p>}</div>}
               <MenuItem onClick={copyAddress}>{copied ? "Copied ✓" : "Copy address"}</MenuItem>
-              <MenuItem onClick={() => window.open(`${EXPLORER_URL}/address/${address}`, "_blank", "noopener")}>
-                View on BaseScan
-              </MenuItem>
+              <ExplorerLink network={executionNetworkForChainId(chainId) ?? network} resource="address" value={address} className="block px-4 py-2.5 text-[13px] text-fg hover:bg-panel2 transition">
+                View on explorer
+              </ExplorerLink>
               <MenuItem onClick={() => { disconnect(); setOpen(false); }} danger>
                 Disconnect
               </MenuItem>
@@ -127,6 +147,7 @@ export function WalletConnect() {
                 </button>
               ))}
               {!connectors.length && <p className="px-4 py-3 text-[12px] text-muted">Install or open an injected wallet such as Phantom.</p>}
+              {chainMessage && <p className="border-t border-edge/60 px-4 py-3 text-[11px] text-crit">{chainMessage}</p>}
             </div>
           )}
         </div>

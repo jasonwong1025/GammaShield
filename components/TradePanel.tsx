@@ -24,6 +24,9 @@ import type { ShadowQuote } from "@/lib/shadow";
 import { wagmiConfig } from "@/lib/wagmi";
 import { erc20Abi, useReadErc20BalanceOf } from "@/lib/generated/contracts";
 import { fmtContracts, fmtExpiryDate, fmtIv, fmtStrike, fmtUsd, riskColor } from "@/lib/format";
+import { ExplorerLink } from "./ExplorerLink";
+import { useExecutionNetwork } from "./ExecutionNetworkProvider";
+import { ensureWalletChain } from "@/lib/walletChain";
 
 const QUOTE_DEBOUNCE_MS = 250;
 const QUOTE_REFRESH_MS = 15_000;
@@ -141,12 +144,13 @@ function periodLabel(p: TradePeriod) {
 }
 
 export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: boolean; hedgeIntent: HedgeIntent | null }) {
-  const { address: walletAddress, chainId } = useAccount();
+  const { network } = useExecutionNetwork();
+  const { address: walletAddress, connector } = useAccount();
   const { switchChainAsync } = useSwitchChain();
   const { sendTransactionAsync } = useSendTransaction();
   const initialHedge = hedgeIntent?.asset === asset ? hedgeIntent : null;
   const [side, setSide] = useState<TradeSide>(initialHedge ? "put" : "call");
-  const [executionMode, setExecutionMode] = useState<"mainnet" | "shadow">("mainnet");
+  const executionMode = network === "mainnet" ? "mainnet" : "shadow";
   const [amountStr, setAmountStr] = useState(initialHedge?.contracts ?? "1");
   const [period, setPeriod] = useState<TradePeriod>(initialHedge?.period ?? 7);
   const [quote, setQuote] = useState<TradeQuote | null>(null);
@@ -210,7 +214,7 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
 
   const ensureChain = async (targetChainId: GammaShieldChainId): Promise<Address> => {
     if (!walletAddress) throw new Error("Connect a wallet from the top bar first.");
-    if (chainId !== targetChainId) await switchChainAsync({ chainId: targetChainId });
+    await ensureWalletChain(targetChainId, connector, switchChainAsync);
     return walletAddress;
   };
 
@@ -608,18 +612,6 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
         ))}
       </div>
 
-      <div>
-        <div className="mb-1 text-[11px] text-muted">Execution network</div>
-        <div className="grid grid-cols-2 gap-1 rounded-lg bg-panel2 p-1">
-          <button type="button" onClick={() => setExecutionMode("mainnet")} aria-pressed={executionMode === "mainnet"} className={`h-8 rounded-md text-[12px] font-semibold ${executionMode === "mainnet" ? "bg-panel text-fg shadow-sm" : "text-muted"}`}>
-            Base mainnet
-          </button>
-          <button type="button" onClick={() => setExecutionMode("shadow")} aria-pressed={executionMode === "shadow"} className={`h-8 rounded-md text-[12px] font-semibold ${executionMode === "shadow" ? "bg-panel text-blue shadow-sm" : "text-muted"}`}>
-            Sepolia shadow
-          </button>
-        </div>
-      </div>
-
       {/* Amount */}
       <div>
         <div className="flex items-center justify-between text-[11px] text-muted mb-1">
@@ -915,14 +907,7 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
       ) : rfq.step === "done" ? (
         <p className="text-[12px] text-calm">
           Option created via RFQ auction.{" "}
-          <a
-            href={`${process.env.NEXT_PUBLIC_BASE_EXPLORER_URL ?? "https://basescan.org"}/tx/${rfq.hash}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline"
-          >
-            View transaction
-          </a>{" "}
+          <ExplorerLink network="mainnet" resource="tx" value={rfq.hash} className="underline">View transaction</ExplorerLink>{" "}
           <button className="text-faint underline" onClick={() => setRfq({ step: "idle" })}>
             trade again
           </button>
@@ -996,14 +981,7 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
       {tx.step === "done" && (
         <p className="text-[12px] text-calm">
           Filled on Base.{" "}
-          <a
-            href={`${process.env.NEXT_PUBLIC_BASE_EXPLORER_URL ?? "https://basescan.org"}/tx/${tx.hash}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline"
-          >
-            View transaction
-          </a>
+          <ExplorerLink network="mainnet" resource="tx" value={tx.hash} className="underline">View transaction</ExplorerLink>
         </p>
       )}
       {tx.step === "ready" && (
@@ -1014,7 +992,7 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
       {tx.step === "error" && <p className="text-[12px] text-crit">{tx.message}</p>}
       {shadowTx.step === "done" && (
         <p className="text-[12px] text-calm">
-          Shadow fill confirmed on Base Sepolia. {process.env.NEXT_PUBLIC_BASE_SEPOLIA_EXPLORER_URL && <a href={`${process.env.NEXT_PUBLIC_BASE_SEPOLIA_EXPLORER_URL}/tx/${shadowTx.hash}`} target="_blank" rel="noopener noreferrer" className="underline">View transaction</a>}
+          Shadow fill confirmed on Base Sepolia. <ExplorerLink network="sepolia" resource="tx" value={shadowTx.hash} className="underline">View transaction</ExplorerLink>
         </p>
       )}
       {shadowTx.step === "ready" && (

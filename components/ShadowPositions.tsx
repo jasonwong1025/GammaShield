@@ -1,14 +1,36 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useAccount } from "wagmi";
+import { useAccount, useBytecode, useReadContract } from "wagmi";
+import { baseSepolia } from "wagmi/chains";
+import { isAddress, zeroHash, type Address } from "viem";
 import type { Asset } from "@/lib/assets";
 import type { ShadowPosition } from "@/lib/shadow";
+import { mandateAccountFactoryAbi } from "@/lib/generated/contracts";
 import { fmtContracts, fmtCountdown, fmtExpiryDate, fmtStrike, fmtUsd } from "@/lib/format";
+import { ExplorerLink } from "./ExplorerLink";
+
+const factoryFromEnv = process.env.NEXT_PUBLIC_BASE_SEPOLIA_MANDATE_FACTORY_ADDRESS;
+const FACTORY_ADDRESS: Address | undefined = factoryFromEnv && isAddress(factoryFromEnv) ? factoryFromEnv : undefined;
+type DisplayPosition = ShadowPosition & { custody: "wallet" | "policy" };
 
 export function ShadowPositions({ asset }: { asset: Asset }) {
   const { address } = useAccount();
-  const [positions, setPositions] = useState<ShadowPosition[]>([]);
+  const { data: policyAccount } = useReadContract({
+    address: FACTORY_ADDRESS,
+    abi: mandateAccountFactoryAbi,
+    functionName: "getAddress",
+    args: address ? [address, zeroHash] : undefined,
+    chainId: baseSepolia.id,
+    query: { enabled: Boolean(address && FACTORY_ADDRESS) },
+  });
+  const { data: policyBytecode } = useBytecode({
+    address: policyAccount,
+    chainId: baseSepolia.id,
+    query: { enabled: Boolean(policyAccount) },
+  });
+  const deployedPolicy = policyBytecode != null && policyBytecode !== "0x";
+  const [positions, setPositions] = useState<DisplayPosition[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -19,14 +41,21 @@ export function ShadowPositions({ asset }: { asset: Asset }) {
     return () => clearInterval(id);
   }, []);
 
-  const load = useCallback(async (buyer: string) => {
+  const load = useCallback(async (wallet: string, policy?: string) => {
     setRefreshing(true);
     setError(null);
     try {
-      const res = await fetch(`/api/shadow/positions?buyer=${buyer}`, { cache: "no-store" });
+      const buyers = [wallet];
+      if (policy && policy.toLowerCase() !== wallet.toLowerCase()) buyers.push(policy);
+      const query = new URLSearchParams();
+      buyers.forEach((buyer) => query.append("buyer", buyer));
+      const res = await fetch(`/api/shadow/positions?${query}`, { cache: "no-store" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? `positions ${res.status}`);
-      setPositions(data.positions);
+      setPositions((data.positions as ShadowPosition[]).map((position) => ({
+        ...position,
+        custody: policy && position.buyer.toLowerCase() === policy.toLowerCase() ? "policy" : "wallet",
+      })));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load shadow positions");
     } finally {
@@ -37,27 +66,28 @@ export function ShadowPositions({ asset }: { asset: Asset }) {
 
   useEffect(() => {
     if (!address) return;
-    const initial = setTimeout(() => void load(address), 0);
-    const id = setInterval(() => void load(address), 10_000);
+    const policy = deployedPolicy ? policyAccount : undefined;
+    const initial = setTimeout(() => void load(address, policy), 0);
+    const id = setInterval(() => void load(address, policy), 10_000);
     return () => {
       clearTimeout(initial);
       clearInterval(id);
     };
-  }, [address, load]);
+  }, [address, deployedPolicy, load, policyAccount]);
 
   const filtered = positions.filter((position) => position.asset === asset);
   if (!address) {
     return <Empty label="Connect wallet from the top bar to view Base Sepolia shadow positions." />;
   }
   if (!loaded) return <p className="px-5 py-10 text-center text-[12px] text-faint">Reading shadow positions…</p>;
-  if (error) return <Empty action={() => void load(address)} label={error} />;
-  if (!filtered.length) return <Empty action={() => void load(address)} label={`No ${asset} shadow positions for this wallet.`} />;
+  if (error) return <Empty action={() => void load(address, deployedPolicy ? policyAccount : undefined)} label={error} />;
+  if (!filtered.length) return <Empty action={() => void load(address, deployedPolicy ? policyAccount : undefined)} label={`No ${asset} shadow positions for ${deployedPolicy ? "this wallet or policy account" : "this wallet"}.`} />;
 
   return (
     <div className="feed-scroll overflow-auto grow min-h-0 max-h-[430px]">
       <div className="flex items-center justify-end gap-2 px-4 pt-2 text-[10px] text-faint">
-        <span>{refreshing ? "Refreshing…" : "Auto-refreshes every 10s"}</span>
-        <button onClick={() => void load(address)} disabled={refreshing} aria-label="Refresh shadow positions" title="Refresh shadow positions" className="text-blue hover:text-fg disabled:opacity-50">↻</button>
+        <span>{refreshing ? "Refreshing…" : deployedPolicy ? "Wallet + policy account · refreshes every 10s" : "Auto-refreshes every 10s"}</span>
+        <button onClick={() => void load(address, deployedPolicy ? policyAccount : undefined)} disabled={refreshing} aria-label="Refresh shadow positions" title="Refresh shadow positions" className="text-blue hover:text-fg disabled:opacity-50">↻</button>
       </div>
       <table className="w-full min-w-[560px] text-[12px]">
         <thead className="sticky top-0 bg-panel z-10 text-[10px] text-faint">
@@ -74,7 +104,7 @@ export function ShadowPositions({ asset }: { asset: Asset }) {
         <tbody className="font-mono text-[11px]">
           {filtered.map((position) => (
             <tr key={position.id} className="border-t border-edge/50">
-              <td className="px-4 py-2 font-sans"><span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${position.isCall ? "text-calm bg-calm/10" : "text-crit bg-crit/10"}`}>{position.isCall ? "CALL" : "PUT"}</span></td>
+              <td className="px-4 py-2 font-sans"><span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${position.isCall ? "text-calm bg-calm/10" : "text-crit bg-crit/10"}`}>{position.isCall ? "CALL" : "PUT"}</span>{position.custody === "policy" && <span className="ml-1 text-[9px] font-semibold text-blue">AGENT</span>}</td>
               <td className="px-2 py-2 text-right num text-fg">{fmtStrike(position.strike)}</td>
               <td className="px-2 py-2 text-right text-muted whitespace-nowrap">{fmtExpiryDate(position.expiryTs)} <span className="text-faint">· {fmtCountdown(position.expiryTs, now)}</span></td>
               <td className="px-2 py-2 text-right num text-fg">{fmtUsd(position.premiumUsd, false, 6)} USDC</td>
@@ -82,7 +112,7 @@ export function ShadowPositions({ asset }: { asset: Asset }) {
                 {position.mark ? <><span style={{ color: position.mark.pnlUsd >= 0 ? "var(--calm)" : "var(--crit)" }}>{position.mark.pnlUsd >= 0 ? "+" : "−"}{fmtUsd(Math.abs(position.mark.pnlUsd), false, 6)}</span><span className="block text-[10px] text-faint">{position.mark.source}</span></> : <span className="text-faint">No live mark</span>}
               </td>
               <td className="px-2 py-2 text-right num text-fg">{fmtContracts(position.contracts)}</td>
-              <td className="px-4 py-2 text-right">{position.txHash && process.env.NEXT_PUBLIC_BASE_SEPOLIA_EXPLORER_URL ? <a href={`${process.env.NEXT_PUBLIC_BASE_SEPOLIA_EXPLORER_URL}/tx/${position.txHash}`} target="_blank" rel="noopener noreferrer" className="text-blue hover:underline">View receipt</a> : <span className="text-muted">#{position.id}</span>}</td>
+              <td className="px-4 py-2 text-right">{position.txHash ? <ExplorerLink network="sepolia" resource="tx" value={position.txHash} className="text-blue hover:underline">View receipt</ExplorerLink> : <span className="text-muted">#{position.id}</span>}</td>
             </tr>
           ))}
         </tbody>
