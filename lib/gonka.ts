@@ -44,8 +44,8 @@ export type GonkaResponse = {
   success: boolean;
   data: FactCheckResult;
   source: "gonka" | "deterministic";
-  gonkaRequestId: string;
-  modelUsed: string;
+  gonkaRequestId: string | null;
+  modelUsed: string | null;
   timestamp: number;
 };
 
@@ -90,8 +90,7 @@ function extractJson<T>(raw: string): T {
 export async function analyzeMarketRumor(params: FactCheckRequest): Promise<GonkaResponse> {
   const apiKey = gonkaApiKey;
   if (!apiKey || apiKey === "sk-your-gonkarouter-api-key-here") {
-    // Provide a deterministic mock response if API key is not yet configured by user
-    return generateFallbackAnalysis(params, "mock-demo-req-id", params.optimalContract);
+    return generateFallbackAnalysis(params);
   }
 
   const baseUrl = gonkaBaseUrl;
@@ -171,13 +170,13 @@ Headline to Fact-Check: "${params.headline}"`;
       success: true,
       data: parsedData,
       source: "gonka",
-      gonkaRequestId: json.id || `req_${Date.now().toString(36)}`,
+      gonkaRequestId: typeof json.id === "string" ? json.id : null,
       modelUsed: selectedModel,
       timestamp: Date.now(),
     };
   } catch (err) {
     console.error("[GonkaRouter] Inference error:", err);
-    return generateFallbackAnalysis(params, `error-fallback-${Date.now().toString(36)}`, params.optimalContract, err instanceof Error ? err.message : "Inference error");
+    return generateFallbackAnalysis(params);
   }
 }
 
@@ -186,46 +185,34 @@ Headline to Fact-Check: "${params.headline}"`;
  */
 function generateFallbackAnalysis(
   params: FactCheckRequest,
-  requestId: string,
-  optimalContract?: PutCandidate | null,
-  errorNote?: string,
 ): GonkaResponse {
   const isHighRisk = params.gexScore > 70;
-  const isPutTrigger = params.headline.toLowerCase().includes("dump") ||
-                       params.headline.toLowerCase().includes("crash") ||
-                       params.headline.toLowerCase().includes("hack") ||
-                       params.headline.toLowerCase().includes("sec") ||
-                       params.headline.toLowerCase().includes("whale") ||
-                       isHighRisk;
 
-  const defaultStrike = optimalContract?.strike || params.flipStrike || Math.round(params.spotPrice * 0.95);
-
-  const mockResult: FactCheckResult = {
+  const result: FactCheckResult = {
     truthScore: isHighRisk ? 82 : 45,
     urgency: isHighRisk ? "HIGH" : "MEDIUM",
     verdict: isHighRisk
       ? `High market fragility (${params.gexScore}/100). Rumor can trigger cascading dealer-hedging feedback.`
       : `Moderate volatility risk. Current dealer gamma provides partial dampening.`,
-    reasoning: `Analysis executed via GonkaRouter multi-model quant layer. The headline "${params.headline}" was evaluated against ${params.asset} spot ($${params.spotPrice}) and current market structure. ${
+    reasoning: `Deterministic market-structure calculation only; no Gonka model response was used. The headline "${params.headline}" was compared with ${params.asset} spot ($${params.spotPrice}) and current market structure. ${
       params.regime === "amplifying"
         ? "Dealers are currently net short gamma; any spot decline forces programmatic selling, exacerbating downside momentum."
         : "Dealer positioning remains in dampening territory, but localized tail risk exists around out-of-the-money put strikes."
-    }${errorNote ? ` (Note: ${errorNote})` : ""}`,
+    }`,
     marketRegimeAssessment: params.regime === "amplifying"
       ? "Amplifying Regime: Negative GEX accelerates price slippage."
       : "Dampening Regime: Positive GEX buffers spot volatility.",
-    shouldHedge: isPutTrigger,
-    strikeSuggestion: defaultStrike,
-    actionRationale: `Protective Put at $${defaultStrike.toLocaleString()} locks in floor liquidity before dealer flip levels are breached.`,
-    optimalContract: optimalContract || undefined,
+    shouldHedge: false,
+    strikeSuggestion: 0,
+    actionRationale: "This fallback cannot recommend or select a contract. Review a fresh listed Thetanuts order manually before making any decision.",
   };
 
   return {
     success: true,
-    data: mockResult,
+    data: result,
     source: "deterministic",
-    gonkaRequestId: requestId,
-    modelUsed: params.model || GONKA_MODELS.PRIMARY,
+    gonkaRequestId: null,
+    modelUsed: null,
     timestamp: Date.now(),
   };
 }
@@ -292,8 +279,8 @@ export type WhatIfResult = {
   conversationalAnswer: string;
   strategicAdvice: string;
   source: "gonka" | "deterministic";
-  gonkaRequestId: string;
-  modelUsed: string;
+  gonkaRequestId: string | null;
+  modelUsed: string | null;
   optimalContract?: PutCandidate;
 };
 
@@ -389,7 +376,7 @@ JSON schema:
           source: "gonka",
           conversationalAnswer: parsed.conversationalAnswer || `A $${parsedSizeM}M ${parsedAction.toLowerCase()} in ${params.asset} will trigger an estimated ${totalMovePct.toFixed(2)}% total price move.`,
           strategicAdvice: parsed.strategicAdvice || (amplification > 1.15 ? `Consider buying a protective Put near $${params.optimalContract?.strike || "the Gamma Flip"} to insulate against dealer hedging cascade.` : "Direct market execution has low secondary feedback."),
-          gonkaRequestId: json.id || `req_whatif_${Date.now().toString(36)}`,
+          gonkaRequestId: typeof json.id === "string" ? json.id : null,
           modelUsed: selectedModel,
           optimalContract: params.optimalContract || undefined,
         };
@@ -410,10 +397,9 @@ JSON schema:
     source: "deterministic",
     conversationalAnswer: `A $${parsedSizeM}M ${parsedAction.toLowerCase()} order in ${params.asset} would directly move the market by ${initialMovePct.toFixed(2)}%. Because dealers are in ${params.regime} mode, their delta-hedging will ${sameDirection ? "chase the move with an extra $" + Math.abs(Math.round(hedgeFlowUsd)).toLocaleString() : "absorb the move"}, resulting in an estimated net ${totalMovePct.toFixed(2)}% price change (${amplification.toFixed(2)}x amplification).`,
     strategicAdvice: amplification > 1.1
-      ? `Due to elevated dealer fragility (Risk Score: ${params.score}/100), execute in smaller algorithmic slices or hedge downside tail risk.`
+      ? `Due to elevated dealer fragility (Risk Score: ${params.score}/100), use smaller execution slices and review current live orders manually before deciding on protection.`
       : `Market depth is currently stable. Direct market execution has low secondary feedback.`,
-    gonkaRequestId: `whatif_local_${Date.now().toString(36)}`,
-    modelUsed: selectedModel,
-    optimalContract: params.optimalContract || undefined,
+    gonkaRequestId: null,
+    modelUsed: null,
   };
 }

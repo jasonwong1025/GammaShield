@@ -21,6 +21,7 @@ export function FactChecker({ snap, onExecuteHedge }: Props) {
   const [model, setModel] = useState<GonkaModelId>(GONKA_MODELS.PRIMARY);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<FactCheckResult | null>(null);
+  const [source, setSource] = useState<"gonka" | "deterministic" | null>(null);
   const [gonkaRequestId, setGonkaRequestId] = useState<string | null>(null);
   const [modelUsed, setModelUsed] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -53,6 +54,7 @@ export function FactChecker({ snap, onExecuteHedge }: Props) {
 
       const json = await res.json();
       setResult(json.data);
+      setSource(json.source);
       setGonkaRequestId(json.gonkaRequestId);
       setModelUsed(json.modelUsed);
     } catch (e) {
@@ -98,7 +100,7 @@ export function FactChecker({ snap, onExecuteHedge }: Props) {
       </div>
 
       <p className="text-[12px] text-muted leading-relaxed">
-        Cross-verify breaking market rumors and viral panic headlines against deterministic dealer gamma exposure (GEX) mechanics to filter FUD and automate protective hedging.
+        Cross-verify breaking market rumors and viral panic headlines against deterministic dealer gamma exposure (GEX) mechanics to inform a manual protective decision.
       </p>
 
       {/* Preset Chips */}
@@ -206,8 +208,9 @@ export function FactChecker({ snap, onExecuteHedge }: Props) {
               </div>
             </div>
 
-            {/* Gonka Compliance Badge */}
-            {gonkaRequestId && (
+            {source === "deterministic" ? (
+              <span className="rounded-md border border-edge bg-panel px-2.5 py-1 text-[11px] font-mono text-faint">Deterministic fallback · no Gonka response</span>
+            ) : gonkaRequestId ? (
               <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-edge bg-panel text-[11px] font-mono text-muted">
                 <span className="text-blue font-semibold">Gonka ID:</span>
                 <span className="truncate max-w-[120px] sm:max-w-[180px]">{gonkaRequestId}</span>
@@ -220,12 +223,12 @@ export function FactChecker({ snap, onExecuteHedge }: Props) {
                   {copied ? "✓ Copied" : "Copy"}
                 </button>
               </div>
-            )}
+            ) : null}
           </div>
 
           {/* Reasoning Trace */}
           <div className="text-[12.5px] leading-relaxed text-muted flex flex-col gap-2">
-            <div className="font-medium text-fg text-[12px]">Quantitative AI Reasoning:</div>
+            <div className="font-medium text-fg text-[12px]">{source === "gonka" ? "Quantitative AI reasoning:" : "Deterministic market-structure calculation:"}</div>
             <p className="whitespace-pre-line">{result.reasoning}</p>
             {result.marketRegimeAssessment && (
               <div className="p-2.5 rounded-lg bg-panel border border-edge text-[12px] text-faint">
@@ -250,39 +253,41 @@ export function FactChecker({ snap, onExecuteHedge }: Props) {
                   style={{ background: result.shouldHedge ? "var(--crit)" : "var(--calm)" }}
                 />
                 <span className="text-[13px] font-semibold text-fg">
-                  {result.shouldHedge ? "Autonomous Downside Hedge Required" : "No Hedging Required"}
+                  {source === "deterministic" ? "No executable recommendation" : result.shouldHedge ? "Protective PUT review suggested" : "No hedging suggested"}
                 </span>
-                {result.strikeSuggestion > 0 && (
+                {source === "gonka" && result.optimalContract && (
                   <span className="text-[11.5px] font-mono px-2 py-0.5 rounded bg-panel border border-edge font-medium text-blue">
-                    Suggested Put Strike: ${result.strikeSuggestion.toLocaleString()}
+                    Listed PUT strike: ${result.optimalContract.strike.toLocaleString()}
                   </span>
                 )}
               </div>
               <p className="text-[11.5px] text-muted">{result.actionRationale}</p>
             </div>
 
-            {result.shouldHedge && onExecuteHedge && (
+            {source === "gonka" && result.shouldHedge && result.optimalContract && onExecuteHedge && (
               <button
                 type="button"
-                onClick={() => onExecuteHedge(result.strikeSuggestion)}
+                onClick={() => onExecuteHedge(result.optimalContract!.strike)}
                 className="shrink-0 px-3.5 h-8 rounded-lg bg-crit text-white text-[12px] font-medium hover:brightness-110 transition shadow-sm"
               >
-                Execute Live Hedge (~1 USDC)
+                Review live listed PUT
               </button>
             )}
           </div>
 
           {/* Model info footer */}
           <div className="flex items-center justify-between text-[10.5px] text-faint pt-1">
-            <span>Verified via {modelUsed || model} on GonkaRouter Gateway</span>
-            <a
-              href="https://gonkarouter.io"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue hover:underline"
-            >
-              gonkarouter.io ↗
-            </a>
+            <span>{source === "gonka" ? `Verified via ${modelUsed || model} on GonkaRouter Gateway` : "Deterministic output · no model call"}</span>
+            {source === "gonka" && (
+              <a
+                href="https://gonkarouter.io"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue hover:underline"
+              >
+                gonkarouter.io ↗
+              </a>
+            )}
           </div>
         </div>
       )}
