@@ -7,6 +7,7 @@ let stopping = false;
 process.on("SIGINT", () => { stopping = true; });
 process.on("SIGTERM", () => { stopping = true; });
 
+console.log(`${config.label} agent worker started (${config.dryRun ? "dry run" : "broadcast enabled"}); polling every ${config.intervalMs / 1_000}s.`);
 await run();
 
 async function run() {
@@ -59,6 +60,7 @@ async function tick() {
     console.log(`${result.account} ${result.outcome}: ${result.userOpHash}`);
   }
   if (changed) await writeState(state);
+  if (changed) console.log(`${config.label} agent scan: ${state.accounts.length} policy account${state.accounts.length === 1 ? "" : "s"}; indexed through block ${state.scannedToBlock}.`);
 }
 
 async function request(path, body) {
@@ -117,7 +119,7 @@ function runtimeConfig() {
   if (!url || !secret || !Number.isInteger(seconds) || seconds < 10 || seconds > maximumSeconds) throw new Error(`set ${prefix}_URL, ${prefix}_CRON_SECRET, and a 10-${maximumSeconds} second ${prefix}_INTERVAL_SECONDS`);
   const parsed = new URL(url);
   if (!/^https?:$/.test(parsed.protocol) || parsed.username || parsed.password) throw new Error(`${prefix}_URL must be an http(s) origin without credentials`);
-  return { url: parsed, secret, endpoint: thetanuts ? "/api/thetanuts/agent" : "/api/shadow/agent", intervalMs: seconds * 1_000, statePath: resolve(process.cwd(), process.env[`${prefix}_STATE_PATH`] ?? (thetanuts ? ".base-agent/state.json" : ".shadow-agent/state.json")) };
+  return { url: parsed, secret, endpoint: thetanuts ? "/api/thetanuts/agent" : "/api/shadow/agent", label: thetanuts ? "Thetanuts" : "Shadow", dryRun: thetanuts && process.env.BASE_AGENT_DRY_RUN !== "false", intervalMs: seconds * 1_000, statePath: resolve(process.cwd(), process.env[`${prefix}_STATE_PATH`] ?? (thetanuts ? ".base-agent/state.json" : ".shadow-agent/state.json")) };
 }
 
 function sleep(ms) {
