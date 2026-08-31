@@ -44,15 +44,17 @@ export function ShadowPositions({ asset }: { asset: Asset }) {
     setRefreshing(true);
     setError(null);
     try {
-      const buyers: { address: string; custody: DisplayPosition["custody"] }[] = [{ address: wallet, custody: "wallet" }];
-      if (policy && policy.toLowerCase() !== wallet.toLowerCase()) buyers.push({ address: policy, custody: "policy" });
-      const results = await Promise.all(buyers.map(async (buyer) => {
-        const res = await fetch(`/api/shadow/positions?${new URLSearchParams({ buyer: buyer.address })}`, { cache: "no-store" });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error ?? `positions ${res.status}`);
-        return (data.positions as ShadowPosition[]).map((position) => ({ ...position, custody: buyer.custody }));
-      }));
-      setPositions(results.flat());
+      const buyers = [wallet];
+      if (policy && policy.toLowerCase() !== wallet.toLowerCase()) buyers.push(policy);
+      const query = new URLSearchParams();
+      buyers.forEach((buyer) => query.append("buyer", buyer));
+      const res = await fetch(`/api/shadow/positions?${query}`, { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? `positions ${res.status}`);
+      setPositions((data.positions as ShadowPosition[]).map((position) => ({
+        ...position,
+        custody: policy && position.buyer.toLowerCase() === policy.toLowerCase() ? "policy" : "wallet",
+      })));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load shadow positions");
     } finally {
