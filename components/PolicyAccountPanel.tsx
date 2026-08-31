@@ -102,7 +102,7 @@ export function PolicyAccountPanel() {
         </>
       )}
 
-      {(isSuccess || message) && <p className="rounded-lg border border-edge bg-panel2 p-3 text-[12px] text-muted">{isSuccess ? "Policy account deployed. It is unfunded and cannot execute until you register a mandate." : message}</p>}
+      {(isSuccess || message) && <p className="rounded-lg border border-edge bg-panel2 p-3 text-[12px] text-muted">{isSuccess ? <>Policy account deployed. It is unfunded and cannot execute until you register a mandate. {transactionHash && <ExplorerLink network={network} resource="tx" value={transactionHash} className="text-blue hover:underline">View deployment</ExplorerLink>}</> : message}</p>}
     </section>
   );
 }
@@ -114,7 +114,7 @@ function PolicyFundingPanel({ account, network, collateral, collateralLabel, cha
   const { writeContractAsync } = useWriteContract();
   const [ethAmount, setEthAmount] = useState("0.001");
   const [usdcAmount, setUsdcAmount] = useState("5");
-  const [status, setStatus] = useState<{ kind: "idle" | "pending" | "success" | "error"; message?: string }>({ kind: "idle" });
+  const [status, setStatus] = useState<{ kind: "idle" | "pending" | "success" | "error"; message?: string; hash?: Hex }>({ kind: "idle" });
   const { data: ethBalance, refetch: refetchEth } = useBalance({
     address: account,
     chainId: targetChainId,
@@ -152,7 +152,7 @@ function PolicyFundingPanel({ account, network, collateral, collateralLabel, cha
       const receipt = await waitForTransactionReceipt(wagmiConfig, { chainId: targetChainId, hash });
       if (receipt.status !== "success") throw new Error("The transfer reverted on-chain.");
       await Promise.all([refetchEth(), refetchUsdc()]);
-      setStatus({ kind: "success", message: `${asset} funding confirmed.` });
+      setStatus({ kind: "success", message: `${asset} funding confirmed.`, hash });
     } catch (error) {
       setStatus({ kind: "error", message: error instanceof Error && error.message.startsWith("The Base") ? error.message : "Funding was not completed. No funds moved." });
     }
@@ -175,7 +175,7 @@ function PolicyFundingPanel({ account, network, collateral, collateralLabel, cha
         <FundingField label={`${network === "mainnet" ? "Base" : "Base Sepolia"} ${collateralLabel}`} value={usdcAmount} onChange={setUsdcAmount} button="Fund USDC" disabled={busy || !collateral} onFund={() => void fund("USDC")} />
       </div>
       <p className="mt-2 text-[11px] text-faint">Each transfer has its own wallet confirmation. USDC is transferred directly—there is no approval or spending allowance.</p>
-      {status.kind !== "idle" && <p className={`mt-3 rounded-lg border p-3 text-[12px] ${status.kind === "error" ? "border-crit/30 bg-crit/10 text-crit" : status.kind === "success" ? "border-calm/30 bg-calm/10 text-calm" : "border-edge bg-panel2 text-muted"}`}>{status.message}</p>}
+      {status.kind !== "idle" && <p className={`mt-3 rounded-lg border p-3 text-[12px] ${status.kind === "error" ? "border-crit/30 bg-crit/10 text-crit" : status.kind === "success" ? "border-calm/30 bg-calm/10 text-calm" : "border-edge bg-panel2 text-muted"}`}>{status.message} {status.hash && <ExplorerLink network={network} resource="tx" value={status.hash} className="underline">View transaction</ExplorerLink>}</p>}
     </section>
   );
 }

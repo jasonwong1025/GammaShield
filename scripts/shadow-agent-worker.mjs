@@ -26,7 +26,7 @@ async function tick() {
   const state = await readState();
   let changed = false;
   for (const [account, pending] of Object.entries(state.pending)) {
-    const receipt = await request(`/api/shadow/agent?userOpHash=${encodeURIComponent(pending.userOpHash)}`);
+    const receipt = await request(`${config.endpoint}?userOpHash=${encodeURIComponent(pending.userOpHash)}`);
     if (receipt.receipt == null) continue;
     delete state.pending[account];
     state.recent.unshift({ account, userOpHash: pending.userOpHash, submittedAt: pending.submittedAt, checkedAt: new Date().toISOString(), status: receipt.receipt?.success === true ? "confirmed" : "reverted", transactionHash: receipt.receipt?.receipt?.transactionHash ?? null });
@@ -35,7 +35,7 @@ async function tick() {
   }
   if (changed) await writeState(state);
 
-  const response = await request("/api/shadow/agent", {
+  const response = await request(config.endpoint, {
     pendingAccounts: Object.keys(state.pending),
     knownAccounts: state.accounts,
     discoveryFromBlock: state.scannedToBlock == null ? undefined : state.scannedToBlock + 1,
@@ -104,13 +104,16 @@ function isResult(value) {
 }
 
 function runtimeConfig() {
-  const url = process.env.SHADOW_AGENT_URL;
-  const secret = process.env.SHADOW_AGENT_CRON_SECRET;
-  const seconds = Number(process.env.SHADOW_AGENT_INTERVAL_SECONDS ?? "15");
-  if (!url || !secret || !Number.isInteger(seconds) || seconds < 10 || seconds > 60) throw new Error("set SHADOW_AGENT_URL, SHADOW_AGENT_CRON_SECRET, and a 10-60 second SHADOW_AGENT_INTERVAL_SECONDS");
+  const thetanuts = process.env.POLICY_AGENT_MODE === "thetanuts";
+  const prefix = thetanuts ? "BASE_AGENT" : "SHADOW_AGENT";
+  const url = process.env[`${prefix}_URL`];
+  const secret = process.env[`${prefix}_CRON_SECRET`];
+  const seconds = Number(process.env[`${prefix}_INTERVAL_SECONDS`] ?? "15");
+  const maximumSeconds = thetanuts ? 15 : 60;
+  if (!url || !secret || !Number.isInteger(seconds) || seconds < 10 || seconds > maximumSeconds) throw new Error(`set ${prefix}_URL, ${prefix}_CRON_SECRET, and a 10-${maximumSeconds} second ${prefix}_INTERVAL_SECONDS`);
   const parsed = new URL(url);
-  if (!/^https?:$/.test(parsed.protocol) || parsed.username || parsed.password) throw new Error("SHADOW_AGENT_URL must be an http(s) origin without credentials");
-  return { url: parsed, secret, intervalMs: seconds * 1_000, statePath: resolve(process.cwd(), process.env.SHADOW_AGENT_STATE_PATH ?? ".shadow-agent/state.json") };
+  if (!/^https?:$/.test(parsed.protocol) || parsed.username || parsed.password) throw new Error(`${prefix}_URL must be an http(s) origin without credentials`);
+  return { url: parsed, secret, endpoint: thetanuts ? "/api/thetanuts/agent" : "/api/shadow/agent", intervalMs: seconds * 1_000, statePath: resolve(process.cwd(), process.env[`${prefix}_STATE_PATH`] ?? (thetanuts ? ".base-agent/state.json" : ".shadow-agent/state.json")) };
 }
 
 function sleep(ms) {
