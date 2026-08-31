@@ -3,34 +3,32 @@
 import { useEffect, useState } from "react";
 import { useAccount, useBalance, useBytecode, useChainId, useReadContract, useSendTransaction, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 import { waitForTransactionReceipt } from "wagmi/actions";
-import { baseSepolia } from "wagmi/chains";
-import { formatEther, formatUnits, isAddress, parseEther, parseUnits, zeroAddress, zeroHash, type Address, type Hex } from "viem";
+import { formatEther, formatUnits, parseEther, parseUnits, zeroAddress, zeroHash, type Address, type Hex } from "viem";
 import { erc20Abi, mandateAccountFactoryAbi, useReadErc20BalanceOf } from "@/lib/generated/contracts";
 import { shortAddr } from "@/lib/format";
 import { wagmiConfig } from "@/lib/wagmi";
 import { MandateSigningPanel } from "./MandateSigningPanel";
-
-const factoryFromEnv = process.env.NEXT_PUBLIC_BASE_SEPOLIA_MANDATE_FACTORY_ADDRESS;
-const FACTORY_ADDRESS: Address | undefined = factoryFromEnv && isAddress(factoryFromEnv) ? factoryFromEnv : undefined;
-const EXPLORER_URL = process.env.NEXT_PUBLIC_BASE_SEPOLIA_EXPLORER_URL ?? "https://sepolia-explorer.base.org";
-const usdcFromEnv = process.env.NEXT_PUBLIC_BASE_SEPOLIA_SHADOW_USDC_ADDRESS;
-const SHADOW_USDC: Address | undefined = usdcFromEnv && isAddress(usdcFromEnv) ? usdcFromEnv : undefined;
+import { ExplorerLink } from "./ExplorerLink";
+import { useExecutionNetwork } from "./ExecutionNetworkProvider";
+import { policyNetwork } from "@/lib/policyNetwork";
 
 export function PolicyAccountPanel() {
+  const { network } = useExecutionNetwork();
+  const policy = policyNetwork(network);
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
   const { switchChainAsync, isPending: isSwitching } = useSwitchChain();
   const [message, setMessage] = useState<string | null>(null);
-  const canDerive = Boolean(address && FACTORY_ADDRESS);
-  const { data: accountAddress, isPending: isDeriving, error: deriveError } = useReadAccountAddress(address);
+  const canDerive = Boolean(address && policy.factory);
+  const { data: accountAddress, isPending: isDeriving, error: deriveError } = useReadAccountAddress(address, policy.factory, policy.chainId);
   const { data: bytecode, refetch: refetchBytecode } = useBytecode({
     address: accountAddress,
-    chainId: baseSepolia.id,
+    chainId: policy.chainId,
     query: { enabled: Boolean(accountAddress) },
   });
   const { writeContractAsync, data: transactionHash, isPending: isSubmitting } = useWriteContract();
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
-    chainId: baseSepolia.id,
+    chainId: policy.chainId,
     hash: transactionHash,
   });
 
@@ -43,16 +41,16 @@ export function PolicyAccountPanel() {
   const busy = isSwitching || isSubmitting || isConfirming;
 
   const createAccount = async () => {
-    if (!address || !FACTORY_ADDRESS || deployed) return;
+    if (!address || !policy.factory || deployed) return;
     setMessage(null);
     try {
-      if (chainId !== baseSepolia.id) await switchChainAsync({ chainId: baseSepolia.id });
+      if (chainId !== policy.chainId) await switchChainAsync({ chainId: policy.chainId });
       await writeContractAsync({
-        address: FACTORY_ADDRESS,
+        address: policy.factory,
         abi: mandateAccountFactoryAbi,
         functionName: "createAccount",
         args: [address, zeroHash],
-        chainId: baseSepolia.id,
+        chainId: policy.chainId,
       });
     } catch {
       setMessage("Account deployment was not completed.");
@@ -63,35 +61,35 @@ export function PolicyAccountPanel() {
     <section className="card p-5 flex flex-col gap-4" aria-label="Policy account setup">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-blue">Base Sepolia · ERC-4337</p>
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-blue">{network === "mainnet" ? "Base mainnet" : "Base Sepolia"} · ERC-4337</p>
           <h2 className="mt-1 text-[16px] font-bold text-fg">Policy account</h2>
-          <p className="mt-1 text-[12px] leading-relaxed text-muted">A dedicated smart account holds future test funds. An agent cannot use it until you register a bounded mandate.</p>
+          <p className="mt-1 text-[12px] leading-relaxed text-muted">A dedicated smart account holds policy funds. An agent cannot use it until you register a bounded mandate.</p>
         </div>
         <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${deployed ? "bg-calm/15 text-calm" : "bg-panel2 text-muted"}`}>
           {deployed ? "Account deployed" : "Not deployed"}
         </span>
       </div>
 
-      {!FACTORY_ADDRESS ? (
-        <p className="rounded-lg border border-crit/30 bg-crit/10 p-3 text-[12px] text-crit">The Base Sepolia policy-account factory is not configured.</p>
+      {!policy.factory || !policy.agent ? (
+        <p className="rounded-lg border border-crit/30 bg-crit/10 p-3 text-[12px] text-crit">The {network === "mainnet" ? "Base-mainnet" : "Base Sepolia"} policy-account factory or agent is not configured.</p>
       ) : !isConnected || !address ? (
         <p className="rounded-lg border border-edge bg-panel2 p-3 text-[12px] text-muted">Connect the wallet that will own this policy account.</p>
       ) : (
         <>
           <div className="grid gap-2 rounded-lg border border-edge bg-panel2 p-3 text-[12px] sm:grid-cols-[130px_1fr]">
             <span className="text-faint">Owner wallet</span>
-            <span className="font-mono text-fg">{shortAddr(address)}</span>
+            <ExplorerLink network={network} resource="address" value={address} className="font-mono text-fg hover:text-blue">{shortAddr(address)}</ExplorerLink>
             <span className="text-faint">Derived account</span>
-            <span className="font-mono text-fg">{isDeriving ? "Deriving…" : accountAddress ? shortAddr(accountAddress) : "Unavailable"}</span>
+            {accountAddress ? <ExplorerLink network={network} resource="address" value={accountAddress} className="font-mono text-fg hover:text-blue">{shortAddr(accountAddress)}</ExplorerLink> : <span className="font-mono text-fg">{isDeriving ? "Deriving…" : "Unavailable"}</span>}
           </div>
 
-          {deriveError && <p className="text-[12px] text-crit">Could not derive the policy account on Base Sepolia.</p>}
+          {deriveError && <p className="text-[12px] text-crit">Could not derive the policy account on {network === "mainnet" ? "Base mainnet" : "Base Sepolia"}.</p>}
 
           <div className="flex flex-wrap items-center gap-2">
             {deployed && accountAddress ? (
-              <a href={`${EXPLORER_URL}/address/${accountAddress}`} target="_blank" rel="noopener noreferrer" className="h-9 rounded-lg bg-panel2 px-3 text-[12px] font-semibold text-blue hover:bg-panel3">
+              <ExplorerLink network={network} resource="address" value={accountAddress} className="h-9 rounded-lg bg-panel2 px-3 text-[12px] font-semibold text-blue hover:bg-panel3">
                 View account ↗
-              </a>
+              </ExplorerLink>
             ) : (
               <button type="button" onClick={() => void createAccount()} disabled={busy || isDeriving || !canDerive} className="h-9 rounded-lg bg-blue px-3 text-[12px] font-semibold text-white hover:brightness-110 disabled:cursor-wait disabled:opacity-60">
                 {isSwitching ? "Switching network…" : isSubmitting ? "Confirm in wallet…" : isConfirming ? "Deploying account…" : "Create policy account"}
@@ -99,8 +97,8 @@ export function PolicyAccountPanel() {
             )}
             <span className="text-[11px] text-faint">This is a one-time wallet transaction; it does not enable autonomous trading.</span>
           </div>
-          {deployed && accountAddress && <MandateSigningPanel owner={address} account={accountAddress} />}
-          {deployed && accountAddress && <PolicyFundingPanel account={accountAddress} />}
+          {deployed && accountAddress && <MandateSigningPanel owner={address} account={accountAddress} network={network} />}
+          {deployed && accountAddress && <PolicyFundingPanel account={accountAddress} network={network} collateral={policy.collateral} collateralLabel={policy.collateralLabel} chainId={policy.chainId} />}
         </>
       )}
 
@@ -109,7 +107,7 @@ export function PolicyAccountPanel() {
   );
 }
 
-function PolicyFundingPanel({ account }: { account: Address }) {
+function PolicyFundingPanel({ account, network, collateral, collateralLabel, chainId: targetChainId }: { account: Address; network: "mainnet" | "sepolia"; collateral: Address | undefined; collateralLabel: string; chainId: 8453 | 84532 }) {
   const { address: owner, chainId } = useAccount();
   const { switchChainAsync } = useSwitchChain();
   const { sendTransactionAsync } = useSendTransaction();
@@ -119,44 +117,44 @@ function PolicyFundingPanel({ account }: { account: Address }) {
   const [status, setStatus] = useState<{ kind: "idle" | "pending" | "success" | "error"; message?: string }>({ kind: "idle" });
   const { data: ethBalance, refetch: refetchEth } = useBalance({
     address: account,
-    chainId: baseSepolia.id,
+    chainId: targetChainId,
   });
   const { data: usdcBalance, refetch: refetchUsdc } = useReadErc20BalanceOf({
-    address: SHADOW_USDC ?? zeroAddress,
+    address: collateral ?? zeroAddress,
     args: [account],
-    chainId: baseSepolia.id,
-    query: { enabled: Boolean(SHADOW_USDC) },
+    chainId: targetChainId,
+    query: { enabled: Boolean(collateral) },
   });
 
   const fund = async (asset: "ETH" | "USDC") => {
     if (!owner || status.kind === "pending") return;
     setStatus({ kind: "pending", message: asset === "ETH" ? "Confirm ETH transfer in wallet…" : "Confirm test USDC transfer in wallet…" });
     try {
-      if (chainId !== baseSepolia.id) await switchChainAsync({ chainId: baseSepolia.id });
+      if (chainId !== targetChainId) await switchChainAsync({ chainId: targetChainId });
       let hash: Hex;
       if (asset === "ETH") {
         hash = await sendTransactionAsync({
-          chainId: baseSepolia.id,
+          chainId: targetChainId,
           to: account,
           value: positiveAmount(ethAmount, 18, "ETH"),
         });
       } else {
-        if (!SHADOW_USDC) throw new Error("The Base Sepolia test USDC address is not configured.");
+        if (!collateral) throw new Error(`The ${network === "mainnet" ? "Base-mainnet" : "Base Sepolia"} USDC address is not configured.`);
         hash = await writeContractAsync({
-          address: SHADOW_USDC,
+          address: collateral,
           abi: erc20Abi,
           functionName: "transfer",
           args: [account, positiveAmount(usdcAmount, 6, "test USDC")],
-          chainId: baseSepolia.id,
+          chainId: targetChainId,
         });
       }
-      setStatus({ kind: "pending", message: "Waiting for Base Sepolia confirmation…" });
-      const receipt = await waitForTransactionReceipt(wagmiConfig, { chainId: baseSepolia.id, hash });
+      setStatus({ kind: "pending", message: `Waiting for ${network === "mainnet" ? "Base mainnet" : "Base Sepolia"} confirmation…` });
+      const receipt = await waitForTransactionReceipt(wagmiConfig, { chainId: targetChainId, hash });
       if (receipt.status !== "success") throw new Error("The transfer reverted on-chain.");
       await Promise.all([refetchEth(), refetchUsdc()]);
       setStatus({ kind: "success", message: `${asset} funding confirmed.` });
     } catch (error) {
-      setStatus({ kind: "error", message: error instanceof Error && error.message.startsWith("The Base Sepolia") ? error.message : "Funding was not completed. No funds moved." });
+      setStatus({ kind: "error", message: error instanceof Error && error.message.startsWith("The Base") ? error.message : "Funding was not completed. No funds moved." });
     }
   };
 
@@ -165,16 +163,16 @@ function PolicyFundingPanel({ account }: { account: Address }) {
     <section className="mt-4 border-t border-edge pt-4" aria-label="Fund policy account">
       <p className="text-[10px] font-semibold uppercase tracking-wide text-blue">Step 3 · Funding</p>
       <h3 className="mt-1 text-[14px] font-bold text-fg">Fund policy account</h3>
-      <p className="mt-1 text-[12px] text-muted">Transfers go directly from your connected wallet to this fixed policy account. ETH pays UserOperation gas; test USDC is the bounded trade collateral.</p>
+      <p className="mt-1 text-[12px] text-muted">Transfers go directly from your connected wallet to this fixed policy account. ETH pays UserOperation gas; {collateralLabel} is the bounded trade collateral.</p>
 
       <div className="mt-3 grid gap-2 rounded-lg border border-edge bg-panel2 p-3 text-[11px] sm:grid-cols-[110px_1fr]">
-        <span className="text-faint">Recipient</span><span className="font-mono text-fg" title={account}>{shortAddr(account)}</span>
-        <span className="text-faint">Current balance</span><span className="text-fg">{ethBalance ? `${displayAmount(formatEther(ethBalance.value))} ETH` : "… ETH"} · {usdcBalance != null ? `${displayAmount(formatUnits(usdcBalance, 6))} test USDC` : "… test USDC"}</span>
+        <span className="text-faint">Recipient</span><ExplorerLink network={network} resource="address" value={account} className="font-mono text-fg hover:text-blue">{shortAddr(account)}</ExplorerLink>
+        <span className="text-faint">Current balance</span><span className="text-fg">{ethBalance ? `${displayAmount(formatEther(ethBalance.value))} ETH` : "… ETH"} · {usdcBalance != null ? `${displayAmount(formatUnits(usdcBalance, 6))} ${collateralLabel}` : `… ${collateralLabel}`}</span>
       </div>
 
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        <FundingField label="Base Sepolia ETH" value={ethAmount} onChange={setEthAmount} button="Fund ETH" disabled={busy} onFund={() => void fund("ETH")} />
-        <FundingField label="Base Sepolia test USDC" value={usdcAmount} onChange={setUsdcAmount} button="Fund USDC" disabled={busy || !SHADOW_USDC} onFund={() => void fund("USDC")} />
+        <FundingField label={`${network === "mainnet" ? "Base" : "Base Sepolia"} ETH`} value={ethAmount} onChange={setEthAmount} button="Fund ETH" disabled={busy} onFund={() => void fund("ETH")} />
+        <FundingField label={`${network === "mainnet" ? "Base" : "Base Sepolia"} ${collateralLabel}`} value={usdcAmount} onChange={setUsdcAmount} button="Fund USDC" disabled={busy || !collateral} onFund={() => void fund("USDC")} />
       </div>
       <p className="mt-2 text-[11px] text-faint">Each transfer has its own wallet confirmation. USDC is transferred directly—there is no approval or spending allowance.</p>
       {status.kind !== "idle" && <p className={`mt-3 rounded-lg border p-3 text-[12px] ${status.kind === "error" ? "border-crit/30 bg-crit/10 text-crit" : status.kind === "success" ? "border-calm/30 bg-calm/10 text-calm" : "border-edge bg-panel2 text-muted"}`}>{status.message}</p>}
@@ -205,13 +203,13 @@ function displayAmount(value: string) {
   return trimmed ? `${whole}.${trimmed}` : whole;
 }
 
-function useReadAccountAddress(owner: Address | undefined) {
+function useReadAccountAddress(owner: Address | undefined, factory: Address | undefined, chainId: 8453 | 84532) {
   return useReadContract({
-    address: FACTORY_ADDRESS,
+    address: factory,
     abi: mandateAccountFactoryAbi,
     functionName: "getAddress",
     args: owner ? [owner, zeroHash] : undefined,
-    chainId: baseSepolia.id,
-    query: { enabled: Boolean(owner && FACTORY_ADDRESS) },
+    chainId,
+    query: { enabled: Boolean(owner && factory) },
   });
 }

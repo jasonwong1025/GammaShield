@@ -11,6 +11,7 @@ import { BookCard } from "./BookFeed";
 import { LivePrice } from "./LivePrice";
 import { CopilotView } from "./CopilotView";
 import { HedgeView } from "./HedgeView";
+import { ExecutionNetworkProvider } from "./ExecutionNetworkProvider";
 import { ASSET_META, isOptionsAsset, type Asset } from "@/lib/assets";
 
 const POLL_MS = 10_000;
@@ -99,6 +100,7 @@ export function Dashboard() {
   const hasHighRisk = Boolean(a && (a.score >= 70 || a.regime === "amplifying"));
 
   return (
+    <ExecutionNetworkProvider>
     <div className="flex flex-col min-h-dvh">
       <TopBar
         activeTab={activeTab}
@@ -207,6 +209,7 @@ export function Dashboard() {
         </div>
       </div>
     </div>
+    </ExecutionNetworkProvider>
   );
 }
 

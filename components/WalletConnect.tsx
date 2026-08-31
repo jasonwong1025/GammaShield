@@ -3,8 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useAccount, useConnect, useConnectors, useDisconnect, useSwitchChain } from "wagmi";
 import { base } from "wagmi/chains";
-
-const EXPLORER_URL = process.env.NEXT_PUBLIC_BASE_EXPLORER_URL ?? "https://basescan.org";
+import { executionNetworkForChainId } from "@/lib/explorer";
+import { ExplorerLink } from "./ExplorerLink";
+import { useExecutionNetwork } from "./ExecutionNetworkProvider";
 
 function shortAddress(address: string) {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
@@ -21,7 +22,8 @@ export function WalletConnect() {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  const { address, connector, isConnected } = useAccount();
+  const { address, chainId, connector, isConnected } = useAccount();
+  const { network } = useExecutionNetwork();
   const connectors = useConnectors();
   const { connectAsync, isPending } = useConnect();
   const { disconnect } = useDisconnect();
@@ -101,9 +103,9 @@ export function WalletConnect() {
                 {connector?.name ?? "Wallet"} · Base
               </div>
               <MenuItem onClick={copyAddress}>{copied ? "Copied ✓" : "Copy address"}</MenuItem>
-              <MenuItem onClick={() => window.open(`${EXPLORER_URL}/address/${address}`, "_blank", "noopener")}>
-                View on BaseScan
-              </MenuItem>
+              <ExplorerLink network={executionNetworkForChainId(chainId) ?? network} resource="address" value={address} className="block px-4 py-2.5 text-[13px] text-fg hover:bg-panel2 transition">
+                View on explorer
+              </ExplorerLink>
               <MenuItem onClick={() => { disconnect(); setOpen(false); }} danger>
                 Disconnect
               </MenuItem>

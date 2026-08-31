@@ -1,6 +1,8 @@
 "use client";
 
 import { WalletConnect } from "./WalletConnect";
+import { EXECUTION_NETWORK } from "@/lib/explorer";
+import { useExecutionNetwork } from "./ExecutionNetworkProvider";
 
 export type NavTab = "dashboard" | "copilot" | "hedge";
 
@@ -11,6 +13,7 @@ type Props = {
 };
 
 export function TopBar({ activeTab = "dashboard", onTabChange, hasHighRiskAlert }: Props) {
+  const { network, setNetwork } = useExecutionNetwork();
   return (
     <div className="shrink-0">
       <header className="flex items-center gap-6 px-5 h-16 border-b border-edge bg-bg/80 backdrop-blur">
@@ -78,6 +81,13 @@ export function TopBar({ activeTab = "dashboard", onTabChange, hasHighRiskAlert 
 
         {/* Right side WalletConnect and actions */}
         <div className="ml-auto flex items-center gap-3">
+          <div className="hidden sm:grid grid-cols-2 gap-1 rounded-lg bg-panel2 p-1" aria-label="Execution network">
+            {(Object.entries(EXECUTION_NETWORK) as [keyof typeof EXECUTION_NETWORK, (typeof EXECUTION_NETWORK)[keyof typeof EXECUTION_NETWORK]][]).map(([key, value]) => (
+              <button key={key} type="button" onClick={() => setNetwork(key)} aria-pressed={network === key} className={`h-7 rounded-md px-2 text-[11px] font-semibold ${network === key ? "bg-panel text-fg shadow-sm" : "text-muted hover:text-fg"}`}>
+                {value.shortLabel}
+              </button>
+            ))}
+          </div>
           <WalletConnect />
         </div>
       </header>

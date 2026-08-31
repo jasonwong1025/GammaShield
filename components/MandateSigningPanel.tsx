@@ -2,21 +2,16 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useChainId, useReadContract, useSignTypedData, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
-import { baseSepolia } from "wagmi/chains";
-import { hashStruct, isAddress, parseUnits, zeroHash, type Address, type Hex } from "viem";
+import { hashStruct, parseUnits, zeroHash, type Address, type Hex } from "viem";
 import { mandateAccountAbi } from "@/lib/generated/contracts";
 import { MANDATE_EIP712_TYPES, mandateDomain, mandateMessage, type Mandate } from "@/lib/mandate";
 import { fmtExpiryDate, fmtStrike, fmtUsd, shortAddr } from "@/lib/format";
 import type { AiMandateDraft, MandateDraftTerms } from "@/lib/mandateDraft";
 import type { OptionsAsset } from "@/lib/assets";
 import type { TradeSide } from "@/lib/trade";
-
-const optionBookFromEnv = process.env.NEXT_PUBLIC_BASE_SEPOLIA_SHADOW_OPTION_BOOK_ADDRESS;
-const collateralFromEnv = process.env.NEXT_PUBLIC_BASE_SEPOLIA_SHADOW_USDC_ADDRESS;
-const agentFromEnv = process.env.NEXT_PUBLIC_BASE_SEPOLIA_AGENT_ADDRESS;
-const OPTION_BOOK: Address | undefined = optionBookFromEnv && isAddress(optionBookFromEnv) ? optionBookFromEnv : undefined;
-const COLLATERAL: Address | undefined = collateralFromEnv && isAddress(collateralFromEnv) ? collateralFromEnv : undefined;
-const AGENT: Address | undefined = agentFromEnv && isAddress(agentFromEnv) ? agentFromEnv : undefined;
+import { ExplorerLink } from "./ExplorerLink";
+import { policyNetwork } from "@/lib/policyNetwork";
+import type { ExecutionNetwork } from "@/lib/explorer";
 
 type Terms = Omit<MandateDraftTerms, "side"> & { side: TradeSide };
 
@@ -34,33 +29,35 @@ const DEFAULT_TERMS: Terms = {
   validityHours: "24",
 };
 
-export function MandateSigningPanel({ owner, account }: { owner: Address; account: Address }) {
+export function MandateSigningPanel({ owner, account, network }: { owner: Address; account: Address; network: ExecutionNetwork }) {
+  const policy = policyNetwork(network);
   const [terms, setTerms] = useState<Terms>(DEFAULT_TERMS);
   const [nonce] = useState(() => BigInt(Date.now()));
   const [signed, setSigned] = useState<{ mandate: Mandate; signature: Hex } | null>(null);
   const [draft, setDraft] = useState<AiMandateDraft | null>(null);
   const [drafting, setDrafting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const effectiveTerms = policy.autonomousSide === "put" ? { ...terms, side: "put" as const } : terms;
   const chainId = useChainId();
   const { switchChainAsync, isPending: isSwitching } = useSwitchChain();
   const { signTypedDataAsync, isPending: isSigning } = useSignTypedData();
   const { writeContractAsync, data: transactionHash, isPending: isSubmitting } = useWriteContract();
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ chainId: baseSepolia.id, hash: transactionHash });
+  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ chainId: policy.chainId, hash: transactionHash });
   const { data: activeMandateHash, refetch: refetchActiveMandate } = useReadContract({
     address: account,
     abi: mandateAccountAbi,
     functionName: "activeMandateHash",
-    chainId: baseSepolia.id,
+    chainId: policy.chainId,
   });
   const { data: control, refetch: refetchControl } = useReadContract({
     address: account,
     abi: mandateAccountAbi,
     functionName: "controls",
     args: activeMandateHash && activeMandateHash !== zeroHash ? [activeMandateHash] : undefined,
-    chainId: baseSepolia.id,
+    chainId: policy.chainId,
     query: { enabled: Boolean(activeMandateHash && activeMandateHash !== zeroHash) },
   });
-  const configured = Boolean(OPTION_BOOK && COLLATERAL && AGENT);
+  const configured = Boolean(policy.optionBook && policy.collateral && policy.agent);
   const signedHash = useMemo(() => signed && hashStruct({ data: mandateMessage(signed.mandate), primaryType: "Mandate", types: MANDATE_EIP712_TYPES }), [signed]);
   const active = activeMandateHash && activeMandateHash !== zeroHash ? activeMandateHash : null;
   const busy = isSwitching || isSigning || isSubmitting || isConfirming;
@@ -77,14 +74,14 @@ export function MandateSigningPanel({ owner, account }: { owner: Address; accoun
   }, [isSuccess, refetchActiveMandate, refetchControl]);
 
   const signMandate = async () => {
-    if (!OPTION_BOOK || !COLLATERAL || !AGENT) return;
+    if (!policy.optionBook || !policy.collateral || !policy.agent) return;
     setError(null);
     setSigned(null);
     try {
-      if (chainId !== baseSepolia.id) await switchChainAsync({ chainId: baseSepolia.id });
-      const mandate = buildMandate(owner, account, terms, nonce, OPTION_BOOK, COLLATERAL, AGENT);
+      if (chainId !== policy.chainId) await switchChainAsync({ chainId: policy.chainId });
+      const mandate = buildMandate(owner, account, effectiveTerms, nonce, policy.optionBook, policy.collateral, policy.agent);
       const signature = await signTypedDataAsync({
-        domain: mandateDomain(baseSepolia.id, account),
+        domain: mandateDomain(policy.chainId, account),
         types: MANDATE_EIP712_TYPES,
         primaryType: "Mandate",
         message: mandateMessage(mandate),
@@ -99,13 +96,13 @@ export function MandateSigningPanel({ owner, account }: { owner: Address; accoun
     if (!signed) return;
     setError(null);
     try {
-      if (chainId !== baseSepolia.id) await switchChainAsync({ chainId: baseSepolia.id });
+      if (chainId !== policy.chainId) await switchChainAsync({ chainId: policy.chainId });
       await writeContractAsync({
         address: account,
         abi: mandateAccountAbi,
         functionName: "registerMandate",
         args: [mandateMessage(signed.mandate), signed.signature],
-        chainId: baseSepolia.id,
+        chainId: policy.chainId,
       });
     } catch {
       setError("Mandate registration was not completed. No policy changed.");
@@ -116,8 +113,8 @@ export function MandateSigningPanel({ owner, account }: { owner: Address; accoun
     if (!active) return;
     setError(null);
     try {
-      if (chainId !== baseSepolia.id) await switchChainAsync({ chainId: baseSepolia.id });
-      await writeContractAsync({ address: account, abi: mandateAccountAbi, functionName, args: [active], chainId: baseSepolia.id });
+      if (chainId !== policy.chainId) await switchChainAsync({ chainId: policy.chainId });
+      await writeContractAsync({ address: account, abi: mandateAccountAbi, functionName, args: [active], chainId: policy.chainId });
     } catch {
       setError("Mandate control was not completed. The on-chain policy is unchanged.");
     }
@@ -150,14 +147,14 @@ export function MandateSigningPanel({ owner, account }: { owner: Address; accoun
       </div>
 
       {!configured ? (
-        <p className="mt-3 rounded-lg border border-crit/30 bg-crit/10 p-3 text-[12px] text-crit">The Sepolia policy configuration is incomplete.</p>
+        <p className="mt-3 rounded-lg border border-crit/30 bg-crit/10 p-3 text-[12px] text-crit">The {network === "mainnet" ? "Base-mainnet" : "Base Sepolia"} policy configuration is incomplete.</p>
       ) : (
         <>
           <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <Select label="Asset" value={terms.asset} onChange={(asset) => updateTerms({ asset: asset as OptionsAsset })} options={["BTC", "ETH"]} />
-            <Select label="Option side" value={terms.side} onChange={(side) => updateTerms({ side: side as TradeSide })} options={["put", "call"]} />
-            <NumberField label="Max premium / fill" value={terms.premiumPerFill} suffix="test USDC" onChange={(premiumPerFill) => updateTerms({ premiumPerFill })} />
-            <NumberField label="Max premium / mandate" value={terms.premiumTotal} suffix="test USDC" onChange={(premiumTotal) => updateTerms({ premiumTotal })} />
+            <Select label="Option side" value={effectiveTerms.side} onChange={(side) => updateTerms({ side: side as TradeSide })} options={policy.autonomousSide === "both" ? ["put", "call"] : [policy.autonomousSide]} />
+            <NumberField label="Max premium / fill" value={terms.premiumPerFill} suffix={policy.collateralLabel} onChange={(premiumPerFill) => updateTerms({ premiumPerFill })} />
+            <NumberField label="Max premium / mandate" value={terms.premiumTotal} suffix={policy.collateralLabel} onChange={(premiumTotal) => updateTerms({ premiumTotal })} />
             <NumberField label="Contracts / fill" value={terms.contracts} suffix="contracts" onChange={(contracts) => updateTerms({ contracts })} />
             <NumberField label="Risk trigger" value={terms.riskScore} suffix="/ 100" onChange={(riskScore) => updateTerms({ riskScore })} />
             <NumberField label="Min tenor" value={terms.minTenorDays} suffix="days" onChange={(minTenorDays) => updateTerms({ minTenorDays })} />
@@ -170,8 +167,8 @@ export function MandateSigningPanel({ owner, account }: { owner: Address; accoun
           {draft && <div className="mt-3 rounded-lg border border-blue/30 bg-blue/5 p-3 text-[12px] text-muted"><div className="flex flex-wrap items-center justify-between gap-2"><p className="font-semibold text-fg">AI policy draft <span className="ml-1 rounded bg-panel px-1.5 py-0.5 text-[10px] text-blue">{draft.source === "gonka" ? "Gonka advisory" : "Deterministic fallback"}</span></p><button type="button" onClick={() => updateTerms(draft.terms)} disabled={busy} className="h-8 rounded-lg bg-blue px-3 text-[11px] font-semibold text-white disabled:opacity-60">Apply draft</button></div><p className="mt-2">{draft.quote.liquidity === "book" ? "Fresh listed Thetanuts OptionBook PUT" : "Thetanuts MM estimate · RFQ-only"}: {fmtStrike(draft.quote.strike)} · {fmtExpiryDate(draft.quote.expiryTs)} · {draft.quote.contracts} contracts · {fmtUsd(draft.quote.premiumUsd, false, 6)}.</p><p className="mt-1">{draft.rationale}</p><p className="mt-2 text-[10px] text-faint">Applying only edits this form. You still review, sign, and register the policy; it cannot execute a trade{draft.quote.liquidity === "mm" ? "; the agent waits for a fresh listed OptionBook order" : ""}.</p></div>}
 
           <div className="mt-3 grid gap-2 rounded-lg border border-edge bg-panel2 p-3 text-[11px] sm:grid-cols-[110px_1fr]">
-            <span className="text-faint">Policy account</span><span className="font-mono text-fg">{shortAddr(account)}</span>
-            <span className="text-faint">Demo agent</span><span className="font-mono text-fg">{shortAddr(AGENT!)}</span>
+            <span className="text-faint">Policy account</span><ExplorerLink network={network} resource="address" value={account} className="font-mono text-fg hover:text-blue">{shortAddr(account)}</ExplorerLink>
+            <span className="text-faint">Policy agent</span><ExplorerLink network={network} resource="address" value={policy.agent!} className="font-mono text-fg hover:text-blue">{shortAddr(policy.agent!)}</ExplorerLink>
             <span className="text-faint">Policy nonce</span><span className="font-mono text-fg">{nonce.toString()}</span>
           </div>
 
