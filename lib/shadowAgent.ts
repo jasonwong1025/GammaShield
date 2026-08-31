@@ -94,12 +94,8 @@ export async function runShadowAgents(options: { pendingAccounts?: Iterable<stri
       results.push({ account, outcome: "pending-user-operation", detail: "The external worker is waiting for this account's prior UserOperation receipt." });
       continue;
     }
-    try {
-      results.push(await runShadowAgent(account, config, provider, agent, snapshot));
-    } catch (error) {
-      if (error instanceof Error && error.message === "active mandate is not eligible for shadow execution") continue;
-      throw error;
-    }
+    const result = await runShadowAgent(account, config, provider, agent, snapshot);
+    if (result) results.push(result);
   }
   return { results, accounts, scannedToBlock: latestBlock };
 }
@@ -120,9 +116,10 @@ export async function getShadowUserOperationReceipt(userOpHash: string) {
   return pimlicoRpc<unknown>(endpoint, "pimlico_getUserOperationReceipt", [userOpHash]);
 }
 
-async function runShadowAgent(accountAddress: string, config: ReturnType<typeof runtimeConfig>, provider: ethers.JsonRpcProvider, agent: ethers.Wallet, snapshot: MarketSnapshot): Promise<ShadowAgentResult> {
+async function runShadowAgent(accountAddress: string, config: ReturnType<typeof runtimeConfig>, provider: ethers.JsonRpcProvider, agent: ethers.Wallet, snapshot: MarketSnapshot): Promise<ShadowAgentResult | null> {
   const account = new ethers.Contract(accountAddress, ACCOUNT_ABI, provider);
   const policy = await readPolicy(account, accountAddress, agent.address, config);
+  if (!policy) return null;
   const score = snapshot.assets[policy.mandate.asset as "BTC" | "ETH"].score;
   const scoreBps = Math.round(score * 100);
   const base = { account: accountAddress, mandateHash: policy.hash, score, threshold: Number(policy.mandate.riskThresholdBps) / 100 };
@@ -215,7 +212,7 @@ function riskState(raw: { scoreBps: bigint; eligibleSince: bigint; observedAt: b
 async function readPolicy(account: ethers.Contract, accountAddress: string, agentAddress: string, config: ReturnType<typeof runtimeConfig>) {
   const [entryPoint, riskAttester, hash] = await Promise.all([account.entryPoint(), account.riskAttester(), account.activeMandateHash()]);
   if (entryPoint.toLowerCase() !== ENTRY_POINT.toLowerCase() || riskAttester.toLowerCase() !== agentAddress.toLowerCase() || hash === ethers.ZeroHash) {
-    throw new Error("policy account is not configured for this dedicated agent");
+    return null;
   }
   const [raw, control] = await Promise.all([account.getMandate(hash), account.controls(hash)]);
   const mandate: Mandate = {
@@ -230,7 +227,7 @@ async function readPolicy(account: ethers.Contract, accountAddress: string, agen
     !["BTC", "ETH"].includes(mandate.asset) || ![0, 1].includes(mandate.side) || mandate.agent.toLowerCase() !== agentAddress.toLowerCase() ||
     mandate.optionBook.toLowerCase() !== config.optionBook.toLowerCase() || mandate.collateral.toLowerCase() !== config.usdc.toLowerCase() ||
     control.paused || control.revoked || now >= mandate.expiresAt
-  ) throw new Error("active mandate is not eligible for shadow execution");
+  ) return null;
   return { hash: hash as string, mandate, control: { spentPremium: BigInt(control.spentPremium), lastExecutionAt: BigInt(control.lastExecutionAt) } satisfies Control };
 }
 
