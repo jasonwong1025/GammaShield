@@ -67,15 +67,15 @@ type UserOperation = {
 
 export type ShadowAgentResult = {
   account: string;
-  mandateHash: string;
-  score: number;
-  threshold: number;
-  outcome: "risk-below-threshold" | "risk-reset-submitted" | "risk-persistence-pending" | "gas-unfunded" | "risk-observation-submitted" | "quote-unavailable" | "fill-submitted";
+  mandateHash?: string;
+  score?: number;
+  threshold?: number;
+  outcome: "pending-user-operation" | "risk-below-threshold" | "risk-reset-submitted" | "risk-persistence-pending" | "gas-unfunded" | "risk-observation-submitted" | "quote-unavailable" | "fill-submitted";
   userOpHash?: string;
   detail?: string;
 };
 
-export async function runShadowAgents(): Promise<ShadowAgentResult[]> {
+export async function runShadowAgents(options: { pendingAccounts?: Iterable<string> } = {}): Promise<ShadowAgentResult[]> {
   const config = runtimeConfig();
   const provider = new ethers.JsonRpcProvider(config.rpcUrl);
   const agent = new ethers.Wallet(config.privateKey);
@@ -83,9 +83,14 @@ export async function runShadowAgents(): Promise<ShadowAgentResult[]> {
   // ponytail: scans this single demo factory; add an indexed event store before serving enough accounts to make this expensive.
   const events = await factory.queryFilter(factory.filters.AccountCreated(), config.deploymentBlock);
   const accounts = [...new Set(events.flatMap((event) => "args" in event && event.args?.account ? [ethers.getAddress(event.args.account)] : []))];
+  const pendingAccounts = new Set([...options.pendingAccounts ?? []].filter(ethers.isAddress).map((account) => ethers.getAddress(account).toLowerCase()));
   const snapshot = await getMarketSnapshot({ fresh: true });
   const results: ShadowAgentResult[] = [];
   for (const account of accounts) {
+    if (pendingAccounts.has(account.toLowerCase())) {
+      results.push({ account, outcome: "pending-user-operation", detail: "The external worker is waiting for this account's prior UserOperation receipt." });
+      continue;
+    }
     try {
       results.push(await runShadowAgent(account, config, provider, agent, snapshot));
     } catch (error) {
@@ -94,6 +99,13 @@ export async function runShadowAgents(): Promise<ShadowAgentResult[]> {
     }
   }
   return results;
+}
+
+export async function getShadowUserOperationReceipt(userOpHash: string) {
+  if (!ethers.isHexString(userOpHash, 32)) throw new Error("invalid UserOperation hash");
+  const config = runtimeConfig();
+  const endpoint = `https://api.pimlico.io/v2/84532/rpc?apikey=${encodeURIComponent(config.pimlicoApiKey)}`;
+  return pimlicoRpc<unknown>(endpoint, "pimlico_getUserOperationReceipt", [userOpHash]);
 }
 
 async function runShadowAgent(accountAddress: string, config: ReturnType<typeof runtimeConfig>, provider: ethers.JsonRpcProvider, agent: ethers.Wallet, snapshot: MarketSnapshot): Promise<ShadowAgentResult> {

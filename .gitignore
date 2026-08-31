@@ -13,6 +13,7 @@
 # testing
 /coverage
 /cache/
+/.shadow-agent/
 /contracts/cache/
 /contracts/out/
 

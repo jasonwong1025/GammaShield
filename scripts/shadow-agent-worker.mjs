@@ -1,0 +1,99 @@
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+
+const config = runtimeConfig();
+let stopping = false;
+
+process.on("SIGINT", () => { stopping = true; });
+process.on("SIGTERM", () => { stopping = true; });
+
+await run();
+
+async function run() {
+  while (!stopping) {
+    const startedAt = Date.now();
+    try {
+      await tick();
+    } catch (error) {
+      console.error("shadow-agent worker tick failed:", error instanceof Error ? error.message : error);
+    }
+    const wait = Math.max(1_000, config.intervalMs - (Date.now() - startedAt));
+    await sleep(wait);
+  }
+}
+
+async function tick() {
+  const state = await readState();
+  let changed = false;
+  for (const [account, pending] of Object.entries(state.pending)) {
+    const receipt = await request(`/api/shadow/agent?userOpHash=${encodeURIComponent(pending.userOpHash)}`);
+    if (receipt.receipt == null) continue;
+    delete state.pending[account];
+    state.recent.unshift({ account, userOpHash: pending.userOpHash, submittedAt: pending.submittedAt, checkedAt: new Date().toISOString(), status: receipt.receipt?.success === true ? "confirmed" : "reverted", transactionHash: receipt.receipt?.receipt?.transactionHash ?? null });
+    state.recent.splice(20);
+    changed = true;
+  }
+  if (changed) await writeState(state);
+
+  const response = await request("/api/shadow/agent", { pendingAccounts: Object.keys(state.pending) });
+  if (!Array.isArray(response.results)) throw new Error("shadow-agent endpoint returned an invalid result");
+  for (const result of response.results) {
+    if (!isResult(result) || !result.userOpHash || state.pending[result.account]) continue;
+    state.pending[result.account] = { userOpHash: result.userOpHash, submittedAt: new Date().toISOString(), outcome: result.outcome };
+    changed = true;
+    console.log(`${result.account} ${result.outcome}: ${result.userOpHash}`);
+  }
+  if (changed) await writeState(state);
+}
+
+async function request(path, body) {
+  const response = await fetch(new URL(path, config.url), {
+    method: body === undefined ? "GET" : "POST",
+    headers: { authorization: `Bearer ${config.secret}`, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload || typeof payload !== "object") throw new Error(payload?.error ?? `agent endpoint returned ${response.status}`);
+  return payload;
+}
+
+async function readState() {
+  try {
+    const value = JSON.parse(await readFile(config.statePath, "utf8"));
+    if (!isState(value)) throw new Error("invalid state journal");
+    return value;
+  } catch (error) {
+    if (error?.code === "ENOENT") return { version: 1, pending: {}, recent: [] };
+    throw error;
+  }
+}
+
+async function writeState(state) {
+  await mkdir(dirname(config.statePath), { recursive: true });
+  const temporary = `${config.statePath}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+  await rename(temporary, config.statePath);
+}
+
+function isState(value) {
+  return value && typeof value === "object" && value.version === 1 && value.pending && typeof value.pending === "object" && !Array.isArray(value.pending) && Array.isArray(value.recent) &&
+    Object.entries(value.pending).every(([account, pending]) => /^0x[0-9a-fA-F]{40}$/.test(account) && pending && typeof pending === "object" && /^0x[0-9a-fA-F]{64}$/.test(pending.userOpHash) && typeof pending.submittedAt === "string" && typeof pending.outcome === "string");
+}
+
+function isResult(value) {
+  return value && typeof value === "object" && typeof value.account === "string" && /^0x[0-9a-fA-F]{40}$/.test(value.account) && typeof value.outcome === "string" && (value.userOpHash === undefined || /^0x[0-9a-fA-F]{64}$/.test(value.userOpHash));
+}
+
+function runtimeConfig() {
+  const url = process.env.SHADOW_AGENT_URL;
+  const secret = process.env.SHADOW_AGENT_CRON_SECRET;
+  const seconds = Number(process.env.SHADOW_AGENT_INTERVAL_SECONDS ?? "15");
+  if (!url || !secret || !Number.isInteger(seconds) || seconds < 10 || seconds > 60) throw new Error("set SHADOW_AGENT_URL, SHADOW_AGENT_CRON_SECRET, and a 10-60 second SHADOW_AGENT_INTERVAL_SECONDS");
+  const parsed = new URL(url);
+  if (!/^https?:$/.test(parsed.protocol) || parsed.username || parsed.password) throw new Error("SHADOW_AGENT_URL must be an http(s) origin without credentials");
+  return { url: parsed, secret, intervalMs: seconds * 1_000, statePath: resolve(process.cwd(), process.env.SHADOW_AGENT_STATE_PATH ?? ".shadow-agent/state.json") };
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
