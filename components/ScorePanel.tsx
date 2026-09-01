@@ -85,7 +85,7 @@ export function ScorePanel({ snap }: { snap: AssetSnapshot }) {
       </div>
 
       {/* Ring Gauge + Actionable Advice */}
-      <div className="flex items-center gap-4 p-3.5 rounded-xl bg-panel2 border border-edge">
+      <div className="flex items-center gap-4 p-3.5 rounded-lg bg-panel2 border border-edge">
         <Ring score={snap.score} color={color} />
         <div className="flex flex-col gap-0.5">
           <span className={`text-[12.5px] font-bold ${actionSummary.colorClass}`}>{actionSummary.status}</span>

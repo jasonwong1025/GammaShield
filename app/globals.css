@@ -44,11 +44,7 @@
 }
 
 body {
-  background:
-    radial-gradient(1200px 600px at 70% -10%, rgba(43, 102, 217, 0.05), transparent 60%),
-    radial-gradient(circle, rgba(23, 33, 54, 0.04) 1px, transparent 1px),
-    var(--bg);
-  background-size: auto, 26px 26px, auto;
+  background: var(--bg);
   color: var(--text);
   font-family: var(--font-inter), system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -58,12 +54,30 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* Modern floating cards with subtle border and soft shadow */
+/* Terminal-style eyebrow: the mono face marks anything read as a live
+   instrument label (panel headers, ticker rows) rather than page copy. */
+.eyebrow {
+  font-family: var(--font-plex-mono), ui-monospace, monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* Flat, hairline-bordered panels — anchored content, not a floating card.
+   No shadow: depth here comes from the grid's own hairline dividers, not
+   from every panel pretending to float above the page. */
 .card {
   background: var(--panel);
-  border-radius: 1rem;
-  border: 1px solid rgba(226, 232, 240, 0.8);
-  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.03), 0 1px 2px -1px rgba(0, 0, 0, 0.03);
+  border-radius: 8px;
+  border: 1px solid var(--edge);
+}
+
+/* Left-accent note: a lighter-weight alternative to a fully boxed callout
+   for inline warnings/disclosures — one colored edge and a faint wash
+   instead of another nested rounded rectangle. Override border-left-color
+   and background inline per severity. */
+.note {
+  border-left: 2px solid var(--edge-2);
+  padding: 0.625rem 0.75rem;
 }
 
 /* Price flash on update */

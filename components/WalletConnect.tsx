@@ -113,7 +113,7 @@ export function WalletConnect() {
       )}
 
       {open && (
-        <div className="absolute right-0 top-full mt-2 w-56 rounded-xl border border-edge bg-panel shadow-lg overflow-hidden z-50">
+        <div className="absolute right-0 top-full mt-2 w-56 rounded-lg border border-edge bg-panel shadow-lg overflow-hidden z-50">
           {isConnected && address ? (
             <div className="py-1.5">
               <div className="px-4 py-2 text-[11px] text-muted border-b border-edge/60">

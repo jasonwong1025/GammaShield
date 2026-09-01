@@ -690,11 +690,11 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
         <p className="text-[12px] text-crit">{quoteError}</p>
       ) : quote ? (
         <div
-          className={`rounded-lg bg-panel2 p-3 flex flex-col gap-1.5 text-[12px] transition-opacity ${
+          className={`rounded-md bg-panel2 p-3 flex flex-col gap-1.5 text-[12px] transition-opacity ${
             quoteInSync ? "" : "opacity-50"
           }`}
         >
-          <div className="flex items-center justify-between text-[10px] uppercase tracking-wide">
+          <div className="eyebrow flex items-center justify-between text-[10px]">
             {quote.source === "book" ? (
               <span className="text-calm">● Instant fill — OptionBook</span>
             ) : (
@@ -736,8 +736,11 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
       )}
 
       {hedgeIntent?.asset === asset && side === "put" && (
-        <div className="rounded-lg border border-blue/25 bg-bluesoft/30 p-3 text-[12px] leading-relaxed">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-blue">Protective-put plan</p>
+        <div
+          className="note text-[12px] leading-relaxed"
+          style={{ borderLeftColor: "var(--blue)", background: "color-mix(in srgb, var(--blue) 6%, transparent)" }}
+        >
+          <p className="eyebrow text-[10px] font-semibold text-blue">Protective-put plan</p>
           <p className="mt-1 text-muted">
             Protecting {fmtContracts(amount)} {asset} through {quote ? fmtExpiryDate(quote.expiryTs) : periodLabel(period)}. Your premium cap is {fmtUsd(hedgeIntent.maxPremiumUsd, false, 2)}.
           </p>
@@ -755,11 +758,17 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
       )}
 
       {executionMode === "shadow" ? (
-        <p className="rounded-lg border border-blue/25 bg-bluesoft/30 p-2.5 text-[11px] leading-relaxed text-muted">
+        <p
+          className="note text-[11px] leading-relaxed text-muted"
+          style={{ borderLeftColor: "var(--blue)", background: "color-mix(in srgb, var(--blue) 6%, transparent)" }}
+        >
           Mirrors this live quote on Base Sepolia using Circle test USDC. Try 0.01 contracts for a small test; this is not a Thetanuts position.
         </p>
       ) : (
-        <p className="rounded-lg border border-warn/25 bg-panel2 p-2.5 text-[11px] leading-relaxed text-muted">
+        <p
+          className="note text-[11px] leading-relaxed text-muted"
+          style={{ borderLeftColor: "var(--warn)", background: "color-mix(in srgb, var(--warn) 8%, transparent)" }}
+        >
           Base mainnet uses real funds. Before your wallet can send a fill, GammaShield refetches the listed OptionBook order and simulates the exact transaction against your account.
         </p>
       )}
@@ -771,7 +780,7 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
           risk readout, with an optional AI annotation" rather than two
           competing scores. */}
       {impact && (
-        <div className="rounded-lg border border-edge p-3 text-[12px] flex flex-col gap-1.5">
+        <div className="rounded-md border border-edge p-3 text-[12px] flex flex-col gap-1.5">
           <div className="flex items-center justify-between">
             <span className="text-muted">Amplification risk impact</span>
             <span className="num font-semibold">
@@ -865,7 +874,7 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
       rfq.step === "requesting" ||
       rfq.step === "auction" ||
       rfq.step === "accepting" ? (
-        <div className="rounded-lg border border-blue/40 bg-bluesoft/40 p-3 flex flex-col gap-2 text-[12px]">
+        <div className="rounded-md border border-blue/40 bg-bluesoft/40 p-3 flex flex-col gap-2 text-[12px]">
           <div className="flex items-center justify-between">
             <span className="font-semibold text-fg">
               {rfq.step === "connecting"
@@ -901,7 +910,7 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
                   Accept best offer · {fmtUsd(rfq.status.best.totalPremiumUsd, false)} total
                 </button>
               ) : (
-                <div className="h-9 rounded-lg border border-edge text-muted flex items-center justify-center">
+                <div className="h-9 rounded-md border border-edge text-muted flex items-center justify-center">
                   Waiting for maker offers…
                 </div>
               )}
@@ -939,7 +948,10 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
           )}
         </div>
       ) : quote && !selFillable ? (
-        <div className="rounded-lg border border-warn/25 bg-panel2 p-3 text-[12px] leading-relaxed text-muted">
+        <div
+          className="note text-[12px] leading-relaxed text-muted"
+          style={{ borderLeftColor: "var(--warn)", background: "color-mix(in srgb, var(--warn) 8%, transparent)" }}
+        >
           This expiry has no listed maker order. RFQ execution is paused by default because it escrows collateral and needs a separate review. Choose an instant-fill tenor instead.
           {nearestFillable && (
             <button
