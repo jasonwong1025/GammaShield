@@ -74,7 +74,10 @@ async function runThetanutsAgent(accountAddress: string, config: ReturnType<type
   if (!period) return { ...base, outcome: "quote-unavailable", detail: "No supported Thetanuts tenor fits this mandate." };
   const contracts = Math.min(1, Number(policy.mandate.maxContractsPerFill) / 1e6);
   if (!Number.isFinite(contracts) || contracts < 0.001) return { ...base, outcome: "quote-unavailable", detail: "Mandate contract cap is below the executable minimum." };
-  const quote = await getTradeQuote(policy.mandate.asset, "put", contracts, period, true, Number(policy.mandate.maxPremiumPerFill) / 1e6);
+  const quote = await getTradeQuote(policy.mandate.asset, "put", contracts, period, {
+    fresh: true,
+    maxPremiumUsd: Number(policy.mandate.maxPremiumPerFill) / 1e6,
+  });
   if (quote.source !== "book" || !quote.txs) return { ...base, outcome: "quote-unavailable", detail: "No fresh listed Thetanuts order is eligible; RFQ estimates are never auto-filled." };
   if (quote.txs.fill.to.toLowerCase() !== BASE_OPTION_BOOK.toLowerCase()) return { ...base, outcome: "quote-unavailable", detail: "SDK fill targets an unrecognized OptionBook." };
   const decoded = new ethers.Interface(FILL_ABI).decodeFunctionData("fillOrder", quote.txs.fill.data);

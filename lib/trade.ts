@@ -25,6 +25,17 @@ type MmRow = Awaited<ReturnType<ThetanutsClient["mmPricing"]["getPricingArray"]>
 
 export type TradeSide = "call" | "put";
 
+export type TradeQuoteOptions = {
+  /** Bypass the short server cache before a user action. */
+  fresh?: boolean;
+  /** Prefer a protective put within this USD premium ceiling. */
+  maxPremiumUsd?: number;
+  /** Require this exact listed/MM strike; never silently substitute another. */
+  strike?: number;
+  /** Require this exact real Thetanuts expiry; never synthesize a tenor. */
+  expiry?: number;
+};
+
 export type TradeQuote = {
   asset: Asset;
   side: TradeSide;
@@ -94,9 +105,9 @@ export async function getTradeQuote(
   side: TradeSide,
   contracts: number,
   period: TradePeriod,
-  fresh = false,
-  maxPremiumUsd?: number,
+  options: TradeQuoteOptions = {},
 ): Promise<TradeQuote> {
+  const { fresh = false, maxPremiumUsd, strike: requestedStrike, expiry: requestedExpiry } = options;
   if (!isOptionsAsset(asset)) {
     throw new Error(`${asset} has no live Thetanuts market to trade`);
   }
@@ -158,7 +169,20 @@ export async function getTradeQuote(
   }).filter((e): e is NonNullable<typeof e> => e != null);
   if (!expiries.length) throw new Error(`no ${asset} ${side} expiries available`);
 
-  const targetEntry = expiries.find((e) => e.period === period) ?? expiries[0];
+  const targetEntry = requestedExpiry == null
+    ? expiries.find((e) => e.period === period) ?? expiries[0]
+    : (() => {
+        const available = new Set([...mmTenors, ...bookTenors]);
+        if (!available.has(requestedExpiry)) {
+          throw new Error("requested expiry is no longer available on the live Thetanuts book");
+        }
+        return {
+          period,
+          ts: requestedExpiry,
+          days: (requestedExpiry - nowSec) / 86400,
+          fillable: fillableTs.has(requestedExpiry),
+        };
+      })();
   const targetTs = targetEntry.ts;
 
   // For a protective plan, prefer a listed put within the user's premium
@@ -166,7 +190,11 @@ export async function getTradeQuote(
   // preview below remains authoritative for the final fill amount.
   const bookBest = targetEntry.fillable
     ? buyable
-        .filter((o) => Number(o.order.expiry) === targetTs)
+        .filter(
+          (o) =>
+            Number(o.order.expiry) === targetTs &&
+            (requestedStrike == null || Number(o.rawApiData!.strikes[0]) / 1e8 === requestedStrike),
+        )
         .sort((a, b) => {
           const sa = Number(a.rawApiData!.strikes[0]) / 1e8;
           const sb = Number(b.rawApiData!.strikes[0]) / 1e8;
@@ -275,9 +303,12 @@ export async function getTradeQuote(
     // fill; executing would go through the OptionFactory RFQ auction.
     const rows = sideRows.filter((r) => r.expiry === targetTs);
     if (!rows.length) throw new Error(`no ${asset} ${side} pricing at this expiry`);
-    const atm = rows.reduce((best, r) =>
-      Math.abs(r.strike - spot) < Math.abs(best.strike - spot) ? r : best,
-    );
+    const atm = requestedStrike == null
+      ? rows.reduce((best, r) =>
+          Math.abs(r.strike - spot) < Math.abs(best.strike - spot) ? r : best,
+        )
+      : rows.find((r) => r.strike === requestedStrike);
+    if (!atm) throw new Error("requested strike is no longer available on the live Thetanuts book");
     strike = atm.strike;
     premiumPerContractToken = atm.rawAskPrice; // in underlying units
     premiumPerContractUsd = atm.rawAskPrice * spot;
@@ -356,4 +387,53 @@ export async function getTradeQuote(
     impact,
     txs,
   };
+}
+
+/** Real strikes available to a long taker at one expiry, from the SDK book/MM grid. */
+export async function getAvailableStrikes(
+  asset: OptionsAsset,
+  side: TradeSide,
+  expiry: number,
+): Promise<number[]> {
+  const c = getClient();
+  const [orders, pricing] = await Promise.all([getBookOrders(c), getMmPricing(c, asset)]);
+  const feed = c.chainConfig.priceFeeds[asset]?.toLowerCase();
+  const nowSec = Math.floor(Date.now() / 1000);
+  const isCall = side === "call";
+  const strikes = new Set<number>();
+  for (const row of pricing) {
+    if (row.isCall === isCall && row.expiry === expiry && row.expiry > nowSec) strikes.add(row.strike);
+  }
+  for (const order of orders) {
+    const raw = order.rawApiData;
+    if (
+      raw &&
+      !raw.isLong &&
+      raw.isCall === isCall &&
+      raw.strikes?.length === 1 &&
+      raw.priceFeed?.toLowerCase() === feed &&
+      Number(order.order.expiry) === expiry &&
+      raw.orderExpiryTimestamp > nowSec &&
+      order.availableAmount > 0n
+    ) {
+      strikes.add(Number(raw.strikes[0]) / 1e8);
+    }
+  }
+  return [...strikes].sort((a, b) => a - b);
+}
+
+/** Finds one real expiry with pricing for both sides, nearest to the requested standard tenor. */
+export async function resolveSharedExpiry(asset: OptionsAsset, period: TradePeriod): Promise<number | null> {
+  const c = getClient();
+  const pricing = await getMmPricing(c, asset);
+  const nowSec = Math.floor(Date.now() / 1000);
+  const calls = new Set(pricing.filter((row) => row.isCall && row.expiry > nowSec).map((row) => row.expiry));
+  const puts = new Set(pricing.filter((row) => !row.isCall && row.expiry > nowSec).map((row) => row.expiry));
+  const shared = [...calls].filter((expiry) => puts.has(expiry));
+  if (!shared.length) return null;
+  return shared.reduce((best, expiry) =>
+    Math.abs((expiry - nowSec) / 86400 - period) < Math.abs((best - nowSec) / 86400 - period)
+      ? expiry
+      : best,
+  );
 }
