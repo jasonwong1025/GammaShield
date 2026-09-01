@@ -314,10 +314,6 @@ export async function simulateWhatIfQuery(params: WhatIfRequest): Promise<WhatIf
   const MARKET_ADV: Record<string, number> = {
     BTC: 25_000_000_000,
     ETH: 12_000_000_000,
-    SOL: 3_000_000_000,
-    XRP: 2_500_000_000,
-    BNB: 1_500_000_000,
-    AVAX: 500_000_000,
   };
   const adv = MARKET_ADV[params.asset] || 5_000_000_000;
   const sizeUsd = parsedSizeM * 1_000_000;

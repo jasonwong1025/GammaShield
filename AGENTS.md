@@ -32,10 +32,10 @@ Data flows in one direction: **exchange/chain → server (lib/ + app/api/) → c
 
 ### Server side (`lib/` + `app/api/`)
 
-- `lib/assets.ts` — **single source of truth for supported assets** (BTC, ETH, SOL, XRP, BNB, AVAX). BTC/ETH are `options: true` (live Thetanuts book); the rest are spot-only with a *modeled* book. Adding an asset starts here.
+- `lib/assets.ts` — **single source of truth for supported assets** (BTC, ETH — both `options: true` with a live Thetanuts book). Adding an asset starts here.
 - `lib/engine.ts` — the risk engine. Pure, deliberately simple math over normalized order rows: per-strike GEX, gamma flip, expiry buckets, risk score. No I/O in this file — keep it pure and inspectable.
 - `lib/snapshot.ts` — fetches the live Thetanuts book via the SDK, normalizes orders, runs the engine, and produces one `MarketSnapshot` for the whole dashboard. Briefly cached to be gentle on the RPC.
-- `lib/modelBook.ts` — deterministic Black-Scholes-modeled book for assets without a live Thetanuts market (SOL/XRP/BNB/AVAX), priced against live spot. Anything derived from it must be **labeled as modeled in the UI** — never present modeled data as live.
+- `lib/modelBook.ts` — Black-Scholes pricing/greeks shared by the shadow demo book (`lib/shadow.ts`) and live-book rho (which the Thetanuts pricing API doesn't return).
 - `lib/stream.ts` — one upstream Coinbase WebSocket fanned out to browser tabs via SSE (`/api/stream`). Module-level singleton; don't open per-request sockets.
 - `lib/format.ts` — shared number/USD/percent formatters. Use these instead of ad-hoc `toFixed`/`toLocaleString`.
 - `lib/trade.ts` — live OptionBook quote construction. It uses SDK preview/encoding, rejects unknown collateral/implementations/targets, and returns wallet calldata only for a fresh listed order.

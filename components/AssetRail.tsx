@@ -38,7 +38,7 @@ export function AssetRail({ asset, onAsset, ticker, scores }: Props) {
       </div>
 
       {ALL_ASSETS.map((symbol) => {
-        const { name, options } = ASSET_META[symbol];
+        const { name } = ASSET_META[symbol];
         const active = asset === symbol;
         const p = price(symbol);
         const score = scores?.[symbol] ?? null;
@@ -47,7 +47,6 @@ export function AssetRail({ asset, onAsset, ticker, scores }: Props) {
             key={symbol}
             onClick={() => onAsset(symbol)}
             aria-pressed={active}
-            title={options ? undefined : "Options book modeled from live spot"}
             className={`relative px-4 py-2.5 text-left transition-colors ${
               active ? "bg-panel2" : "hover:bg-panel2/50"
             }`}
@@ -77,8 +76,7 @@ export function AssetRail({ asset, onAsset, ticker, scores }: Props) {
       })}
 
       <div className="mt-auto px-4 py-3 border-t border-edge text-[10px] leading-4 text-faint">
-        Risk scores update every 10s. BTC &amp; ETH read the live Thetanuts book;
-        other books are modeled from live spot.
+        Risk scores update every 10s from the live Thetanuts book.
       </div>
     </aside>
   );

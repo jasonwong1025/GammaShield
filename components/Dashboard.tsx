@@ -12,7 +12,7 @@ import { LivePrice } from "./LivePrice";
 import { CopilotView } from "./CopilotView";
 import { HedgeView } from "./HedgeView";
 import { ExecutionNetworkProvider } from "./ExecutionNetworkProvider";
-import { ASSET_META, isOptionsAsset, type Asset } from "@/lib/assets";
+import { ALL_ASSETS, ASSET_META, isOptionsAsset, type Asset } from "@/lib/assets";
 
 const POLL_MS = 10_000;
 const PRICE_POLL_MS = 4_000;
@@ -59,7 +59,7 @@ export function Dashboard() {
       setTicker((prev) => {
         const map = new Map((prev ?? []).map((t) => [t.symbol, t] as const));
         for (const u of updates) map.set(u.symbol, { symbol: u.symbol, price: u.price });
-        const order = ["BTC", "ETH", "SOL", "XRP", "BNB", "AVAX"];
+        const order: readonly string[] = ALL_ASSETS;
         return [...map.values()].sort(
           (x, y) => order.indexOf(x.symbol) - order.indexOf(y.symbol),
         );
@@ -72,10 +72,9 @@ export function Dashboard() {
     return () => es.close();
   }, []);
 
-  // Polling backstop: full fallback when the socket is down, and the only
-  // source for symbols the stream doesn't carry (e.g. BNB).
+  // Polling backstop: full fallback when the socket is down.
   useEffect(() => {
-    const streamed = new Set(["BTC", "ETH", "SOL", "XRP", "AVAX"]);
+    const streamed = new Set<string>(ALL_ASSETS);
     const tick = async () => {
       try {
         const res = await fetch("/api/price", { cache: "no-store" });
