@@ -25,7 +25,6 @@ export async function POST(request: Request) {
       avgIv: market.avgIv,
       flipStrike: market.flipStrike,
     });
-    if (!suggestion) return Response.json({ error: "Gonka strategy advisor is unavailable; no AI suggestion was generated." }, { status: 502 });
     return Response.json(suggestion, { headers: { "cache-control": "no-store" } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "strategy advisor failed";

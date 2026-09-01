@@ -57,10 +57,13 @@ async function fetchWithBackoff(
   options: RequestInit,
   maxRetries = 2,
   initialDelayMs = 1500,
+  timeoutMs = 20_000,
 ): Promise<Response> {
   let delay = initialDelayMs;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const res = await fetch(url, options);
+    // Each retry needs a new timeout signal. Reusing an already-aborted one
+    // makes the retry fail immediately and leaves the Copilot spinner stuck.
+    const res = await fetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
     if (res.status !== 429 || attempt === maxRetries) {
       return res;
     }
@@ -75,13 +78,14 @@ async function fetchWithBackoff(
  * Extracts and parses JSON from model output, stripping thinking tags (<think>...</think>) if present.
  */
 function extractJson<T>(raw: string): T {
-  let cleaned = raw.replace(/<think[\s\S]*?<\/think>/gi, "").trim();
+  let cleaned = raw.replace(/<think[\s\S]*?<\/think>/gi, "");
+  const danglingThink = cleaned.search(/<think\b/i);
+  if (danglingThink !== -1) cleaned = cleaned.slice(0, danglingThink);
+  cleaned = cleaned.trim();
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
-  if (start !== -1 && end !== -1 && end > start) {
-    cleaned = cleaned.slice(start, end + 1);
-  }
-  return JSON.parse(cleaned);
+  if (start === -1 || end === -1 || end <= start) throw new Error("GonkaRouter returned no complete JSON response");
+  return JSON.parse(cleaned.slice(start, end + 1));
 }
 
 /**
@@ -140,7 +144,7 @@ Headline to Fact-Check: "${params.headline}"`;
       },
       body: JSON.stringify({
         model: selectedModel,
-        max_tokens: 600,
+        max_tokens: 1200,
         temperature: 0.1,
         messages: [
           { role: "system", content: systemPrompt },
@@ -353,7 +357,7 @@ JSON schema:
         },
         body: JSON.stringify({
           model: selectedModel,
-          max_tokens: 350,
+          max_tokens: 1024,
           temperature: 0.1,
           messages: [
             { role: "system", content: systemPrompt },

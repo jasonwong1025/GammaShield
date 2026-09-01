@@ -1,13 +1,15 @@
 import type { Asset } from "./assets";
 import { gonkaApiKey, gonkaBaseUrl } from "./gonkaConfig";
-import { STRATEGY_CATALOG, type SentimentBucket } from "./strategy";
+import type { SentimentBucket } from "./strategy";
 
 export type AiStrategySuggestion = {
   sentiment: SentimentBucket;
   strategyId: string;
   rationale: string;
   confidence: number;
-  model: string;
+  /** A deterministic result is clearly labeled in the UI; it never claims Gonka produced it. */
+  source: "gonka" | "deterministic";
+  model: string | null;
 };
 
 type MarketInput = {
@@ -21,13 +23,49 @@ type MarketInput = {
 };
 
 const MODEL = process.env.GONKAROUTER_MODEL ?? "deepseek-ai/DeepSeek-V4-Flash-0731";
-const TIMEOUT_MS = 20_000;
-const sentiments = new Set<SentimentBucket>(["bullish", "bearish", "highVol", "lowVol"]);
-const strategyIds = new Set(STRATEGY_CATALOG.map((strategy) => strategy.id));
+const TIMEOUT_MS = 18_000;
+const CACHE_MS = 45_000;
+const SENTIMENT_BY_TOKEN = new Map<string, SentimentBucket>([
+  ["bullish", "bullish"],
+  ["bearish", "bearish"],
+  ["highvol", "highVol"],
+  ["highvolatility", "highVol"],
+  ["lowvol", "lowVol"],
+  ["lowvolatility", "lowVol"],
+]);
+const STRATEGY_FOR_SENTIMENT: Record<SentimentBucket, string> = {
+  bullish: "strap",
+  bearish: "strip",
+  highVol: "straddle",
+  lowVol: "long-butterfly",
+};
 
-export async function getAiStrategySuggestion(input: MarketInput): Promise<AiStrategySuggestion | null> {
+const cache = new Map<string, { at: number; value: AiStrategySuggestion }>();
+const inflight = new Map<string, Promise<AiStrategySuggestion>>();
+
+function normalize(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function cacheKey(input: MarketInput) {
+  return [input.asset, Math.round(input.score / 5), input.regime, Math.round(input.netGexUsd / 10_000), input.avgIv?.toFixed(2) ?? "-"].join(":");
+}
+
+function deterministicSuggestion(input: MarketInput): AiStrategySuggestion {
+  const sentiment: SentimentBucket =
+    input.regime === "amplifying" ? "highVol" : input.netGexUsd > 0 ? "lowVol" : input.score >= 60 ? "bearish" : "bullish";
+  return {
+    sentiment,
+    strategyId: STRATEGY_FOR_SENTIMENT[sentiment],
+    rationale: "Deterministic market-structure mapping only; Gonka did not return before the advisory timeout.",
+    confidence: 0,
+    source: "deterministic",
+    model: null,
+  };
+}
+
+async function callGonka(input: MarketInput): Promise<AiStrategySuggestion | null> {
   if (!gonkaApiKey) return null;
-  const catalog = STRATEGY_CATALOG.map(({ id, name, sentiment, description }) => ({ id, name, sentiment, description }));
   try {
     const response = await fetch(`${gonkaBaseUrl}/chat/completions`, {
       method: "POST",
@@ -35,13 +73,15 @@ export async function getAiStrategySuggestion(input: MarketInput): Promise<AiStr
       body: JSON.stringify({
         model: MODEL,
         temperature: 0.2,
-        max_tokens: 700,
+        // Gonka documents 1024 as the minimum safe headroom for models with
+        // reasoning output. We ask only for market stance, not a 12-way plan.
+        max_tokens: 1024,
         messages: [
           {
             role: "system",
-            content: "You are an options strategy advisor. Pick exactly one catalog strategy for the supplied live dealer-gamma snapshot. Return only JSON: {\"sentiment\": \"bullish\"|\"bearish\"|\"highVol\"|\"lowVol\", \"strategyId\": catalog id, \"rationale\": <=200 characters, \"confidence\": number 0-1}. This is advisory only; never claim it can execute.",
+            content: "You are an options market-structure advisor. Return only JSON: {\"sentiment\": \"bullish\"|\"bearish\"|\"highVol\"|\"lowVol\", \"rationale\": string up to 200 characters, \"confidence\": number 0-1}. Do not mention execution or use markdown.",
           },
-          { role: "user", content: JSON.stringify({ market: input, catalog }) },
+          { role: "user", content: JSON.stringify({ market: input }) },
         ],
       }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -53,21 +93,35 @@ export async function getAiStrategySuggestion(input: MarketInput): Promise<AiStr
     const match = answer.match(/\{[\s\S]*\}/);
     if (!match) return null;
     const parsed = JSON.parse(match[0]) as Record<string, unknown>;
-    if (
-      typeof parsed.sentiment !== "string" ||
-      !sentiments.has(parsed.sentiment as SentimentBucket) ||
-      typeof parsed.strategyId !== "string" ||
-      !strategyIds.has(parsed.strategyId) ||
-      !Number.isFinite(Number(parsed.confidence))
-    ) return null;
+    const sentiment = typeof parsed.sentiment === "string" ? SENTIMENT_BY_TOKEN.get(normalize(parsed.sentiment)) : undefined;
+    const confidence = Number(parsed.confidence);
+    if (!sentiment || !Number.isFinite(confidence)) return null;
     return {
-      sentiment: parsed.sentiment as SentimentBucket,
-      strategyId: parsed.strategyId,
+      sentiment,
+      strategyId: STRATEGY_FOR_SENTIMENT[sentiment],
       rationale: String(parsed.rationale ?? "").slice(0, 200),
-      confidence: Math.min(1, Math.max(0, Number(parsed.confidence))),
+      confidence: Math.min(1, Math.max(0, confidence)),
+      source: "gonka",
       model: MODEL,
     };
   } catch {
     return null;
+  }
+}
+
+export async function getAiStrategySuggestion(input: MarketInput): Promise<AiStrategySuggestion> {
+  const key = cacheKey(input);
+  const cached = cache.get(key);
+  if (cached && Date.now() - cached.at < CACHE_MS) return cached.value;
+  const pending = inflight.get(key);
+  if (pending) return pending;
+  const request = callGonka(input).then((result) => result ?? deterministicSuggestion(input));
+  inflight.set(key, request);
+  try {
+    const result = await request;
+    if (result.source === "gonka") cache.set(key, { at: Date.now(), value: result });
+    return result;
+  } finally {
+    inflight.delete(key);
   }
 }

@@ -21,6 +21,13 @@ export type StrategyDef = {
 
 export const STRATEGY_CATALOG: StrategyDef[] = [
   {
+    id: "call",
+    name: "Call",
+    sentiment: "bullish",
+    description: "Long upside exposure with limited premium risk.",
+    legs: [{ side: "call", action: "buy", strikeOffset: 0, qty: 1 }],
+  },
+  {
     id: "strap",
     name: "Strap",
     sentiment: "bullish",
@@ -40,6 +47,13 @@ export const STRATEGY_CATALOG: StrategyDef[] = [
     sentiment: "bullish",
     description: "Defined-risk credit structure below spot.",
     legs: [{ side: "put", action: "sell", strikeOffset: 0, qty: 1 }, { side: "put", action: "buy", strikeOffset: -1, qty: 1 }],
+  },
+  {
+    id: "put",
+    name: "Put",
+    sentiment: "bearish",
+    description: "Long downside protection with limited premium risk.",
+    legs: [{ side: "put", action: "buy", strikeOffset: 0, qty: 1 }],
   },
   {
     id: "strip",

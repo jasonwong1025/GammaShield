@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { analyzePayoff, terminalPayoff } from "../lib/strategyPayoff.ts";
+import { STRATEGY_CATALOG } from "../lib/strategy.ts";
+
+assert.equal(STRATEGY_CATALOG.length, 12, "the full strategy catalog should remain available");
 
 const straddle = [
   { side: "call" as const, action: "buy" as const, strike: 100, qty: 1 },
