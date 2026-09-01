@@ -592,7 +592,7 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
         </div>
       </div>
 
-      {view === "strategy" ? <StrategyBuilder asset={asset} /> : <>
+      {view === "strategy" ? <StrategyBuilder key={asset} asset={asset} /> : <>
 
       {/* Direction */}
       <div className="grid grid-cols-2 gap-1 rounded-lg bg-panel2 p-1">

@@ -91,6 +91,7 @@ export function StrategyBuilder({ asset }: { asset: Asset }) {
 
   const selectSentiment = (next: SentimentBucket) => {
     const nextStrategies = strategiesBySentiment(next);
+    setQuote(null);
     setSentiment(next);
     setStrategyId(nextStrategies[0].id);
   };
@@ -106,11 +107,11 @@ export function StrategyBuilder({ asset }: { asset: Asset }) {
         {SENTIMENTS.map((item) => <button key={item.id} onClick={() => selectSentiment(item.id)} aria-pressed={sentiment === item.id} className={`h-8 rounded-md text-[11px] font-semibold ${sentiment === item.id ? "bg-panel text-fg shadow-sm" : "text-muted hover:text-fg"}`}>{item.label}</button>)}
       </div>
       <div className="grid grid-cols-1 gap-1">
-        {strategies.map((item) => <button key={item.id} onClick={() => setStrategyId(item.id)} aria-pressed={strategy?.id === item.id} className={`rounded-lg border p-3 text-left ${strategy?.id === item.id ? "border-blue bg-bluesoft/30" : "border-edge hover:border-blue/40"}`}><span className="text-[13px] font-semibold text-fg">{item.name}</span><span className="mt-0.5 block text-[11px] text-muted">{item.description}</span></button>)}
+        {strategies.map((item) => <button key={item.id} onClick={() => { setQuote(null); setStrategyId(item.id); }} aria-pressed={strategy?.id === item.id} className={`rounded-lg border p-3 text-left ${strategy?.id === item.id ? "border-blue bg-bluesoft/30" : "border-edge hover:border-blue/40"}`}><span className="text-[13px] font-semibold text-fg">{item.name}</span><span className="mt-0.5 block text-[11px] text-muted">{item.description}</span></button>)}
       </div>
       <div className="grid grid-cols-[1fr_auto] gap-3">
-        <label className="text-[11px] text-muted">Contracts<input value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" className="mt-1 h-9 w-full rounded-lg border border-edge bg-panel px-2 text-[13px] text-fg outline-none" /></label>
-        <div className="text-[11px] text-muted">Period<div className="mt-1 flex rounded-lg bg-panel2 p-1">{PERIODS.map((item) => <button key={item} onClick={() => setPeriod(item)} className={`h-7 rounded-md px-2 text-[10px] font-semibold ${period === item ? "bg-panel text-fg shadow-sm" : "text-muted"}`}>{periodLabel(item)}</button>)}</div></div>
+        <label className="text-[11px] text-muted">Contracts<input value={amount} onChange={(event) => { setQuote(null); setAmount(event.target.value); }} inputMode="decimal" className="mt-1 h-9 w-full rounded-lg border border-edge bg-panel px-2 text-[13px] text-fg outline-none" /></label>
+        <div className="text-[11px] text-muted">Period<div className="mt-1 flex rounded-lg bg-panel2 p-1">{PERIODS.map((item) => <button key={item} onClick={() => { setQuote(null); setPeriod(item); }} className={`h-7 rounded-md px-2 text-[10px] font-semibold ${period === item ? "bg-panel text-fg shadow-sm" : "text-muted"}`}>{periodLabel(item)}</button>)}</div></div>
       </div>
       <div className="flex items-center justify-between gap-3"><button onClick={suggest} disabled={aiLoading} className="h-9 rounded-lg border border-blue/40 px-3 text-[12px] font-semibold text-blue disabled:opacity-60">{aiLoading ? "Asking Gonka…" : "Suggest strategy"}</button>{ai && <span className="text-right text-[11px] text-muted">Gonka advisory · {Math.round(ai.confidence * 100)}% confidence</span>}</div>
       {ai && <p className="rounded-lg bg-panel2 p-3 text-[12px] text-muted">{ai.rationale}</p>}
