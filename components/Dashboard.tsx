@@ -8,7 +8,7 @@ import { TradePanel } from "./TradePanel";
 import { PriceChart } from "./PriceChart";
 import { RiskView } from "./RiskView";
 import { BookCard } from "./BookFeed";
-import { CopilotView } from "./CopilotView";
+import { CopilotWidget } from "./CopilotWidget";
 import { HedgeView } from "./HedgeView";
 import { ExecutionNetworkProvider } from "./ExecutionNetworkProvider";
 import { ALL_ASSETS, isOptionsAsset, type Asset } from "@/lib/assets";
@@ -144,17 +144,7 @@ export function Dashboard() {
                   </div>
                 )}
 
-                {/* TAB 2: Gonka AI Copilot Workspace */}
-                {activeTab === "copilot" && (
-                  <CopilotView
-                    snap={a}
-                    onNavigateToHedge={() => {
-                      setActiveTab("hedge");
-                    }}
-                  />
-                )}
-
-                {/* TAB 3: Autonomous Thetanuts Hedging Workspace */}
+                {/* TAB 2: Autonomous Thetanuts Hedging Workspace */}
                 {activeTab === "hedge" && (
                   <HedgeView
                     snap={a}
@@ -169,6 +159,13 @@ export function Dashboard() {
           </>
         )}
       </div>
+
+      <CopilotWidget
+        snap={a}
+        onNavigateToHedge={() => {
+          setActiveTab("hedge");
+        }}
+      />
     </div>
     </ExecutionNetworkProvider>
   );

@@ -4,7 +4,7 @@ import { WalletConnect } from "./WalletConnect";
 import { EXECUTION_NETWORK } from "@/lib/explorer";
 import { useExecutionNetwork } from "./ExecutionNetworkProvider";
 
-export type NavTab = "dashboard" | "copilot" | "hedge";
+export type NavTab = "dashboard" | "hedge";
 
 type Props = {
   activeTab?: NavTab;
@@ -42,21 +42,6 @@ export function TopBar({ activeTab = "dashboard", onTabChange, hasHighRiskAlert 
             }`}
           >
             Dashboard
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onTabChange?.("copilot")}
-            className={`px-3 py-1.5 rounded-lg transition font-medium flex items-center gap-1.5 ${
-              activeTab === "copilot"
-                ? "bg-bluesoft text-blue font-semibold shadow-xs"
-                : "text-muted hover:text-fg hover:bg-panel2"
-            }`}
-          >
-            <span>🤖 Gonka Copilot</span>
-            <span className="text-[10px] px-1.5 py-0.2 rounded bg-blue/15 text-blue font-mono uppercase">
-              AI
-            </span>
           </button>
 
           <button

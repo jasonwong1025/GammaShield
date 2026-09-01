@@ -11,6 +11,7 @@ type CopilotMode = "simulate" | "rumor";
 type Props = {
   snap: AssetSnapshot;
   onNavigateToHedge?: (strike?: number) => void;
+  onClose?: () => void;
 };
 
 type ChatMessage = {
@@ -38,7 +39,7 @@ const RUMOR_PILLS = [
   "Derivatives dealer short gamma cascade alert",
 ];
 
-export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
+export function UnifiedCopilotChat({ snap, onNavigateToHedge, onClose }: Props) {
   const [mode, setMode] = useState<CopilotMode>("simulate");
   const [input, setInput] = useState("");
   const [selectedModel, setSelectedModel] = useState<GonkaModelId>(GONKA_MODELS.FLASH);
@@ -158,62 +159,73 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
   };
 
   return (
-    <section className="card p-5 flex flex-col gap-4 min-h-[600px]" aria-label="Unified Gonka Copilot">
+    <section className="flex flex-col gap-3 h-full min-h-0 p-4" aria-label="Unified Gonka Copilot">
       {/* Header & Mode Switcher */}
-      <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-edge">
-        <div>
+      <div className="flex items-start justify-between gap-2 pb-3 border-b border-edge">
+        <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className="live-dot inline-block size-2 rounded-full bg-blue" />
-            <h2 className="text-[15px] font-semibold text-fg tracking-tight">Gonka AI Copilot</h2>
+            <span className="live-dot inline-block size-2 rounded-full bg-blue shrink-0" />
+            <h2 className="text-[14px] font-semibold text-fg tracking-tight truncate">Gonka AI Copilot</h2>
           </div>
-          <p className="text-[12px] text-muted mt-0.5">
-            Test trade slippage and dealer feedback loops, or verify breaking market rumors against live Net GEX.
+          <p className="text-[11px] text-muted mt-0.5 leading-snug">
+            Simulate trade slippage or verify a market rumor against live Net GEX.
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
-          {/* Model Selector */}
-          <select
-            value={selectedModel}
-            onChange={(e) => setSelectedModel(e.target.value as GonkaModelId)}
-            className="px-2.5 py-1 rounded-lg border border-edge bg-panel2 text-[11.5px] font-medium text-fg focus:outline-none focus:border-blue"
-            title="Select AI Model"
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close copilot"
+            className="shrink-0 flex items-center justify-center size-7 rounded-lg text-faint hover:text-fg hover:bg-panel2 transition"
           >
-            <option value={GONKA_MODELS.FLASH}>⚡ DeepSeek Flash (~3s)</option>
-            <option value={GONKA_MODELS.PRIMARY}>🧠 MiniMax-M2.7 (Deep Quant)</option>
-            <option value={GONKA_MODELS.KIMI}>🎯 Kimi-K2.6 (Fact Accuracy)</option>
-          </select>
+            ✕
+          </button>
+        )}
+      </div>
 
-          {/* Mode Switcher Pill */}
-          <div className="flex p-0.5 rounded-lg bg-panel2 border border-edge shrink-0">
-            <button
-              type="button"
-              onClick={() => setMode("simulate")}
-              className={`px-3 py-1 rounded-md text-[12px] font-medium transition ${
-                mode === "simulate"
-                  ? "bg-panel3 text-fg font-semibold shadow-xs"
-                  : "text-muted hover:text-fg"
-              }`}
-            >
-              💬 Simulate Trade (&quot;What-If&quot;)
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode("rumor")}
-              className={`px-3 py-1 rounded-md text-[12px] font-medium transition ${
-                mode === "rumor"
-                  ? "bg-panel3 text-fg font-semibold shadow-xs"
-                  : "text-muted hover:text-fg"
-              }`}
-            >
-              🔍 Verify Rumor (Fact-Check)
-            </button>
-          </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Model Selector */}
+        <select
+          value={selectedModel}
+          onChange={(e) => setSelectedModel(e.target.value as GonkaModelId)}
+          className="px-2.5 py-1 rounded-lg border border-edge bg-panel2 text-[11.5px] font-medium text-fg focus:outline-none focus:border-blue"
+          title="Select AI Model"
+        >
+          <option value={GONKA_MODELS.FLASH}>⚡ DeepSeek Flash (~3s)</option>
+          <option value={GONKA_MODELS.PRIMARY}>🧠 MiniMax-M2.7 (Deep Quant)</option>
+          <option value={GONKA_MODELS.KIMI}>🎯 Kimi-K2.6 (Fact Accuracy)</option>
+        </select>
+
+        {/* Mode Switcher Pill */}
+        <div className="flex p-0.5 rounded-lg bg-panel2 border border-edge shrink-0">
+          <button
+            type="button"
+            onClick={() => setMode("simulate")}
+            className={`px-3 py-1 rounded-md text-[12px] font-medium transition ${
+              mode === "simulate"
+                ? "bg-panel3 text-fg font-semibold shadow-xs"
+                : "text-muted hover:text-fg"
+            }`}
+          >
+            💬 Simulate
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("rumor")}
+            className={`px-3 py-1 rounded-md text-[12px] font-medium transition ${
+              mode === "rumor"
+                ? "bg-panel3 text-fg font-semibold shadow-xs"
+                : "text-muted hover:text-fg"
+            }`}
+          >
+            🔍 Verify Rumor
+          </button>
         </div>
       </div>
 
       {/* Messages Stream */}
-      <div className="grow flex flex-col gap-3 max-h-[460px] overflow-y-auto pr-1 feed-scroll">
+      <div className="grow flex flex-col gap-3 min-h-0 overflow-y-auto pr-1 feed-scroll">
         {messages.map((m) => (
           <div
             key={m.id}
