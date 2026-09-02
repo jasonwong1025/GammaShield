@@ -78,7 +78,7 @@ export function AgentMonitoringPanel({ account, mandateHash, network }: { accoun
 function workerText(agent: AgentStatus | null, error: boolean, now: number | null) {
   if (error) return "Status could not be read from this app.";
   if (!agent || agent.worker === "not-reporting") return "No report yet.";
-  if (agent.worker === "awaiting-first-check") return "Started; awaiting first check.";
+  if (agent.worker === "awaiting-first-check") return "No worker decision recorded yet.";
   if (agent.worker === "error") return "Last worker check failed.";
   if (agent.worker === "stale") return "Last worker report is stale.";
   return agent.latest ? `Checked ${timeAgo(agent.latest.checkedAt, now)}.` : "Checking.";
