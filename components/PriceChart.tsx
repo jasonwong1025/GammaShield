@@ -671,7 +671,7 @@ function Menu({
         </svg>
       </button>
       {open && (
-        <div className="absolute right-0 top-9 z-30 rounded-xl border border-edge bg-panel2 p-1.5 shadow-[0_12px_32px_rgba(23,33,54,0.18)]">
+        <div className="absolute right-0 top-9 z-30 rounded-lg border border-edge bg-panel2 p-1.5 shadow-lg">
           {children(() => setOpen(false))}
         </div>
       )}

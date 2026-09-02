@@ -6,23 +6,34 @@
     "dev": "next dev",
     "dev:https": "next dev --experimental-https --experimental-https-key ./certificates/localhost-key.pem --experimental-https-cert ./certificates/localhost.pem",
     "build": "next build",
+    "typecheck": "tsc --noEmit",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "check:mandate": "node --experimental-strip-types scripts/mandate-self-check.mts",
+    "check:strategy": "node --experimental-strip-types scripts/strategy-self-check.mts",
+    "agent:shadow": "node --env-file-if-exists=.env.local scripts/shadow-agent-worker.mjs",
+    "agent:thetanuts": "POLICY_AGENT_MODE=thetanuts node --env-file-if-exists=.env.local scripts/shadow-agent-worker.mjs",
+    "deploy:base:policy": "node --env-file-if-exists=.env.local scripts/deploy-base-mandate-factory.mjs",
+    "wagmi:generate": "wagmi generate"
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.102.8",
     "@thetanuts-finance/thetanuts-client": "^0.3.0",
     "echarts": "^6.1.0",
     "ethers": "^6.17.0",
     "lightweight-charts": "^5.2.1",
     "next": "16.3.3",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "viem": "^2.56.0",
+    "wagmi": "^3.7.7"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@wagmi/cli": "^2.10.0",
     "eslint": "^9",
     "eslint-config-next": "16.3.3",
     "tailwindcss": "^4",

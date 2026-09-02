@@ -8,8 +8,8 @@ import {
   type AssetSnapshot,
   type NormalizedOrder,
 } from "./engine";
-import { ALL_ASSETS, isOptionsAsset, type Asset } from "./assets";
-import { buildModelBook, bsRho } from "./modelBook";
+import { ALL_ASSETS, type Asset } from "./assets";
+import { bsRho } from "./modelBook";
 
 export type MarketSnapshot = {
   ts: number;
@@ -53,7 +53,6 @@ export type FeedRow = {
   } | null;
 };
 
-const RPC_URL = process.env.THETANUTS_RPC_URL ?? "https://mainnet.base.org";
 const CACHE_MS = 8_000;
 
 let client: ThetanutsClient | null = null;
@@ -69,9 +68,11 @@ export function getLastNormalizedOrders(): NormalizedOrder[] {
 
 export function getClient(): ThetanutsClient {
   if (!client) {
+    const rpcUrl = process.env.BASE_RPC_URL?.trim();
+    if (!rpcUrl) throw new Error("BASE_RPC_URL is not configured");
     client = new ThetanutsClient({
       chainId: 8453,
-      provider: new ethers.JsonRpcProvider(RPC_URL),
+      provider: new ethers.JsonRpcProvider(rpcUrl),
     });
   }
   return client;
@@ -90,16 +91,16 @@ let priceCache: { at: number; ticker: { symbol: string; price: number }[] } | nu
 export async function getLivePrices() {
   if (priceCache && Date.now() - priceCache.at < PRICE_CACHE_MS) return priceCache.ticker;
   const market = await getClient().api.getMarketData();
-  const ticker = ["BTC", "ETH", "SOL", "XRP", "BNB", "AVAX"]
+  const ticker = ALL_ASSETS
     .map((symbol) => ({ symbol, price: market.prices[symbol] }))
     .filter((t) => Number.isFinite(t.price) && t.price > 0);
   priceCache = { at: Date.now(), ticker };
   return ticker;
 }
 
-export async function getMarketSnapshot(): Promise<MarketSnapshot> {
+export async function getMarketSnapshot({ fresh = false }: { fresh?: boolean } = {}): Promise<MarketSnapshot> {
   const now = Date.now();
-  if (cached && now - cachedAt < CACHE_MS) return { ...cached, source: "cache" };
+  if (!fresh && cached && now - cachedAt < CACHE_MS) return { ...cached, source: "cache" };
   if (inflight) return inflight;
 
   inflight = (async () => {
@@ -177,13 +178,6 @@ export async function getMarketSnapshot(): Promise<MarketSnapshot> {
     }
 
     const nowSec = Math.floor(now / 1000);
-
-    // Assets without a live Thetanuts market get a modeled book priced off
-    // live spot, so the full risk stack works everywhere (labeled in the UI).
-    for (const symbol of ALL_ASSETS) {
-      if (isOptionsAsset(symbol)) continue;
-      normalized.push(...buildModelBook(symbol, market.prices[symbol], nowSec));
-    }
 
     const assetsBefore = Object.fromEntries(
       ALL_ASSETS.map((symbol) => [

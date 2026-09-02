@@ -17,9 +17,6 @@ export const latestPrices = new Map<string, PriceEvent>();
 const PRODUCTS: Record<string, string> = {
   "BTC-USD": "BTC",
   "ETH-USD": "ETH",
-  "SOL-USD": "SOL",
-  "XRP-USD": "XRP",
-  "AVAX-USD": "AVAX",
 };
 
 const WS_URL = process.env.COINBASE_WS_URL ?? "wss://ws-feed.exchange.coinbase.com";

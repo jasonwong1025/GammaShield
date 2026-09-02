@@ -190,23 +190,20 @@ export function WhatIfChat({ snap, onNavigateToHedge }: Props) {
                     </span>
                     <p className="text-[11.5px]">{m.data.strategicAdvice}</p>
                   </div>
-                  {m.data.amplification > 1.15 && onNavigateToHedge && (
+                  {m.data.source === "gonka" && m.data.amplification > 1.15 && m.data.optimalContract && onNavigateToHedge && (
                     <button
                       type="button"
                       onClick={onNavigateToHedge}
                       className="shrink-0 px-3 py-1 text-[11.5px] font-medium rounded-md bg-crit text-white hover:brightness-110 transition"
                     >
-                      Hedge Downside 🛡️
+                      Review live order
                     </button>
                   )}
                 </div>
 
-                {m.data.gonkaRequestId && (
-                  <div className="text-[10px] font-mono text-faint flex items-center justify-between pt-0.5">
-                    <span>Gonka Trace ID: {m.data.gonkaRequestId}</span>
-                    <span>Model: {m.data.modelUsed}</span>
-                  </div>
-                )}
+                <div className="text-[10px] font-mono text-faint flex items-center justify-between pt-0.5">
+                  {m.data.source === "gonka" ? <><span>Gonka Trace ID: {m.data.gonkaRequestId}</span><span>Model: {m.data.modelUsed}</span></> : <span>Deterministic market-impact calculation · no model call</span>}
+                </div>
               </div>
             )}
           </div>

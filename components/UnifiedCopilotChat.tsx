@@ -11,6 +11,7 @@ type CopilotMode = "simulate" | "rumor";
 type Props = {
   snap: AssetSnapshot;
   onNavigateToHedge?: (strike?: number) => void;
+  onClose?: () => void;
 };
 
 type ChatMessage = {
@@ -20,8 +21,9 @@ type ChatMessage = {
   text: string;
   rumorData?: FactCheckResult;
   whatIfData?: WhatIfResult;
-  gonkaRequestId?: string;
-  modelUsed?: string;
+  source?: "gonka" | "deterministic";
+  gonkaRequestId?: string | null;
+  modelUsed?: string | null;
   timestamp: number;
 };
 
@@ -37,7 +39,7 @@ const RUMOR_PILLS = [
   "Derivatives dealer short gamma cascade alert",
 ];
 
-export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
+export function UnifiedCopilotChat({ snap, onNavigateToHedge, onClose }: Props) {
   const [mode, setMode] = useState<CopilotMode>("simulate");
   const [input, setInput] = useState("");
   const [selectedModel, setSelectedModel] = useState<GonkaModelId>(GONKA_MODELS.FLASH);
@@ -96,6 +98,7 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
           mode: "simulate",
           text: data.conversationalAnswer,
           whatIfData: data,
+          source: data.source,
           gonkaRequestId: data.gonkaRequestId,
           modelUsed: data.modelUsed,
           timestamp: Date.now(),
@@ -128,6 +131,7 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
           mode: "rumor",
           text: data.verdict,
           rumorData: data,
+          source: json.source,
           gonkaRequestId: json.gonkaRequestId,
           modelUsed: json.modelUsed,
           timestamp: Date.now(),
@@ -155,62 +159,73 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
   };
 
   return (
-    <section className="card p-5 flex flex-col gap-4 min-h-[600px]" aria-label="Unified Gonka Copilot">
+    <section className="flex flex-col gap-3 h-full min-h-0 p-4" aria-label="Unified Gonka Copilot">
       {/* Header & Mode Switcher */}
-      <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-edge">
-        <div>
+      <div className="flex items-start justify-between gap-2 pb-3 border-b border-edge">
+        <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className="live-dot inline-block size-2 rounded-full bg-blue" />
-            <h2 className="text-[15px] font-semibold text-fg tracking-tight">Gonka AI Copilot</h2>
+            <span className="live-dot inline-block size-2 rounded-full bg-blue shrink-0" />
+            <h2 className="text-[14px] font-semibold text-fg tracking-tight truncate">Gonka AI Copilot</h2>
           </div>
-          <p className="text-[12px] text-muted mt-0.5">
-            Test trade slippage and dealer feedback loops, or verify breaking market rumors against live Net GEX.
+          <p className="text-[11px] text-muted mt-0.5 leading-snug">
+            Simulate trade slippage or verify a market rumor against live Net GEX.
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
-          {/* Model Selector */}
-          <select
-            value={selectedModel}
-            onChange={(e) => setSelectedModel(e.target.value as GonkaModelId)}
-            className="px-2.5 py-1 rounded-lg border border-edge bg-panel2 text-[11.5px] font-medium text-fg focus:outline-none focus:border-blue"
-            title="Select AI Model"
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close copilot"
+            className="shrink-0 flex items-center justify-center size-7 rounded-lg text-faint hover:text-fg hover:bg-panel2 transition"
           >
-            <option value={GONKA_MODELS.FLASH}>⚡ DeepSeek Flash (~3s)</option>
-            <option value={GONKA_MODELS.PRIMARY}>🧠 MiniMax-M2.7 (Deep Quant)</option>
-            <option value={GONKA_MODELS.KIMI}>🎯 Kimi-K2.6 (Fact Accuracy)</option>
-          </select>
+            ✕
+          </button>
+        )}
+      </div>
 
-          {/* Mode Switcher Pill */}
-          <div className="flex p-0.5 rounded-lg bg-panel2 border border-edge shrink-0">
-            <button
-              type="button"
-              onClick={() => setMode("simulate")}
-              className={`px-3 py-1 rounded-md text-[12px] font-medium transition ${
-                mode === "simulate"
-                  ? "bg-panel3 text-fg font-semibold shadow-xs"
-                  : "text-muted hover:text-fg"
-              }`}
-            >
-              💬 Simulate Trade (&quot;What-If&quot;)
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode("rumor")}
-              className={`px-3 py-1 rounded-md text-[12px] font-medium transition ${
-                mode === "rumor"
-                  ? "bg-panel3 text-fg font-semibold shadow-xs"
-                  : "text-muted hover:text-fg"
-              }`}
-            >
-              🔍 Verify Rumor (Fact-Check)
-            </button>
-          </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Model Selector */}
+        <select
+          value={selectedModel}
+          onChange={(e) => setSelectedModel(e.target.value as GonkaModelId)}
+          className="px-2.5 py-1 rounded-lg border border-edge bg-panel2 text-[11.5px] font-medium text-fg focus:outline-none focus:border-blue"
+          title="Select AI Model"
+        >
+          <option value={GONKA_MODELS.FLASH}>⚡ DeepSeek Flash (~3s)</option>
+          <option value={GONKA_MODELS.PRIMARY}>🧠 MiniMax-M2.7 (Deep Quant)</option>
+          <option value={GONKA_MODELS.KIMI}>🎯 Kimi-K2.6 (Fact Accuracy)</option>
+        </select>
+
+        {/* Mode Switcher Pill */}
+        <div className="flex p-0.5 rounded-lg bg-panel2 border border-edge shrink-0">
+          <button
+            type="button"
+            onClick={() => setMode("simulate")}
+            className={`px-3 py-1 rounded-md text-[12px] font-medium transition ${
+              mode === "simulate"
+                ? "bg-panel3 text-fg font-semibold shadow-xs"
+                : "text-muted hover:text-fg"
+            }`}
+          >
+            💬 Simulate
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("rumor")}
+            className={`px-3 py-1 rounded-md text-[12px] font-medium transition ${
+              mode === "rumor"
+                ? "bg-panel3 text-fg font-semibold shadow-xs"
+                : "text-muted hover:text-fg"
+            }`}
+          >
+            🔍 Verify Rumor
+          </button>
         </div>
       </div>
 
       {/* Messages Stream */}
-      <div className="grow flex flex-col gap-3 max-h-[460px] overflow-y-auto pr-1 feed-scroll">
+      <div className="grow flex flex-col gap-3 min-h-0 overflow-y-auto pr-1 feed-scroll">
         {messages.map((m) => (
           <div
             key={m.id}
@@ -229,7 +244,7 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
                   <>
                     <span className="size-1.5 rounded-full bg-blue" />
                     <span className="font-semibold text-fg">
-                      Gonka Copilot · {m.mode === "simulate" ? "Trade Simulator" : "Fact-Checker"}
+                      {m.source === "deterministic" ? "Deterministic market calculation" : `Gonka Copilot · ${m.mode === "simulate" ? "Trade Simulator" : "Fact-Checker"}`}
                     </span>
                   </>
                 )}
@@ -271,7 +286,7 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
                 </div>
 
                 <div className="text-[12px] text-muted leading-relaxed">
-                  <span className="font-semibold text-fg block mb-0.5">Quantitative AI Reasoning:</span>
+                  <span className="font-semibold text-fg block mb-0.5">{m.source === "gonka" ? "Quantitative AI reasoning:" : "Deterministic market-structure calculation:"}</span>
                   <p>{m.rumorData.reasoning}</p>
                 </div>
 
@@ -285,23 +300,23 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
                 >
                   <div className="flex flex-col gap-0.5">
                     <div className="flex items-center gap-1.5 font-bold text-fg">
-                      <span>{m.rumorData.shouldHedge ? "🚨 Protective Put Recommended" : "✅ No Immediate Hedge Needed"}</span>
-                      {m.rumorData.strikeSuggestion > 0 && (
+                      <span>{m.source === "deterministic" ? "No executable recommendation" : m.rumorData.shouldHedge ? "🚨 Protective PUT review suggested" : "✅ No immediate hedge suggested"}</span>
+                      {m.source === "gonka" && m.rumorData.optimalContract && (
                         <span className="font-mono px-1.5 py-0.2 rounded bg-panel border border-edge text-blue text-[11px]">
-                          ${m.rumorData.strikeSuggestion.toLocaleString()} PUT
+                          ${m.rumorData.optimalContract.strike.toLocaleString()} PUT
                         </span>
                       )}
                     </div>
                     <span className="text-muted">{m.rumorData.actionRationale}</span>
                   </div>
 
-                  {m.rumorData.shouldHedge && onNavigateToHedge && (
+                  {m.source === "gonka" && m.rumorData.shouldHedge && m.rumorData.optimalContract && onNavigateToHedge && (
                     <button
                       type="button"
-                      onClick={() => onNavigateToHedge(m.rumorData?.strikeSuggestion)}
+                      onClick={() => onNavigateToHedge(m.rumorData?.optimalContract?.strike)}
                       className="shrink-0 px-3 py-1.5 rounded-lg bg-crit text-white text-[11px] font-bold hover:brightness-110 transition shadow-xs"
                     >
-                      Hedge on Base ⚡
+                      Review live order
                     </button>
                   )}
                 </div>
@@ -349,21 +364,22 @@ export function UnifiedCopilotChat({ snap, onNavigateToHedge }: Props) {
                     </span>
                     <p className="text-muted">{m.whatIfData.strategicAdvice}</p>
                   </div>
-                  {m.whatIfData.amplification > 1.15 && onNavigateToHedge && (
+                  {m.whatIfData.source === "gonka" && m.whatIfData.amplification > 1.15 && m.whatIfData.optimalContract && onNavigateToHedge && (
                     <button
                       type="button"
                       onClick={() => onNavigateToHedge(m.whatIfData?.optimalContract?.strike)}
                       className="shrink-0 px-3 py-1 text-[11px] font-bold rounded-lg bg-crit text-white hover:brightness-110 transition"
                     >
-                      Hedge Downside 🛡️
+                      Review live order
                     </button>
                   )}
                 </div>
+                {m.whatIfData.source === "deterministic" && <p className="text-[10px] font-mono text-faint">Deterministic market-impact calculation · no model call</p>}
               </div>
             )}
 
             {/* Gonka Trace Pill */}
-            {m.gonkaRequestId && (
+            {m.source === "gonka" && m.gonkaRequestId && (
               <div className="flex items-center justify-between text-[10px] font-mono text-faint pt-0.5">
                 <span>Gonka Trace ID: {m.gonkaRequestId}</span>
                 <button

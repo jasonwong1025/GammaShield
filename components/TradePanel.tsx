@@ -10,25 +10,41 @@
 // amount, and duration are all set.
 
 import { useEffect, useRef, useState } from "react";
+import { useAccount, useBalance, useSendTransaction, useSwitchChain } from "wagmi";
+import { getPublicClient, readContract, waitForTransactionReceipt } from "wagmi/actions";
+import { base, baseSepolia } from "wagmi/chains";
+import { decodeFunctionData, type Address, type Hex, zeroAddress } from "viem";
 import { isOptionsAsset, type Asset } from "@/lib/assets";
 import type { TradeQuote, TradeSide } from "@/lib/trade";
 import { TRADE_PERIODS, type TradePeriod } from "@/lib/tradePeriods";
 import { COLLATERAL_TOKENS, RESERVE_BUFFER, collateralFor, decimalsForTokenSymbol } from "@/lib/collateral";
 import type { RfqPrepared, RfqStatus } from "@/lib/rfq";
 import type { AiRiskAssessment } from "@/lib/aiRisk";
-import { fmtExpiryDate, fmtIv, fmtStrike, fmtUsd, riskColor } from "@/lib/format";
-import {
-  getActiveProvider,
-  switchToBase,
-  type Eip1193Provider,
-} from "./WalletConnect";
+import type { ShadowQuote } from "@/lib/shadow";
+import { wagmiConfig } from "@/lib/wagmi";
+import { erc20Abi, useReadErc20BalanceOf } from "@/lib/generated/contracts";
+import { fmtContracts, fmtExpiryDate, fmtIv, fmtStrike, fmtUsd, riskColor } from "@/lib/format";
+import { ExplorerLink } from "./ExplorerLink";
+import { useExecutionNetwork } from "./ExecutionNetworkProvider";
+import { ensureWalletChain } from "@/lib/walletChain";
+import { StrategyBuilder } from "./StrategyBuilder";
 
 const QUOTE_DEBOUNCE_MS = 250;
 const QUOTE_REFRESH_MS = 15_000;
+const rfqExecutionEnabled = process.env.NEXT_PUBLIC_ENABLE_RFQ_EXECUTION === "true";
+type GammaShieldChainId = typeof base.id | typeof baseSepolia.id;
+
+export type HedgeIntent = {
+  asset: Asset;
+  contracts: string;
+  period: TradePeriod;
+  maxPremiumUsd: number;
+  nonce: number;
+};
 
 type TxPhase =
   | { step: "idle" }
-  | { step: "connecting" | "approving" | "filling" }
+  | { step: "connecting" | "preparing" | "approving" | "ready" | "preflighting" | "filling" }
   | { step: "done"; hash: string }
   | { step: "error"; message: string };
 
@@ -40,51 +56,68 @@ type RfqPhase =
   | { step: "done"; hash: string; optionAddress: string | null }
   | { step: "error"; message: string };
 
-async function connectWallet() {
-  const provider = getActiveProvider();
-  if (!provider) throw new Error("No wallet detected — install MetaMask or Phantom.");
-  const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
-  const from = accounts[0];
-  if (!from) throw new Error("no account connected");
-  await switchToBase(provider);
-  return { provider, from };
-}
-
-async function sendTx(
-  provider: Eip1193Provider,
-  from: string,
-  tx: { to: string; data: string },
-): Promise<string> {
-  const hash = (await provider.request({
-    method: "eth_sendTransaction",
-    params: [{ from, to: tx.to, data: tx.data }],
-  })) as string;
-  await waitForReceipt(provider, hash);
-  return hash;
-}
+type ShadowTxPhase =
+  | { step: "idle" }
+  | { step: "connecting" | "preparing" | "approving" | "ready" | "filling" }
+  | { step: "done"; hash: string; quote: ShadowQuote }
+  | { step: "error"; message: string };
 
 // Skip the approve popup when the token allowance already covers the pull —
 // fewer wallet prompts, and sidesteps MetaMask's spending-cap alert flow.
 async function needsApproval(
-  provider: Eip1193Provider,
-  owner: string,
+  owner: Address,
   approve: { to: string; data: string },
-  spender: string,
+  spender: Address,
+  chainId: GammaShieldChainId,
 ): Promise<boolean> {
+  let allowanceNeeded: bigint;
   try {
-    const needed = BigInt("0x" + approve.data.slice(-64));
-    const data =
-      "0xdd62ed3e" + // allowance(address,address)
-      owner.slice(2).toLowerCase().padStart(64, "0") +
-      spender.slice(2).toLowerCase().padStart(64, "0");
-    const res = (await provider.request({
-      method: "eth_call",
-      params: [{ to: approve.to, data }, "latest"],
-    })) as string;
-    return BigInt(res) < needed;
+    const decoded = decodeFunctionData({ abi: erc20Abi, data: approve.data as Hex });
+    if (
+      decoded.functionName !== "approve" ||
+      !decoded.args ||
+      decoded.args[0].toLowerCase() !== spender.toLowerCase()
+    ) {
+      throw new Error("Approval does not authorize the intended execution contract.");
+    }
+    allowanceNeeded = decoded.args[1];
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Approval does not")) throw error;
+    return true;
+  }
+
+  try {
+    const allowance = await readContract(wagmiConfig, {
+      address: approve.to as Address,
+      abi: erc20Abi,
+      functionName: "allowance",
+      args: [owner, spender],
+      chainId,
+    });
+    return allowance < allowanceNeeded;
   } catch {
     return true; // can't verify — approve to be safe
   }
+}
+
+/**
+ * Simulate the exact user-signed fill after its approval is confirmed. This
+ * catches stale/filled orders and insufficient balance without broadcasting a
+ * transaction. The wallet remains the RPC authority for the user's account.
+ */
+async function preflightTx(
+  from: Address,
+  tx: { to: string; data: string },
+  chainId: GammaShieldChainId,
+) {
+  const client = getPublicClient(wagmiConfig, { chainId });
+  if (!client) throw new Error("Base RPC is not configured");
+  await client.call({
+    account: from,
+    to: tx.to as Address,
+    data: tx.data as Hex,
+    blockTag: "pending",
+  });
 }
 
 async function rfqApi<T>(body: Record<string, unknown>): Promise<T> {
@@ -96,21 +129,6 @@ async function rfqApi<T>(body: Record<string, unknown>): Promise<T> {
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? `rfq ${res.status}`);
   return data as T;
-}
-
-async function waitForReceipt(provider: Eip1193Provider, hash: string) {
-  for (let i = 0; i < 60; i++) {
-    const receipt = (await provider.request({
-      method: "eth_getTransactionReceipt",
-      params: [hash],
-    })) as { status?: string } | null;
-    if (receipt) {
-      if (receipt.status === "0x0") throw new Error("transaction reverted");
-      return;
-    }
-    await new Promise((r) => setTimeout(r, 1500));
-  }
-  throw new Error("timed out waiting for confirmation");
 }
 
 /** aBasWETH → WETH etc. — friendlier display, full symbol in the title attr. */
@@ -126,19 +144,24 @@ function periodLabel(p: TradePeriod) {
   return p === 7 ? "1 Week" : p === 14 ? "2 Weeks" : "4 Weeks";
 }
 
-export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
-  const [side, setSide] = useState<TradeSide>("call");
-  const [amountStr, setAmountStr] = useState("1");
-  const [period, setPeriod] = useState<TradePeriod>(7);
+export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: boolean; hedgeIntent: HedgeIntent | null }) {
+  const { network } = useExecutionNetwork();
+  const { address: walletAddress, connector } = useAccount();
+  const { switchChainAsync } = useSwitchChain();
+  const { sendTransactionAsync } = useSendTransaction();
+  const initialHedge = hedgeIntent?.asset === asset ? hedgeIntent : null;
+  const [side, setSide] = useState<TradeSide>(initialHedge ? "put" : "call");
+  const [view, setView] = useState<"single" | "strategy">("single");
+  const executionMode = network === "mainnet" ? "mainnet" : "shadow";
+  const [amountStr, setAmountStr] = useState(initialHedge?.contracts ?? "1");
+  const [period, setPeriod] = useState<TradePeriod>(initialHedge?.period ?? 7);
   const [quote, setQuote] = useState<TradeQuote | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [tx, setTx] = useState<TxPhase>({ step: "idle" });
+  const [shadowTx, setShadowTx] = useState<ShadowTxPhase>({ step: "idle" });
   const [rfq, setRfq] = useState<RfqPhase>({ step: "idle" });
   const [mountedSec] = useState(() => Math.floor(Date.now() / 1000));
-  const [walletAddress, setWalletAddress] = useState<string | null>(null);
-  const [tokenBalance, setTokenBalance] = useState<number | null>(null);
-  const [ethBalance, setEthBalance] = useState<number | null>(null);
   const [aiRisk, setAiRisk] = useState<AiRiskAssessment | null>(null);
   // Trade signature the current aiRisk was computed for — lets the render
   // detect a config change since the last click and hide the stale read
@@ -152,75 +175,76 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
 
   const amount = Number(amountStr);
   const validAmount = Number.isFinite(amount) && amount > 0;
-
-  // Silent lookup of whichever wallet is already connected (no popup) — lets
-  // us warn about insufficient balance before the user even clicks buy.
-  useEffect(() => {
-    const provider = getActiveProvider();
-    if (!provider) return;
-    let stale = false;
-    provider
-      .request({ method: "eth_accounts" })
-      .then((accounts) => {
-        if (!stale) setWalletAddress((accounts as string[])[0] ?? null);
-      })
-      .catch(() => {});
-    const onAccountsChanged = ((accounts: string[]) => {
-      setWalletAddress(accounts[0] ?? null);
-    }) as never;
-    provider.on?.("accountsChanged", onAccountsChanged);
-    return () => {
-      stale = true;
-      provider.removeListener?.("accountsChanged", onAccountsChanged);
-    };
-  }, []);
+  const quotePremiumCap = hedgeIntent?.asset === asset && side === "put" ? hedgeIntent.maxPremiumUsd : null;
 
   // Whichever collateral token this trade would actually pull from: the
   // exact maker's token for a book fill, else the standard RFQ collateral.
   const collateralInfo =
-    quote?.source === "book" && quote.txs
-      ? {
-          address: quote.txs.approve.to,
-          decimals: decimalsForTokenSymbol(quote.premiumToken),
-          symbol: quote.premiumToken,
-        }
-      : isOptionsAsset(asset)
+    executionMode === "mainnet"
+      ? quote?.source === "book" && quote.txs
         ? {
-            address: COLLATERAL_TOKENS[collateralFor(asset, side)].address,
-            decimals: COLLATERAL_TOKENS[collateralFor(asset, side)].decimals,
-            symbol: collateralFor(asset, side),
+            address: quote.txs.approve.to,
+            decimals: decimalsForTokenSymbol(quote.premiumToken),
+            symbol: quote.premiumToken,
           }
-        : null;
+        : isOptionsAsset(asset)
+          ? {
+              address: COLLATERAL_TOKENS[collateralFor(asset, side)].address,
+              decimals: COLLATERAL_TOKENS[collateralFor(asset, side)].decimals,
+              symbol: collateralFor(asset, side),
+            }
+          : null
+      : null;
+  const collateralAddress = collateralInfo?.address;
+  const collateralDecimals = collateralInfo?.decimals;
+  const executionChainId: GammaShieldChainId = executionMode === "mainnet" ? base.id : baseSepolia.id;
+  const { data: tokenBalanceRaw } = useReadErc20BalanceOf({
+    address: (collateralAddress ?? zeroAddress) as Address,
+    args: [walletAddress ?? zeroAddress],
+    chainId: executionChainId,
+    query: { enabled: !!walletAddress && !!collateralAddress && collateralDecimals != null },
+  });
+  const { data: nativeBalance } = useBalance({
+    address: walletAddress,
+    chainId: executionChainId,
+    query: { enabled: !!walletAddress },
+  });
+  const tokenBalance = tokenBalanceRaw != null && collateralDecimals != null
+    ? Number(tokenBalanceRaw) / 10 ** collateralDecimals
+    : null;
+  const ethBalance = nativeBalance ? Number(nativeBalance.value) / 1e18 : null;
 
-  // Balance check — a wallet-side warning, not a substitute for the real
-  // approve/fill math, so plain floats are fine here.
-  useEffect(() => {
-    if (!walletAddress || !collateralInfo) return;
-    const provider = getActiveProvider();
-    if (!provider) return;
-    let stale = false;
-    const balanceOfData = "0x70a08231" + walletAddress.slice(2).toLowerCase().padStart(64, "0");
-    provider
-      .request({ method: "eth_call", params: [{ to: collateralInfo.address, data: balanceOfData }, "latest"] })
-      .then((res) => {
-        if (stale) return;
-        setTokenBalance(Number(BigInt(res as string)) / 10 ** collateralInfo.decimals);
-      })
-      .catch(() => {
-        if (!stale) setTokenBalance(null);
+  const ensureChain = async (targetChainId: GammaShieldChainId): Promise<Address> => {
+    if (!walletAddress) throw new Error("Connect a wallet from the top bar first.");
+    await ensureWalletChain(targetChainId, connector, switchChainAsync);
+    return walletAddress;
+  };
+
+  const sendTx = async (targetChainId: GammaShieldChainId, tx: { to: string; data: string }): Promise<string> => {
+    let hash: Hex;
+    try {
+      hash = await sendTransactionAsync({
+        chainId: targetChainId,
+        to: tx.to as Address,
+        data: tx.data as Hex,
       });
-    provider
-      .request({ method: "eth_getBalance", params: [walletAddress, "latest"] })
-      .then((res) => {
-        if (!stale) setEthBalance(Number(BigInt(res as string)) / 1e18);
-      })
-      .catch(() => {
-        if (!stale) setEthBalance(null);
-      });
-    return () => {
-      stale = true;
-    };
-  }, [walletAddress, collateralInfo?.address, collateralInfo?.decimals]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (message.includes("An internal error was received") || message.includes("Unexpected error")) {
+        throw new Error("Your wallet did not submit the transaction, so no funds moved. Close any other Phantom confirmation, confirm Base Mainnet is selected, then retry once.");
+      }
+      throw error;
+    }
+
+    let receipt;
+    try {
+      receipt = await waitForTransactionReceipt(wagmiConfig, { chainId: targetChainId, hash });
+    } catch {
+      throw new Error(`Transaction was submitted but its receipt could not be read. Check BaseScan for ${hash} before retrying.`);
+    }
+    if (receipt.status !== "success") throw new Error("Transaction reverted on-chain.");
+    return hash;
+  };
 
   // Reset stale quote/tx state when the market or direction changes.
   const [prevKey, setPrevKey] = useState(`${asset}:${side}`);
@@ -237,8 +261,10 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
       setLoading(true);
       try {
         const contracts = validAmount ? amount : 0;
+        const params = new URLSearchParams({ asset, side, contracts: String(contracts), period: String(period) });
+        if (quotePremiumCap != null) params.set("maxPremiumUsd", String(quotePremiumCap));
         const res = await fetch(
-          `/api/quote?asset=${asset}&side=${side}&contracts=${contracts}&period=${period}`,
+          `/api/quote?${params}`,
           { cache: "no-store" },
         );
         const data = await res.json();
@@ -260,7 +286,7 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
       clearTimeout(timer);
       clearInterval(refresh);
     };
-  }, [asset, side, amount, validAmount, period, live]);
+  }, [asset, side, amount, validAmount, period, live, quotePremiumCap]);
 
   // AI second opinion on the same fill, via GonkaRouter (lib/aiRisk.ts).
   // Manual only — the user clicks "Get AI read"; nothing here auto-fires on
@@ -309,17 +335,57 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
   };
 
   const buy = async () => {
-    if (!quote?.txs) return;
+    if (!validAmount) return;
     try {
       setTx({ step: "connecting" });
-      const { provider, from } = await connectWallet();
-      if (await needsApproval(provider, from, quote.txs.approve, quote.txs.fill.to)) {
-        setTx({ step: "approving" });
-        await sendTx(provider, from, quote.txs.approve);
+      const from = await ensureChain(base.id);
+      setTx({ step: "preparing" });
+      const params = new URLSearchParams({
+        asset,
+        side,
+        contracts: amountStr,
+        period: String(period),
+        fresh: "1",
+      });
+      if (quotePremiumCap != null) params.set("maxPremiumUsd", String(quotePremiumCap));
+      const res = await fetch(`/api/quote?${params}`, { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? `quote ${res.status}`);
+      const prepared = data as TradeQuote;
+      if (prepared.source !== "book" || !prepared.txs) {
+        throw new Error("No fresh listed OptionBook order can fill this trade. Choose an instant-fill tenor or request an RFQ.");
       }
+      // A maker may cancel or reprice between the visible quote and this
+      // fresh preparation. The user must review any changed maker, option,
+      // expiry, collateral, size, or price before an approval/fill can occur.
+      if (
+        !quote ||
+        prepared.asset !== quote.asset ||
+        prepared.side !== quote.side ||
+        prepared.maker !== quote.maker ||
+        prepared.strike !== quote.strike ||
+        prepared.expiryTs !== quote.expiryTs ||
+        prepared.premiumToken !== quote.premiumToken ||
+        prepared.contracts !== quote.contracts ||
+        prepared.totalCostToken !== quote.totalCostToken ||
+        prepared.txs.approve.to.toLowerCase() !== quote.txs?.approve.to.toLowerCase() ||
+        prepared.txs.fill.to.toLowerCase() !== quote.txs?.fill.to.toLowerCase()
+      ) {
+        setQuote(prepared);
+        throw new Error("Live order changed. Review the refreshed quote before continuing.");
+      }
+      if (await needsApproval(from, prepared.txs.approve, prepared.txs.fill.to as Address, base.id)) {
+        setTx({ step: "approving" });
+        await sendTx(base.id, prepared.txs.approve);
+        setTx({ step: "ready" });
+        return;
+      }
+      setTx({ step: "preflighting" });
+      await preflightTx(from, prepared.txs.fill, base.id);
       setTx({ step: "filling" });
-      const fillHash = await sendTx(provider, from, quote.txs.fill);
+      const fillHash = await sendTx(base.id, prepared.txs.fill);
       setTx({ step: "done", hash: fillHash });
+      window.dispatchEvent(new Event("thetanuts-position-changed"));
     } catch (e) {
       const message =
         (e as { code?: number })?.code === 4001
@@ -331,12 +397,43 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
     }
   };
 
+  const buyShadow = async () => {
+    if (!validAmount) return;
+    try {
+      setShadowTx({ step: "connecting" });
+      const from = await ensureChain(baseSepolia.id);
+      setShadowTx({ step: "preparing" });
+      const params = new URLSearchParams({ asset, buyer: from, side, contracts: amountStr, period: String(period) });
+      const res = await fetch(`/api/shadow/quote?${params}`, { cache: "no-store" });
+      const shadowQuote = await res.json();
+      if (!res.ok) throw new Error(shadowQuote.error ?? `shadow quote ${res.status}`);
+      const prepared = shadowQuote as ShadowQuote;
+      if (await needsApproval(from, prepared.txs.approve, prepared.txs.fill.to as Address, baseSepolia.id)) {
+        setShadowTx({ step: "approving" });
+        await sendTx(baseSepolia.id, prepared.txs.approve);
+        setShadowTx({ step: "ready" });
+        return;
+      }
+      setShadowTx({ step: "filling" });
+      const hash = await sendTx(baseSepolia.id, prepared.txs.fill);
+      setShadowTx({ step: "done", hash, quote: prepared });
+    } catch (e) {
+      const message =
+        (e as { code?: number })?.code === 4001
+          ? "Transaction rejected in wallet."
+          : e instanceof Error
+            ? e.message
+            : "shadow fill failed";
+      setShadowTx({ step: "error", message });
+    }
+  };
+
   // Custom-expiry path: submit a sealed-bid RFQ, then poll for maker offers.
   const requestRfq = async () => {
     if (!validAmount) return;
     try {
       setRfq({ step: "connecting" });
-      const { provider, from } = await connectWallet();
+      const from = await ensureChain(base.id);
       rfqAddress.current = from;
       const prepared = await rfqApi<RfqPrepared>({
         action: "prepare",
@@ -346,12 +443,12 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
         contracts: amount,
         period,
       });
-      if (await needsApproval(provider, from, prepared.approve, prepared.tx.to)) {
+      if (await needsApproval(from, prepared.approve, prepared.tx.to as Address, base.id)) {
         setRfq({ step: "approving" });
-        await sendTx(provider, from, prepared.approve);
+        await sendTx(base.id, prepared.approve);
       }
       setRfq({ step: "requesting" });
-      await sendTx(provider, from, prepared.tx);
+      await sendTx(base.id, prepared.tx);
       setRfq({ step: "auction", status: null, deadline: prepared.offerDeadlineTs });
     } catch (e) {
       const message =
@@ -394,17 +491,17 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
     const status = rfq.status;
     try {
       setRfq({ step: "accepting", status });
-      const { provider, from } = await connectWallet();
+      const from = await ensureChain(base.id);
       const txs = await rfqApi<{ approve: { to: string; data: string }; settle: { to: string; data: string } }>({
         action: "settle",
         address: from,
         id: status.id,
         offeror: status.best!.offeror,
       });
-      if (await needsApproval(provider, from, txs.approve, txs.settle.to)) {
-        await sendTx(provider, from, txs.approve);
+      if (await needsApproval(from, txs.approve, txs.settle.to as Address, base.id)) {
+        await sendTx(base.id, txs.approve);
       }
-      const hash = await sendTx(provider, from, txs.settle);
+      const hash = await sendTx(base.id, txs.settle);
       let optionAddress: string | null = null;
       try {
         const { rfq: settled } = await rfqApi<{ rfq: RfqStatus | null }>({
@@ -450,15 +547,21 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
   const impact = configured && quoteInSync ? quote.impact : null;
   const currentTradeKey = quote ? `${asset}:${side}:${quote.strike}:${quote.expiryTs}:${quote.contracts}` : null;
   const aiRiskCurrent = aiRisk && aiRiskKey === currentTradeKey ? aiRisk : null;
-  const busy = tx.step === "connecting" || tx.step === "approving" || tx.step === "filling";
+  const busy =
+    tx.step === "connecting" ||
+    tx.step === "preparing" ||
+    tx.step === "approving" ||
+    tx.step === "preflighting" ||
+    tx.step === "filling";
+  const shadowBusy = shadowTx.step === "connecting" || shadowTx.step === "preparing" || shadowTx.step === "approving" || shadowTx.step === "filling";
 
-  // Required collateral for this quote: the padded approve amount for a book
-  // fill, or contracts × reservePrice (the RFQ escrow) otherwise — same math
+  // Required collateral for this quote: the exact simulated book-fill amount,
+  // or contracts × reservePrice (the RFQ escrow) otherwise — same math
   // as lib/trade.ts / lib/rfq.ts, just in plain floats for a UI-only check.
   const requiredCollateral =
     quote && configured
       ? quote.source === "book"
-        ? quote.totalCostToken * 1.01
+        ? quote.totalCostToken
         : quote.contracts *
           (side === "put" ? quote.premiumPerContractUsd : quote.premiumPerContractUsd / quote.spot) *
           RESERVE_BUFFER
@@ -470,16 +573,26 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
     tokenBalance != null &&
     tokenBalance < requiredCollateral;
   const insufficientGas = !!walletAddress && ethBalance != null && ethBalance < 0.0003;
+  const overHedgeBudget =
+    hedgeIntent?.asset === asset &&
+    side === "put" &&
+    quote?.source === "book" &&
+    quote.totalCostUsd > hedgeIntent.maxPremiumUsd;
+  const protectedValueAtExpiry = quote && side === "put" ? quote.strike * quote.contracts : null;
+  const protectedFloorAfterPremium =
+    protectedValueAtExpiry !== null && quote ? protectedValueAtExpiry - quote.totalCostUsd : null;
 
   return (
     <section className="card p-5 flex flex-col gap-4" aria-label="Trade options">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <h2 className="text-[14px] font-semibold">Trade {asset} options</h2>
-        <span className="flex items-center gap-1.5 text-[11px] text-muted">
-          <span className="live-dot inline-block size-1.5 rounded-full bg-calm" />
-          OptionBook (live)
-        </span>
+        <div className="flex items-center gap-2">
+          <div className="flex rounded-lg bg-panel2 p-1 text-[10px] font-semibold"><button onClick={() => setView("single")} aria-pressed={view === "single"} className={`h-6 rounded px-2 ${view === "single" ? "bg-panel text-fg shadow-sm" : "text-muted"}`}>Single</button><button onClick={() => setView("strategy")} aria-pressed={view === "strategy"} className={`h-6 rounded px-2 ${view === "strategy" ? "bg-panel text-fg shadow-sm" : "text-muted"}`}>Strategies</button></div>
+          <span className="hidden sm:flex items-center gap-1.5 text-[11px] text-muted"><span className="live-dot inline-block size-1.5 rounded-full bg-calm" />OptionBook (live)</span>
+        </div>
       </div>
+
+      {view === "strategy" ? <StrategyBuilder key={asset} asset={asset} /> : <>
 
       {/* Direction */}
       <div className="grid grid-cols-2 gap-1 rounded-lg bg-panel2 p-1">
@@ -510,9 +623,9 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
           {quote?.maxContracts != null && (
             <button
               className="text-blue hover:underline"
-              onClick={() => setAmountStr(quote.maxContracts!.toFixed(2))}
+              onClick={() => setAmountStr(fmtContracts(quote.maxContracts!))}
             >
-              Max {quote.maxContracts.toFixed(2)}
+              Max {fmtContracts(quote.maxContracts)}
             </button>
           )}
         </div>
@@ -577,11 +690,11 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
         <p className="text-[12px] text-crit">{quoteError}</p>
       ) : quote ? (
         <div
-          className={`rounded-lg bg-panel2 p-3 flex flex-col gap-1.5 text-[12px] transition-opacity ${
+          className={`rounded-md bg-panel2 p-3 flex flex-col gap-1.5 text-[12px] transition-opacity ${
             quoteInSync ? "" : "opacity-50"
           }`}
         >
-          <div className="flex items-center justify-between text-[10px] uppercase tracking-wide">
+          <div className="eyebrow flex items-center justify-between text-[10px]">
             {quote.source === "book" ? (
               <span className="text-calm">● Instant fill — OptionBook</span>
             ) : (
@@ -590,7 +703,7 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
               </span>
             )}
           </div>
-          <Row label="Strike (nearest ATM)" value={fmtStrike(quote.strike)} />
+          <Row label={quotePremiumCap != null && side === "put" ? "Strike (selected within cap)" : "Strike (nearest ATM)"} value={fmtStrike(quote.strike)} />
           <Row
             label="Premium / contract"
             value={
@@ -613,13 +726,51 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
             label="Total cost"
             value={
               <span className="font-semibold text-fg">
-                {configured ? fmtUsd(quote.totalCostUsd, false) : "—"}
+                {configured ? fmtUsd(quote.totalCostUsd, false, 2) : "—"}
               </span>
             }
           />
         </div>
       ) : (
         <p className="text-[12px] text-faint">{loading ? "Quoting the live book…" : ""}</p>
+      )}
+
+      {hedgeIntent?.asset === asset && side === "put" && (
+        <div
+          className="note text-[12px] leading-relaxed"
+          style={{ borderLeftColor: "var(--blue)", background: "color-mix(in srgb, var(--blue) 6%, transparent)" }}
+        >
+          <p className="eyebrow text-[10px] font-semibold text-blue">Protective-put plan</p>
+          <p className="mt-1 text-muted">
+            Protecting {fmtContracts(amount)} {asset} through {quote ? fmtExpiryDate(quote.expiryTs) : periodLabel(period)}. Your premium cap is {fmtUsd(hedgeIntent.maxPremiumUsd, false, 2)}.
+          </p>
+          {quote && protectedFloorAfterPremium !== null && (
+            <p className="mt-1 text-fg">
+              If you hold that amount to expiry and it settles below {fmtStrike(quote.strike)}, the holding plus cash payout is about {fmtUsd(protectedFloorAfterPremium, false, 2)} before network fees.
+            </p>
+          )}
+          {overHedgeBudget && (
+            <p className="mt-1 text-crit">
+              This live listed put costs {fmtUsd(quote.totalCostUsd, false, 2)}, above your cap. Reduce protected exposure or choose another expiry.
+            </p>
+          )}
+        </div>
+      )}
+
+      {executionMode === "shadow" ? (
+        <p
+          className="note text-[11px] leading-relaxed text-muted"
+          style={{ borderLeftColor: "var(--blue)", background: "color-mix(in srgb, var(--blue) 6%, transparent)" }}
+        >
+          Mirrors this live quote on Base Sepolia using Circle test USDC. Try 0.01 contracts for a small test; this is not a Thetanuts position.
+        </p>
+      ) : (
+        <p
+          className="note text-[11px] leading-relaxed text-muted"
+          style={{ borderLeftColor: "var(--warn)", background: "color-mix(in srgb, var(--warn) 8%, transparent)" }}
+        >
+          Base mainnet uses real funds. Before your wallet can send a fill, GammaShield refetches the listed OptionBook order and simulates the exact transaction against your account.
+        </p>
       )}
 
       {/* Amplification impact — only once the trade is fully configured. One
@@ -629,7 +780,7 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
           risk readout, with an optional AI annotation" rather than two
           competing scores. */}
       {impact && (
-        <div className="rounded-lg border border-edge p-3 text-[12px] flex flex-col gap-1.5">
+        <div className="rounded-md border border-edge p-3 text-[12px] flex flex-col gap-1.5">
           <div className="flex items-center justify-between">
             <span className="text-muted">Amplification risk impact</span>
             <span className="num font-semibold">
@@ -696,12 +847,34 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
       )}
 
       {/* Action */}
-      {rfq.step === "connecting" ||
+      {executionMode === "shadow" ? (
+        <button
+          onClick={buyShadow}
+          disabled={!configured || !quoteInSync || shadowBusy}
+          className="h-10 rounded-lg bg-blue text-white text-[13px] font-semibold hover:brightness-110 transition disabled:opacity-50"
+        >
+          {shadowBusy
+            ? shadowTx.step === "connecting"
+              ? "Connecting wallet…"
+              : shadowTx.step === "preparing"
+                ? "Signing fresh shadow quote…"
+                : shadowTx.step === "approving"
+                  ? "Approving Circle test USDC…"
+                  : "Filling on Base Sepolia…"
+            : !validAmount
+              ? "Enter an amount to trade"
+              : shadowTx.step === "ready"
+                ? "Review and submit shadow fill"
+                : !quoteInSync || !quote
+                ? "Quoting…"
+              : `Mirror ${fmtContracts(quote.contracts)} ${asset} ${side} on Sepolia`}
+        </button>
+      ) : rfq.step === "connecting" ||
       rfq.step === "approving" ||
       rfq.step === "requesting" ||
       rfq.step === "auction" ||
       rfq.step === "accepting" ? (
-        <div className="rounded-lg border border-blue/40 bg-bluesoft/40 p-3 flex flex-col gap-2 text-[12px]">
+        <div className="rounded-md border border-blue/40 bg-bluesoft/40 p-3 flex flex-col gap-2 text-[12px]">
           <div className="flex items-center justify-between">
             <span className="font-semibold text-fg">
               {rfq.step === "connecting"
@@ -737,7 +910,7 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
                   Accept best offer · {fmtUsd(rfq.status.best.totalPremiumUsd, false)} total
                 </button>
               ) : (
-                <div className="h-9 rounded-lg border border-edge text-muted flex items-center justify-center">
+                <div className="h-9 rounded-md border border-edge text-muted flex items-center justify-center">
                   Waiting for maker offers…
                 </div>
               )}
@@ -747,19 +920,12 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
       ) : rfq.step === "done" ? (
         <p className="text-[12px] text-calm">
           Option created via RFQ auction.{" "}
-          <a
-            href={`${process.env.NEXT_PUBLIC_BASE_EXPLORER_URL ?? "https://basescan.org"}/tx/${rfq.hash}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline"
-          >
-            View transaction
-          </a>{" "}
+          <ExplorerLink network="mainnet" resource="tx" value={rfq.hash} className="underline">View transaction</ExplorerLink>{" "}
           <button className="text-faint underline" onClick={() => setRfq({ step: "idle" })}>
             trade again
           </button>
         </p>
-      ) : quote && !selFillable ? (
+      ) : quote && !selFillable && rfqExecutionEnabled ? (
         <div className="flex flex-col gap-1.5">
           <button
             onClick={requestRfq}
@@ -781,26 +947,49 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
             </button>
           )}
         </div>
+      ) : quote && !selFillable ? (
+        <div
+          className="note text-[12px] leading-relaxed text-muted"
+          style={{ borderLeftColor: "var(--warn)", background: "color-mix(in srgb, var(--warn) 8%, transparent)" }}
+        >
+          This expiry has no listed maker order. RFQ execution is paused by default because it escrows collateral and needs a separate review. Choose an instant-fill tenor instead.
+          {nearestFillable && (
+            <button
+              onClick={() => setPeriod(nearestFillable.period)}
+              className="mt-2 block text-blue hover:underline"
+            >
+              Choose instant fill · {periodLabel(nearestFillable.period)}
+            </button>
+          )}
+        </div>
       ) : (
         <button
           onClick={buy}
-          disabled={!configured || !quoteInSync || !quote?.txs || busy || insufficientToken || insufficientGas}
+          disabled={!configured || !quoteInSync || !quote?.txs || busy || insufficientToken || insufficientGas || overHedgeBudget}
           className="h-10 rounded-lg bg-blue text-white text-[13px] font-semibold hover:brightness-110 transition disabled:opacity-50"
         >
           {busy
             ? tx.step === "connecting"
               ? "Connecting wallet…"
+              : tx.step === "preparing"
+                ? "Refreshing listed order…"
               : tx.step === "approving"
                 ? `Approving ${displayToken(quote?.premiumToken ?? "")}…`
+                : tx.step === "preflighting"
+                  ? "Preflighting fill…"
                 : "Filling order…"
             : insufficientToken || insufficientGas
               ? "Insufficient balance"
-              : !validAmount
-                ? "Enter an amount to trade"
-                : !quoteInSync || !quote
+              : overHedgeBudget
+                ? "Live put exceeds premium cap"
+                : !validAmount
+                  ? "Enter an amount to trade"
+                  : tx.step === "ready"
+                    ? "Review and submit fill"
+                    : !quoteInSync || !quote
                   ? "Quoting…"
                   : configured && quote.txs
-                    ? `Buy ${quote.contracts.toFixed(2)} ${asset} ${side}${quote.contracts === 1 ? "" : "s"}`
+                    ? `Buy ${fmtContracts(quote.contracts)} ${asset} ${side}${quote.contracts === 1 ? "" : "s"}`
                     : "No listed makers right now"}
         </button>
       )}
@@ -808,17 +997,26 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
       {tx.step === "done" && (
         <p className="text-[12px] text-calm">
           Filled on Base.{" "}
-          <a
-            href={`${process.env.NEXT_PUBLIC_BASE_EXPLORER_URL ?? "https://basescan.org"}/tx/${tx.hash}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline"
-          >
-            View transaction
-          </a>
+          <ExplorerLink network="mainnet" resource="tx" value={tx.hash} className="underline">View transaction</ExplorerLink>
+        </p>
+      )}
+      {tx.step === "ready" && (
+        <p className="text-[12px] text-calm">
+          Approval confirmed for this order&apos;s exact simulated collateral. Review the refreshed quote, then submit the fill separately.
         </p>
       )}
       {tx.step === "error" && <p className="text-[12px] text-crit">{tx.message}</p>}
+      {shadowTx.step === "done" && (
+        <p className="text-[12px] text-calm">
+          Shadow fill confirmed on Base Sepolia. <ExplorerLink network="sepolia" resource="tx" value={shadowTx.hash} className="underline">View transaction</ExplorerLink>
+        </p>
+      )}
+      {shadowTx.step === "ready" && (
+        <p className="text-[12px] text-calm">
+          Test-USDC approval confirmed. Review the next signed shadow quote, then submit the test fill separately.
+        </p>
+      )}
+      {shadowTx.step === "error" && <p className="text-[12px] text-crit">{shadowTx.message}</p>}
       {rfq.step === "error" && (
         <p className="text-[12px] text-crit">
           {rfq.message}{" "}
@@ -833,6 +1031,7 @@ export function TradePanel({ asset, live }: { asset: Asset; live: boolean }) {
         period trades through the Thetanuts RFQ auction at the real expiry. Premium is paid in
         the option&apos;s collateral token; everything settles on Base.
       </p>
+      </>}
     </section>
   );
 }

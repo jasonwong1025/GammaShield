@@ -3,15 +3,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MarketSnapshot } from "@/lib/snapshot";
 import { TopBar, type NavTab } from "./TopBar";
-import { AssetRail } from "./AssetRail";
+import { AssetSwitcher } from "./AssetSwitcher";
 import { TradePanel } from "./TradePanel";
 import { PriceChart } from "./PriceChart";
 import { RiskView } from "./RiskView";
 import { BookCard } from "./BookFeed";
-import { LivePrice } from "./LivePrice";
-import { CopilotView } from "./CopilotView";
+import { CopilotWidget } from "./CopilotWidget";
 import { HedgeView } from "./HedgeView";
-import { ASSET_META, isOptionsAsset, type Asset } from "@/lib/assets";
+import { ExecutionNetworkProvider } from "./ExecutionNetworkProvider";
+import { ALL_ASSETS, isOptionsAsset, type Asset } from "@/lib/assets";
 
 const POLL_MS = 10_000;
 const PRICE_POLL_MS = 4_000;
@@ -24,7 +24,6 @@ export function Dashboard() {
   const [snap, setSnap] = useState<MarketSnapshot | null>(null);
   const [ticker, setTicker] = useState<Ticker | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [selectedHedgeStrike, setSelectedHedgeStrike] = useState<number | undefined>(undefined);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
@@ -35,24 +34,10 @@ export function Dashboard() {
       setSnap(data);
       setTicker((t) => t ?? data.ticker);
       setError(null);
-
-      // Background Autopilot check: if risk score >= 75 on Base options asset, check Autopilot
-      const currentAssetSnap = data.assets[asset];
-      if (currentAssetSnap && currentAssetSnap.score >= 75) {
-        fetch("/api/hedge", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "checkAutopilot",
-            asset,
-            fragilityScore: currentAssetSnap.score,
-          }),
-        }).catch(() => {});
-      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "network error");
     }
-  }, [asset]);
+  }, []);
 
   useEffect(() => {
     const initial = setTimeout(load, 0);
@@ -72,7 +57,7 @@ export function Dashboard() {
       setTicker((prev) => {
         const map = new Map((prev ?? []).map((t) => [t.symbol, t] as const));
         for (const u of updates) map.set(u.symbol, { symbol: u.symbol, price: u.price });
-        const order = ["BTC", "ETH", "SOL", "XRP", "BNB", "AVAX"];
+        const order: readonly string[] = ALL_ASSETS;
         return [...map.values()].sort(
           (x, y) => order.indexOf(x.symbol) - order.indexOf(y.symbol),
         );
@@ -85,10 +70,9 @@ export function Dashboard() {
     return () => es.close();
   }, []);
 
-  // Polling backstop: full fallback when the socket is down, and the only
-  // source for symbols the stream doesn't carry (e.g. BNB).
+  // Polling backstop: full fallback when the socket is down.
   useEffect(() => {
-    const streamed = new Set(["BTC", "ETH", "SOL", "XRP", "AVAX"]);
+    const streamed = new Set<string>(ALL_ASSETS);
     const tick = async () => {
       try {
         const res = await fetch("/api/price", { cache: "no-store" });
@@ -113,66 +97,31 @@ export function Dashboard() {
   const hasHighRisk = Boolean(a && (a.score >= 70 || a.regime === "amplifying"));
 
   return (
-    <div className="flex flex-col min-h-dvh">
-      <TopBar
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
-        hasHighRiskAlert={hasHighRisk}
-      />
-
-      <div className="flex grow min-h-0">
-        <AssetRail
-          asset={asset}
-          onAsset={setAsset}
-          ticker={ticker}
-          scores={
-            snap
-              ? (Object.fromEntries(
-                  Object.entries(snap.assets).map(([k, v]) => [k, v.score]),
-                ) as Record<Asset, number>)
-              : null
-          }
+    <ExecutionNetworkProvider>
+      <div className="flex flex-col min-h-dvh">
+        <TopBar
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          hasHighRiskAlert={hasHighRisk}
         />
 
-        <div className="grow min-w-0 flex flex-col">
+        <div className="flex grow min-h-0 flex-col">
           {!snap && !error && <Booting />}
           {error && !snap && <Failed message={error} retry={load} />}
 
           {snap && (
             <>
-              <div className="flex items-baseline gap-3 px-5 py-3 border-b border-edge bg-panel">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={`/coins/${asset.toLowerCase()}.svg`}
-                  alt=""
-                  width={22}
-                  height={22}
-                  className="size-[22px] shrink-0 self-center rounded-full"
+              <div className="flex items-center gap-3 px-5 py-3 border-b border-edge bg-panel">
+                <AssetSwitcher
+                  asset={asset}
+                  onAsset={setAsset}
+                  ticker={ticker}
+                  scores={
+                    Object.fromEntries(
+                      Object.entries(snap.assets).map(([k, v]) => [k, v.score]),
+                    ) as Record<Asset, number>
+                  }
                 />
-                <h1 className="text-[18px] font-semibold tracking-tight">
-                  {ASSET_META[asset].name}
-                </h1>
-                <LivePrice
-                  value={livePrice}
-                  className="text-[18px] text-muted"
-                  format={(v) => `$${v.toLocaleString("en-US", { maximumFractionDigits: 2 })}`}
-                />
-                {!live && (
-                  <span
-                    title="No live options market on Thetanuts yet — the book below is modeled from live spot so the full risk stack works. Options flow becomes real the moment a book launches on Base."
-                    className="hidden sm:inline-block self-center rounded-full border border-edge px-2 py-0.5 text-[10px] uppercase tracking-wide text-faint"
-                  >
-                    Modeled book
-                  </span>
-                )}
-                <span className="md:hidden ml-auto">
-                  <button
-                    onClick={() => setAsset(asset === "BTC" ? "ETH" : "BTC")}
-                    className="text-[12px] text-blue"
-                  >
-                    Switch to {asset === "BTC" ? "ETH" : "BTC"}
-                  </button>
-                </span>
               </div>
 
               {a && (
@@ -188,24 +137,13 @@ export function Dashboard() {
                       </div>
 
                       <div className="flex flex-col gap-px min-w-0">
-                        <TradePanel asset={asset} live={live} />
+                        <TradePanel key={asset} asset={asset} live={live} hedgeIntent={null} />
                         <div className="grow bg-panel" />
                       </div>
                     </div>
                   )}
 
-                  {/* TAB 2: Gonka AI Copilot Workspace */}
-                  {activeTab === "copilot" && (
-                    <CopilotView
-                      snap={a}
-                      onNavigateToHedge={(strike) => {
-                        setSelectedHedgeStrike(strike);
-                        setActiveTab("hedge");
-                      }}
-                    />
-                  )}
-
-                  {/* TAB 3: Autonomous Thetanuts Hedging Workspace */}
+                  {/* TAB 2: Autonomous Thetanuts Hedging Workspace */}
                   {activeTab === "hedge" && (
                     <HedgeView
                       snap={a}
@@ -213,7 +151,6 @@ export function Dashboard() {
                       asset={asset}
                       live={live}
                       spot={livePrice}
-                      initialStrike={selectedHedgeStrike}
                     />
                   )}
                 </>
@@ -221,8 +158,15 @@ export function Dashboard() {
             </>
           )}
         </div>
+
+        <CopilotWidget
+          snap={a}
+          onNavigateToHedge={() => {
+            setActiveTab("hedge");
+          }}
+        />
       </div>
-    </div>
+    </ExecutionNetworkProvider>
   );
 }
 

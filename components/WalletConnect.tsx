@@ -1,147 +1,47 @@
 "use client";
 
-// Connect-wallet button for the top bar. Talks to the wallets' injected
-// EIP-1193 providers directly (no wallet library): MetaMask via
-// window.ethereum, Phantom via its EVM provider at window.phantom.ethereum.
-// On connect we nudge the wallet onto Base (8453), where the Thetanuts book
-// lives — but a refusal is non-fatal since the dashboard itself is read-only.
+import { useEffect, useRef, useState } from "react";
+import { useAccount, useConnect, useConnectors, useDisconnect, useSwitchChain } from "wagmi";
+import { base, baseSepolia } from "wagmi/chains";
+import { executionNetworkForChainId } from "@/lib/explorer";
+import { ExplorerLink } from "./ExplorerLink";
+import { useExecutionNetwork } from "./ExecutionNetworkProvider";
+import { chainLabel, ensureWalletChain, walletActionError } from "@/lib/walletChain";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-
-export type Eip1193Provider = {
-  request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
-  on?: (event: string, handler: (...args: never[]) => void) => void;
-  removeListener?: (event: string, handler: (...args: never[]) => void) => void;
-  isMetaMask?: boolean;
-  isPhantom?: boolean;
-  providers?: Eip1193Provider[];
-};
-
-type WalletKey = "metamask" | "phantom";
-
-const WALLETS: { key: WalletKey; name: string; icon: string; installUrl: string }[] = [
-  { key: "metamask", name: "MetaMask", icon: "/wallets/metamask.svg", installUrl: "https://metamask.io/download/" },
-  { key: "phantom", name: "Phantom", icon: "/wallets/phantom.svg", installUrl: "https://phantom.com/download" },
-];
-
-const BASE_RPC_URL = process.env.NEXT_PUBLIC_BASE_RPC_URL ?? "https://mainnet.base.org";
-const EXPLORER_URL = process.env.NEXT_PUBLIC_BASE_EXPLORER_URL ?? "https://basescan.org";
-
-export const BASE_CHAIN = {
-  chainId: "0x2105", // 8453
-  chainName: "Base",
-  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-  rpcUrls: [BASE_RPC_URL],
-  blockExplorerUrls: [EXPLORER_URL],
-};
-
-const LAST_WALLET_KEY = "gs-wallet";
-
-export // --- EIP-6963 wallet discovery ---
-// Each installed wallet announces itself with a unique rdns, which is the
-// only reliable way to find MetaMask when Phantom (or another wallet) has
-// taken over window.ethereum and spoofed isMetaMask.
-const RDNS: Record<WalletKey, string> = {
-  metamask: "io.metamask",
-  phantom: "app.phantom",
-};
-const discovered = new Map<string, Eip1193Provider>();
-let discoveryStarted = false;
-
-export function ensureWalletDiscovery(onAnnounce?: () => void) {
-  if (typeof window === "undefined") return;
-  if (!discoveryStarted) {
-    discoveryStarted = true;
-    window.addEventListener("eip6963:announceProvider", (e) => {
-      const detail = (e as CustomEvent<{ info?: { rdns?: string }; provider?: Eip1193Provider }>)
-        .detail;
-      if (detail?.info?.rdns && detail.provider) {
-        discovered.set(detail.info.rdns, detail.provider);
-        onAnnounce?.();
-      }
-    });
-  }
-  window.dispatchEvent(new Event("eip6963:requestProvider"));
+function shortAddress(address: string) {
+  return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
-function getProvider(key: WalletKey): Eip1193Provider | null {
-  if (typeof window === "undefined") return null;
-  const announced = discovered.get(RDNS[key]);
-  if (announced) return announced;
-  // Legacy fallback for wallets that don't implement EIP-6963.
-  const w = window as unknown as {
-    ethereum?: Eip1193Provider;
-    phantom?: { ethereum?: Eip1193Provider };
-  };
-  if (key === "phantom") return w.phantom?.ethereum ?? null;
-  // Phantom (and others) can shadow window.ethereum and spoof isMetaMask,
-  // so prefer the multi-provider list and exclude Phantom explicitly.
-  const eth = w.ethereum;
-  if (!eth) return null;
-  if (eth.providers?.length) {
-    return eth.providers.find((p) => p.isMetaMask && !p.isPhantom) ?? null;
-  }
-  return eth.isMetaMask && !eth.isPhantom ? eth : null;
-}
-
-function shortAddress(addr: string) {
-  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
-}
-
-/** The provider to use for transactions: last-connected wallet first. */
-export function getActiveProvider(): Eip1193Provider | null {
-  ensureWalletDiscovery();
-  let saved: string | null = null;
-  try {
-    saved = localStorage.getItem(LAST_WALLET_KEY);
-  } catch {}
-  if (saved === "metamask" || saved === "phantom") {
-    const p = getProvider(saved);
-    if (p) return p;
-  }
-  return getProvider("metamask") ?? getProvider("phantom");
-}
-
-export async function switchToBase(provider: Eip1193Provider) {
-  try {
-    await provider.request({
-      method: "wallet_switchEthereumChain",
-      params: [{ chainId: BASE_CHAIN.chainId }],
-    });
-  } catch (err) {
-    const code = (err as { code?: number })?.code;
-    if (code === 4902) {
-      try {
-        await provider.request({ method: "wallet_addEthereumChain", params: [BASE_CHAIN] });
-      } catch {
-        /* declining the chain is fine — dashboard is read-only */
-      }
-    }
-  }
+function walletIcon(name?: string) {
+  const wallet = name?.toLowerCase();
+  if (wallet?.includes("phantom")) return "/wallets/phantom.svg";
+  if (wallet?.includes("metamask")) return "/wallets/metamask.svg";
+  return null;
 }
 
 export function WalletConnect() {
   const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState<WalletKey | null>(null);
-  const [connected, setConnected] = useState<{ wallet: WalletKey; address: string } | null>(null);
   const [copied, setCopied] = useState(false);
-  const [detectTick, setDetectTick] = useState(0);
+  const [chainMessage, setChainMessage] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const { address, chainId, connector, isConnected } = useAccount();
+  const { network } = useExecutionNetwork();
+  const connectors = useConnectors();
+  const { connectAsync, isPending } = useConnect();
+  const { disconnect } = useDisconnect();
+  const { switchChainAsync, isPending: isSwitching } = useSwitchChain();
+  const connectedIcon = walletIcon(connector?.name);
+  const targetChainId = network === "mainnet" ? base.id : baseSepolia.id;
+  const targetChainLabel = chainLabel(targetChainId);
+  const walletOnTargetChain = chainId === targetChainId;
 
-  // Discover installed wallets (EIP-6963); re-render as each one announces
-  // so the menu's detected/Install labels are accurate.
-  useEffect(() => {
-    ensureWalletDiscovery(() => setDetectTick((t) => t + 1));
-  }, []);
-
-  // Close the menu on outside click / Escape.
   useEffect(() => {
     if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    const onDown = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
     };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
@@ -151,105 +51,60 @@ export function WalletConnect() {
     };
   }, [open]);
 
-  const bindAccountEvents = useCallback((provider: Eip1193Provider, wallet: WalletKey) => {
-    provider.on?.("accountsChanged", ((accounts: string[]) => {
-      if (accounts.length) setConnected({ wallet, address: accounts[0] });
-      else {
-        setConnected(null);
-        try {
-          localStorage.removeItem(LAST_WALLET_KEY);
-        } catch {}
-      }
-    }) as never);
-  }, []);
-
-  // Silent reconnect to the wallet used last time (no prompt).
-  useEffect(() => {
-    let stale = false;
-    let saved: WalletKey | null = null;
+  const connect = async (nextConnector: (typeof connectors)[number]) => {
     try {
-      saved = localStorage.getItem(LAST_WALLET_KEY) as WalletKey | null;
-    } catch {}
-    if (saved !== "metamask" && saved !== "phantom") return;
-    const provider = getProvider(saved);
-    if (!provider) return;
-    const wallet = saved;
-    provider
-      .request({ method: "eth_accounts" })
-      .then((accounts) => {
-        const list = accounts as string[];
-        if (!stale && list.length) {
-          setConnected({ wallet, address: list[0] });
-          bindAccountEvents(provider, wallet);
-        }
-      })
-      .catch(() => {});
-    return () => {
-      stale = true;
-    };
-    // detectTick: retry once wallets announce themselves via EIP-6963.
-  }, [bindAccountEvents, detectTick]);
-
-  const connect = async (key: WalletKey) => {
-    const wallet = WALLETS.find((w) => w.key === key)!;
-    const provider = getProvider(key);
-    if (!provider) {
-      window.open(wallet.installUrl, "_blank", "noopener");
-      return;
-    }
-    setBusy(key);
-    try {
-      const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
-      if (accounts.length) {
-        await switchToBase(provider);
-        setConnected({ wallet: key, address: accounts[0] });
-        bindAccountEvents(provider, key);
-        try {
-          localStorage.setItem(LAST_WALLET_KEY, key);
-        } catch {}
-        setOpen(false);
+      await connectAsync({ connector: nextConnector });
+      let chainReady = true;
+      try {
+        await ensureWalletChain(targetChainId, nextConnector, switchChainAsync);
+        setChainMessage(null);
+      } catch (error) {
+        chainReady = false;
+        setChainMessage(walletActionError(error, `Switch your wallet to ${targetChainLabel} before submitting transactions.`));
       }
-    } catch {
-      /* user rejected the prompt */
-    } finally {
-      setBusy(null);
+      if (chainReady) setOpen(false);
+    } catch (error) {
+      setChainMessage(`Wallet connection was not completed: ${walletActionError(error, "retry from this menu.")}`);
     }
   };
 
-  const disconnect = () => {
-    setConnected(null);
-    setOpen(false);
+  const switchWalletChain = async () => {
     try {
-      localStorage.removeItem(LAST_WALLET_KEY);
-    } catch {}
+      await ensureWalletChain(targetChainId, connector, switchChainAsync);
+      setChainMessage(null);
+    } catch (error) {
+      setChainMessage(walletActionError(error, `Switch your wallet to ${targetChainLabel} before submitting transactions.`));
+    }
   };
 
   const copyAddress = async () => {
-    if (!connected) return;
+    if (!address) return;
     try {
-      await navigator.clipboard.writeText(connected.address);
+      await navigator.clipboard.writeText(address);
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
     } catch {}
   };
 
-  const walletMeta = connected ? WALLETS.find((w) => w.key === connected.wallet)! : null;
-
   return (
     <div ref={rootRef} className="relative">
-      {connected && walletMeta ? (
+      {isConnected && address ? (
         <button
-          onClick={() => setOpen((v) => !v)}
+          onClick={() => setOpen((value) => !value)}
           aria-expanded={open}
-          className="h-9 pl-2.5 pr-3 rounded-lg bg-panel2 border border-edge text-[13px] font-medium text-fg hover:bg-panel3 transition flex items-center gap-2"
+          className="h-9 px-3 rounded-lg bg-panel2 border border-edge text-[13px] font-medium text-fg hover:bg-panel3 transition flex items-center gap-2"
         >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={walletMeta.icon} alt={walletMeta.name} className="size-4.5 rounded" />
-          <span className="num">{shortAddress(connected.address)}</span>
+          {connectedIcon ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={connectedIcon} alt="" className="size-4.5 rounded" />
+          ) : (
+            <span className="size-2 rounded-full bg-calm" aria-hidden />
+          )}
+          <span className="num">{shortAddress(address)}</span>
         </button>
       ) : (
         <button
-          onClick={() => setOpen((v) => !v)}
+          onClick={() => setOpen((value) => !value)}
           aria-expanded={open}
           className="h-9 px-4 rounded-lg bg-blue text-white text-[13px] font-medium hover:brightness-110 transition"
         >
@@ -258,47 +113,41 @@ export function WalletConnect() {
       )}
 
       {open && (
-        <div className="absolute right-0 top-full mt-2 w-56 rounded-xl border border-edge bg-panel shadow-lg overflow-hidden z-50">
-          {connected && walletMeta ? (
+        <div className="absolute right-0 top-full mt-2 w-56 rounded-lg border border-edge bg-panel shadow-lg overflow-hidden z-50">
+          {isConnected && address ? (
             <div className="py-1.5">
               <div className="px-4 py-2 text-[11px] text-muted border-b border-edge/60">
-                {walletMeta.name} · Base
+                {connector?.name ?? "Wallet"} · {walletOnTargetChain ? targetChainLabel : chainLabel(chainId)}
               </div>
+              {!walletOnTargetChain && <div className="border-b border-edge/60 px-4 py-3"><p className="text-[11px] text-crit">Transactions require {targetChainLabel}.</p><button type="button" onClick={() => void switchWalletChain()} disabled={isSwitching} className="mt-2 h-8 rounded-lg bg-blue px-3 text-[11px] font-semibold text-white disabled:opacity-60">{isSwitching ? "Switching…" : `Switch to ${targetChainLabel}`}</button>{chainMessage && <p className="mt-2 text-[11px] text-crit">{chainMessage}</p>}</div>}
               <MenuItem onClick={copyAddress}>{copied ? "Copied ✓" : "Copy address"}</MenuItem>
-              <MenuItem
-                onClick={() =>
-                  window.open(`${EXPLORER_URL}/address/${connected.address}`, "_blank", "noopener")
-                }
-              >
-                View on BaseScan
-              </MenuItem>
-              <MenuItem onClick={disconnect} danger>
+              <ExplorerLink network={executionNetworkForChainId(chainId) ?? network} resource="address" value={address} className="block px-4 py-2.5 text-[13px] text-fg hover:bg-panel2 transition">
+                View on explorer
+              </ExplorerLink>
+              <MenuItem onClick={() => { disconnect(); setOpen(false); }} danger>
                 Disconnect
               </MenuItem>
             </div>
           ) : (
             <div className="py-1.5">
-              <div className="px-4 py-2 text-[11px] text-muted border-b border-edge/60">
-                Connect a wallet
-              </div>
-              {WALLETS.map((w) => {
-                const detected = !!getProvider(w.key);
-                return (
-                  <button
-                    key={w.key}
-                    onClick={() => connect(w.key)}
-                    disabled={busy !== null}
-                    className="w-full px-4 py-2.5 flex items-center gap-3 text-[13px] text-fg hover:bg-panel2 transition disabled:opacity-60"
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={w.icon} alt="" className="size-5 rounded" />
-                    <span className="font-medium">{w.name}</span>
-                    <span className="ml-auto text-[11px] text-faint">
-                      {busy === w.key ? "Connecting…" : detected ? "" : "Install"}
-                    </span>
-                  </button>
-                );
-              })}
+              <div className="px-4 py-2 text-[11px] text-muted border-b border-edge/60">Connect a wallet</div>
+              {connectors.map((nextConnector) => (
+                <button
+                  key={nextConnector.uid}
+                  onClick={() => void connect(nextConnector)}
+                  disabled={isPending}
+                  className="w-full px-4 py-2.5 flex items-center gap-3 text-left text-[13px] text-fg hover:bg-panel2 transition disabled:opacity-60"
+                >
+                  {walletIcon(nextConnector.name) && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={walletIcon(nextConnector.name)!} alt="" className="size-5 rounded" />
+                  )}
+                  <span className="font-medium">{nextConnector.name}</span>
+                  {isPending && <span className="ml-auto text-[11px] text-faint">Connecting…</span>}
+                </button>
+              ))}
+              {!connectors.length && <p className="px-4 py-3 text-[12px] text-muted">Install or open an injected wallet such as Phantom.</p>}
+              {chainMessage && <p className="border-t border-edge/60 px-4 py-3 text-[11px] text-crit">{chainMessage}</p>}
             </div>
           )}
         </div>
@@ -307,23 +156,6 @@ export function WalletConnect() {
   );
 }
 
-function MenuItem({
-  children,
-  onClick,
-  danger,
-}: {
-  children: React.ReactNode;
-  onClick: () => void;
-  danger?: boolean;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`w-full px-4 py-2.5 text-left text-[13px] hover:bg-panel2 transition ${
-        danger ? "text-crit" : "text-fg"
-      }`}
-    >
-      {children}
-    </button>
-  );
+function MenuItem({ children, onClick, danger }: { children: React.ReactNode; onClick: () => void; danger?: boolean }) {
+  return <button onClick={onClick} className={`w-full px-4 py-2.5 text-left text-[13px] hover:bg-panel2 transition ${danger ? "text-crit" : "text-fg"}`}>{children}</button>;
 }

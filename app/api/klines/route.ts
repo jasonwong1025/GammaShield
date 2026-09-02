@@ -38,19 +38,11 @@ const BINANCE_NATIVE: Record<number, string> = {
 const COINBASE_PRODUCTS: Record<string, string> = {
   BTC: "BTC-USD",
   ETH: "ETH-USD",
-  SOL: "SOL-USD",
-  XRP: "XRP-USD",
-  AVAX: "AVAX-USD",
-  // BNB has no Coinbase market — served by Binance only.
 };
 
 const BINANCE_SYMBOLS: Record<string, string> = {
   BTC: "BTCUSDT",
   ETH: "ETHUSDT",
-  SOL: "SOLUSDT",
-  XRP: "XRPUSDT",
-  BNB: "BNBUSDT",
-  AVAX: "AVAXUSDT",
 };
 
 const MIN_SEC = 60;

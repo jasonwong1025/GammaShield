@@ -12,6 +12,11 @@
 
 # testing
 /coverage
+/cache/
+/.shadow-agent/
+/.base-agent/
+/contracts/cache/
+/contracts/out/
 
 # next.js
 /.next/

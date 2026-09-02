@@ -15,6 +15,8 @@ type Body = {
   offeror?: string;
 };
 
+const rfqExecutionEnabled = process.env.ENABLE_RFQ_EXECUTION === "true";
+
 export async function POST(request: Request) {
   let body: Body;
   try {
@@ -30,6 +32,9 @@ export async function POST(request: Request) {
 
   try {
     if (body.action === "prepare") {
+      if (!rfqExecutionEnabled) {
+        return Response.json({ error: "RFQ execution is disabled pending a separate escrow-flow audit" }, { status: 403 });
+      }
       const { asset, side, contracts, period } = body;
       if (!asset || !isOptionsAsset(asset)) {
         return Response.json({ error: "asset must have a live options book" }, { status: 400 });
@@ -55,6 +60,9 @@ export async function POST(request: Request) {
     }
 
     if (body.action === "settle") {
+      if (!rfqExecutionEnabled) {
+        return Response.json({ error: "RFQ execution is disabled pending a separate escrow-flow audit" }, { status: 403 });
+      }
       if (!body.id || !body.offeror || !ethers.isAddress(body.offeror)) {
         return Response.json({ error: "id and offeror required" }, { status: 400 });
       }
