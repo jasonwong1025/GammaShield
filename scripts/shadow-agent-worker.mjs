@@ -16,7 +16,8 @@ async function run() {
     try {
       await tick();
     } catch (error) {
-      console.error("shadow-agent worker tick failed:", error instanceof Error ? error.message : error);
+      await recordFailure().catch(() => undefined);
+      console.error(`${config.label} agent worker tick failed:`, error instanceof Error ? error.message : error);
     }
     const wait = Math.max(1_000, config.intervalMs - (Date.now() - startedAt));
     await sleep(wait);
@@ -32,6 +33,10 @@ async function tick() {
     delete state.pending[account];
     state.recent.unshift({ account, userOpHash: pending.userOpHash, submittedAt: pending.submittedAt, checkedAt: new Date().toISOString(), status: receipt.receipt?.success === true ? "confirmed" : "reverted", transactionHash: receipt.receipt?.receipt?.transactionHash ?? null });
     state.recent.splice(20);
+    changed = true;
+  }
+  if (state.lastErrorAt) {
+    state.lastErrorAt = null;
     changed = true;
   }
   if (changed) await writeState(state);
@@ -51,12 +56,23 @@ async function tick() {
   }
   for (const result of response.results) {
     if (!isResult(result) || state.pending[result.account]) continue;
+    const key = result.account.toLowerCase();
+    const previous = state.latest[key];
+    state.latest[key] = {
+      account: result.account,
+      outcome: result.outcome,
+      detail: typeof result.detail === "string" ? result.detail : null,
+      userOpHash: typeof result.userOpHash === "string" ? result.userOpHash : null,
+      score: typeof result.score === "number" ? result.score : null,
+      threshold: typeof result.threshold === "number" ? result.threshold : null,
+      checkedAt: new Date().toISOString(),
+    };
+    changed = true;
     if (!result.userOpHash) {
-      if (result.outcome.endsWith("-simulated")) console.log(`${result.account} ${result.outcome}: ${result.detail ?? "not broadcast"}`);
+      if (previous?.outcome !== result.outcome || previous?.detail !== result.detail) console.log(`${result.account} ${result.outcome}: ${result.detail ?? "waiting"}`);
       continue;
     }
     state.pending[result.account] = { userOpHash: result.userOpHash, submittedAt: new Date().toISOString(), outcome: result.outcome };
-    changed = true;
     console.log(`${result.account} ${result.outcome}: ${result.userOpHash}`);
   }
   if (changed) await writeState(state);
@@ -82,6 +98,8 @@ async function readState() {
       ...value,
       accounts: Array.isArray(value.accounts) && value.accounts.length <= 1_000 && value.accounts.every((account) => typeof account === "string" && /^0x[0-9a-fA-F]{40}$/.test(account)) ? value.accounts : [],
       scannedToBlock: Number.isSafeInteger(value.scannedToBlock) && value.scannedToBlock >= 0 ? value.scannedToBlock : null,
+      latest: isLatest(value.latest) ? value.latest : {},
+      lastErrorAt: typeof value.lastErrorAt === "string" ? value.lastErrorAt : null,
     };
   } catch (error) {
     if (error?.code === "ENOENT") return emptyState();
@@ -102,11 +120,23 @@ function isState(value) {
 }
 
 function emptyState() {
-  return { version: 1, pending: {}, recent: [], accounts: [], scannedToBlock: null };
+  return { version: 1, pending: {}, recent: [], accounts: [], scannedToBlock: null, latest: {}, lastErrorAt: null };
 }
 
 function isResult(value) {
   return value && typeof value === "object" && typeof value.account === "string" && /^0x[0-9a-fA-F]{40}$/.test(value.account) && typeof value.outcome === "string" && (value.userOpHash === undefined || /^0x[0-9a-fA-F]{64}$/.test(value.userOpHash));
+}
+
+function isLatest(value) {
+  return value && typeof value === "object" && !Array.isArray(value) && Object.entries(value).every(([account, entry]) =>
+    /^0x[0-9a-fA-F]{40}$/.test(account) && entry && typeof entry === "object" && typeof entry.account === "string" && typeof entry.outcome === "string" && typeof entry.checkedAt === "string",
+  );
+}
+
+async function recordFailure() {
+  const state = await readState();
+  state.lastErrorAt = new Date().toISOString();
+  await writeState(state);
 }
 
 function runtimeConfig() {
