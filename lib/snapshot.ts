@@ -12,6 +12,8 @@ import { ALL_ASSETS, type Asset } from "./assets";
 import { bsOptionPrice, bsRho } from "./modelBook";
 import { computeContractRisk, type ContractRisk } from "./contractRisk";
 import { getVolContext, percentileOf, type VolContext } from "./realizedVol";
+import { getSpotVolume, type SpotVolume } from "./spotVolume";
+import type { ImpactBasis } from "./marketImpact";
 
 export type MarketSnapshot = {
   ts: number;
@@ -24,6 +26,10 @@ export type MarketSnapshot = {
    * asset, so the UI can name the source instead of implying an IV history
    * we do not keep. Null when the candle feeds were unreachable. */
   volBaseline: Record<Asset, { vol: number; windowDays: number; lookbackDays: number; source: string } | null>;
+  /** Measured spot volume behind every market-impact estimate, per asset, so
+   * the UI can name the venues instead of implying global volume. Null when
+   * both feeds were unreachable. */
+  spotVolume: Record<Asset, SpotVolume | null>;
   source: "live" | "cache";
 };
 
@@ -62,6 +68,11 @@ export type FeedRow = {
     regimeBefore: string;
     regimeAfter: string;
   } | null;
+  /** Everything lib/marketImpact.ts needs to price this fill's effect on SPOT
+   * at any what-if size, minus the strike ladder — that is one array per
+   * asset, already on the client for the GEX chart, so it is merged in there
+   * rather than repeated on 200 rows. Null without greeks. */
+  impactBasis: Omit<ImpactBasis, "gexByStrike"> | null;
 };
 
 const CACHE_MS = 8_000;
@@ -119,14 +130,20 @@ export async function getMarketSnapshot({ fresh = false }: { fresh?: boolean } =
     // Realized-vol history feeds the IV component of contract risk. It is
     // hourly-cached and independently fallible: a failure drops those
     // sub-scores rather than failing the snapshot.
-    const [orders, market, volContexts] = await Promise.all([
+    const [orders, market, volContexts, spotVolumes] = await Promise.all([
       c.api.fetchOrders(),
       c.api.getMarketData(),
       Promise.all(ALL_ASSETS.map((a) => getVolContext(a).catch(() => null))),
+      // Denominator for market impact (lib/marketImpact.ts). Fails the same
+      // way: the estimate drops and says so, it is never back-filled.
+      Promise.all(ALL_ASSETS.map((a) => getSpotVolume(a).catch(() => null))),
     ]);
     const volByAsset = Object.fromEntries(
       ALL_ASSETS.map((a, i) => [a, volContexts[i]]),
     ) as Record<Asset, VolContext | null>;
+    const spotVolByAsset = Object.fromEntries(
+      ALL_ASSETS.map((a, i) => [a, spotVolumes[i]]),
+    ) as Record<Asset, SpotVolume | null>;
 
     const prices = { BTC: market.prices.BTC, ETH: market.prices.ETH };
     const feeds = c.chainConfig.priceFeeds;
@@ -292,6 +309,28 @@ export async function getMarketSnapshot({ fresh = false }: { fresh?: boolean } =
                 })
               : null;
 
+          // Effect on SPOT if this order gets filled (lib/marketImpact.ts).
+          // Only the per-contract inputs travel: the browser re-runs the math
+          // for any what-if size without another round trip.
+          const sv = spotVolByAsset[o.asset];
+          const impactBasis: FeedRow["impactBasis"] =
+            o.greeks && spotFor > 0
+              ? {
+                  spot: spotFor,
+                  strike: o.strike,
+                  gammaPerContract: o.greeks.gamma,
+                  deltaPerContract: o.greeks.delta,
+                  // The taker lifts a resting order, so a maker-sold order is
+                  // one the taker buys.
+                  takerIsLong: o.takerIsLong,
+                  netGexUsd: before.netGexUsd,
+                  advUsd: sv?.advUsd ?? null,
+                  advSources: sv?.sources ?? [],
+                  baselineVol: vol?.baselineVol ?? null,
+                  volSource: vol?.source ?? null,
+                }
+              : null;
+
           let impact: FeedRow["impact"] = null;
           if (o.greeks && o.collateralUsd > 0) {
             const after = computeAssetSnapshot(
@@ -328,6 +367,7 @@ export async function getMarketSnapshot({ fresh = false }: { fresh?: boolean } =
             maker: o.maker,
             risk,
             impact,
+            impactBasis,
           };
         }),
       book: {
@@ -345,6 +385,7 @@ export async function getMarketSnapshot({ fresh = false }: { fresh?: boolean } =
           ];
         }),
       ) as MarketSnapshot["volBaseline"],
+      spotVolume: spotVolByAsset,
       source: "live",
     };
 

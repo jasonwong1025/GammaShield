@@ -12,6 +12,7 @@
     "check:mandate": "node --experimental-strip-types scripts/mandate-self-check.mts",
     "check:strategy": "node --experimental-strip-types scripts/strategy-self-check.mts",
     "check:risk": "node --experimental-strip-types --import ./scripts/ts-resolve.mjs scripts/contract-risk-self-check.mts",
+    "check:impact": "node --experimental-strip-types --import ./scripts/ts-resolve.mjs scripts/market-impact-self-check.mts",
     "agent:shadow": "node --env-file-if-exists=.env.local scripts/shadow-agent-worker.mjs",
     "agent:thetanuts": "POLICY_AGENT_MODE=thetanuts node --env-file-if-exists=.env.local scripts/shadow-agent-worker.mjs",
     "deploy:base:policy": "node --env-file-if-exists=.env.local scripts/deploy-base-mandate-factory.mjs",

@@ -22,10 +22,11 @@ npm run build   # production build — run before pushing if you touched types/r
 npm run lint    # eslint — must pass before committing
 npm run wagmi:generate # regenerate typed ABIs after changing generated-contract config
 npm run check:risk     # contract risk model self-check (pure math, no network)
+npm run check:impact   # market impact model self-check (pure math, no network)
 cd contracts && forge test # ShadowOptionBook tests
 ```
 
-Verification = `npm run lint`, `npm run build`, `npm run check:risk` when you touch the risk model, `cd contracts && forge test` when contracts change, and eyeballing the dashboard against live data.
+Verification = `npm run lint`, `npm run build`, `npm run check:risk` when you touch the risk model, `npm run check:impact` when you touch the impact model, `cd contracts && forge test` when contracts change, and eyeballing the dashboard against live data.
 
 ## Architecture — read this before editing
 
@@ -36,6 +37,8 @@ Data flows in one direction: **exchange/chain → server (lib/ + app/api/) → c
 - `lib/assets.ts` — **single source of truth for supported assets** (BTC, ETH — both `options: true` with a live Thetanuts book). Adding an asset starts here.
 - `lib/engine.ts` — the **book-level** risk engine. Pure, deliberately simple math over normalized order rows: per-strike GEX, gamma flip, expiry buckets, risk score. No I/O in this file — keep it pure and inspectable.
 - `lib/contractRisk.ts` — the **per-contract** risk model: one option or one multi-leg structure scored as `Premium 20% + IV 15% + TimeDecay 10% + Liquidity 20% + Market 25% + Expiry 10%`. Different question from `engine.ts`, whose score enters here as the Market component and nothing more. Also pure — historical vol and book quotes are passed in. Two invariants: a sub-score whose input this venue does not publish is **dropped** and the surviving weights renormalize (never defaulted to a midpoint), and short exposure inverts only the directional components (premium, vol richness, decay) — exit cost, dealer gamma and expiry proximity hurt both sides, and loss probability is already direction-aware via the signed payoff. Covered by `npm run check:risk`.
+- `lib/marketImpact.ts` — the **market impact** model: what a fill makes dealers trade in spot. Two flows, kept separate because they are different obligations — the one-off delta hedge at the fill, and the gamma feedback the position adds to every later 1% move. Sign convention is `engine.ts`'s exactly (taker buys → dealer short gamma → amplifying), and `flipStrikeOf` is imported from there rather than reimplemented. Pure; volume and vol are passed in. Because the whole live book carries only ~$33k of dealer gamma per 1% move against ~$1.6B of daily spot volume, the headline figure is the **threshold** — the size at which a flow would reach 1% of daily volume — and the price-move estimate is floored at 0.01% instead of printing fake precision. Covered by `npm run check:impact`.
+- `lib/spotVolume.ts` — measured 24h spot volume, Coinbase **plus** Binance summed (not one falling back to the other: impact scales with 1/sqrt(volume), so which venues are counted changes the answer). Always reports which venues contributed, and is labelled a floor rather than global volume. Null when both fail — the impact estimate then drops rather than using a constant.
 - `lib/realizedVol.ts` — trailing 30d realized vol and its 1y distribution, from the same daily candles the price chart uses. This is the reference the IV component ranks against: nothing in this stack persists an implied-vol history, so percentile is measured against **realized** vol and must always be labelled that way, never as an unqualified "IV percentile".
 - `lib/snapshot.ts` — fetches the live Thetanuts book via the SDK, normalizes orders, runs the engine, and produces one `MarketSnapshot` for the whole dashboard. Briefly cached to be gentle on the RPC.
 - `lib/modelBook.ts` — Black-Scholes pricing/greeks shared by the shadow demo book (`lib/shadow.ts`) and live-book rho (which the Thetanuts pricing API doesn't return).
@@ -47,11 +50,12 @@ Data flows in one direction: **exchange/chain → server (lib/ + app/api/) → c
 
 ### API routes (`app/api/`)
 
-- `market` — full `MarketSnapshot` (book + risk + feed), `cache-control: no-store`. Each single-leg feed row carries a `risk` block from `lib/contractRisk.ts`; multi-leg rows do not, because the pricing API returns one blended premium and greeks block that cannot honestly be split across legs.
+- `market` — full `MarketSnapshot` (book + risk + feed), `cache-control: no-store`. Feed rows carry an `impactBasis` (per-contract market-impact inputs, minus the strike ladder — that is one array per asset the client already holds). Each single-leg feed row carries a `risk` block from `lib/contractRisk.ts`; multi-leg rows do not, because the pricing API returns one blended premium and greeks block that cannot honestly be split across legs.
 - `quote` — quote for standard 7/14/28-day intents resolved to real Thetanuts tenors. A listed maker order returns SDK-generated exact approve/fill calldata; otherwise it is an RFQ-only estimate. The SDK stays read-only server-side; only the user's wallet signs.
 - `rfq` — custom-expiry RFQ support. Prepare/settle are disabled unless `ENABLE_RFQ_EXECUTION=true`; RFQs escrow collateral and require a separate review. Status reads remain available.
 - `positions` — real Base-mainnet OptionBook positions from the Thetanuts indexer.
 - `shadow/quote`, `shadow/positions` — Base Sepolia demonstration positions only; label them as shadow, never live Thetanuts positions.
+- `whatif` — natural-language spot-order impact. Uses the same measured volume/vol and the same one-round law as `lib/marketImpact.ts`; it must not reintroduce hardcoded market size.
 - `stream` — SSE price ticks (init snapshot, then `price` events, 15s heartbeats).
 - `klines` — OHLCV proxy: Coinbase first, Binance fallback, staleness guard, aggregates finer candles for non-native intervals.
 - `price` — lightweight spot ticker.
@@ -65,6 +69,7 @@ All chart/dashboard components are `"use client"`. Layout: `Dashboard.tsx` compo
 - Live prices come from the `/api/stream` SSE feed (see `LivePrice.tsx`), not polling.
 - New ECharts charts go through `EChart.tsx`; don't instantiate echarts directly.
 - Per-contract risk renders through `ContractRiskPanel.tsx` (book feed drill-down and `TradePanel`). It must keep showing which sub-scores were dropped and why — that panel is the honesty surface for the model.
+- Market impact renders through `MarketImpactPanel.tsx` (same two places), which replaced the older score-before/after "amplification risk impact" card. Its what-if size box re-runs `lib/marketImpact.ts` in the browser — the math is pure and linear in contracts, so no round trip. Keep the volume/vol provenance footer and the negligible floor: a fill on this book genuinely cannot move spot, and the panel must say so rather than print zeros.
 - Asset logos live in `public/coins/` as SVGs, keyed by lowercase symbol.
 - `TradePanel` must keep approvals and fills as separate user actions. Before a mainnet fill it must refetch the order, require the reviewed maker/option/expiry/collateral/size/cost to match, and preflight the exact calldata.
 

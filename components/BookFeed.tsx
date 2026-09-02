@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useRef, useState } from "react";
 import type { FeedRow } from "@/lib/snapshot";
-import type { AssetSnapshot } from "@/lib/engine";
+import type { AssetSnapshot, StrikeGex } from "@/lib/engine";
 import type { Asset } from "@/lib/assets";
 import type { AiRiskAssessment } from "@/lib/aiRisk";
 import {
@@ -14,6 +14,7 @@ import {
   riskColor,
 } from "@/lib/format";
 import { ContractRiskPanel, RiskScoreChip } from "./ContractRiskPanel";
+import { MarketImpactPanel } from "./MarketImpactPanel";
 import { ShadowPositions } from "./ShadowPositions";
 import { ThetanutsPositions } from "./ThetanutsPositions";
 import { EXECUTION_NETWORK } from "@/lib/explorer";
@@ -80,7 +81,7 @@ export function BookCard({
         </span>
       </div>
 
-      {tab === "book" ? <BookTable rows={filtered} asset={asset} spot={spot} volBaseline={volBaseline} /> : tab === "expiries" ? <Expiries snap={snap} /> : network === "mainnet" ? <ThetanutsPositions asset={asset} refreshKey={positionsRefresh} /> : <ShadowPositions asset={asset} />}
+      {tab === "book" ? <BookTable rows={filtered} asset={asset} spot={spot} volBaseline={volBaseline} gexByStrike={snap.gexByStrike} /> : tab === "expiries" ? <Expiries snap={snap} /> : network === "mainnet" ? <ThetanutsPositions asset={asset} refreshKey={positionsRefresh} /> : <ShadowPositions asset={asset} />}
     </section>
   );
 }
@@ -107,11 +108,15 @@ function BookTable({
   asset,
   spot,
   volBaseline,
+  gexByStrike,
 }: {
   rows: FeedRow[];
   asset: string;
   spot: number;
   volBaseline?: { vol: number; windowDays: number; lookbackDays: number; source: string } | null;
+  /** Strike ladder for this asset — one array shared by every row's market
+   *  impact estimate, rather than repeated on all 200 of them. */
+  gexByStrike: StrikeGex[];
 }) {
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   useEffect(() => {
@@ -242,6 +247,7 @@ function BookTable({
                       <RowRiskDetail
                         row={r}
                         volBaseline={volBaseline}
+                        gexByStrike={gexByStrike}
                         aiRisk={aiRisk}
                         aiRiskLoading={aiRiskLoading}
                         aiRiskError={aiRiskError}
@@ -277,6 +283,7 @@ function fmtGreek(v: number | null, digits: number) {
 function RowRiskDetail({
   row,
   volBaseline,
+  gexByStrike,
   aiRisk,
   aiRiskLoading,
   aiRiskError,
@@ -284,12 +291,12 @@ function RowRiskDetail({
 }: {
   row: FeedRow;
   volBaseline?: { vol: number; windowDays: number; lookbackDays: number; source: string } | null;
+  gexByStrike: StrikeGex[];
   aiRisk: AiRiskAssessment | null;
   aiRiskLoading: boolean;
   aiRiskError: string | null;
   onGetAiRead: () => void;
 }) {
-  const { impact } = row;
   return (
     <div className="flex flex-col gap-2.5 text-[12px]" onClick={(e) => e.stopPropagation()}>
       <div className="grid grid-cols-5 gap-x-3 gap-y-1 num text-muted">
@@ -310,26 +317,13 @@ function RowRiskDetail({
         </p>
       )}
 
-      {impact ? (
-        <div className="rounded-lg border border-edge bg-panel p-2.5 flex flex-col gap-1.5">
-          <div className="flex items-center justify-between">
-            <span className="text-muted">Amplification risk impact</span>
-            <span className="num font-semibold">
-              <span style={{ color: riskColor(impact.scoreBefore) }}>{impact.scoreBefore}</span>
-              <span className="text-faint"> → </span>
-              <span style={{ color: riskColor(impact.scoreAfter) }}>{impact.scoreAfter}</span>
-            </span>
-          </div>
-          <p className="text-faint leading-relaxed">
-            Filling this order&apos;s full size pushes dealers shorter gamma: net GEX{" "}
-            {fmtUsd(impact.netGexBefore)} → {fmtUsd(impact.netGexAfter)} per 1% move
-            {impact.regimeAfter !== impact.regimeBefore
-              ? ` — regime flips to ${impact.regimeAfter}.`
-              : ` (${impact.regimeAfter} regime).`}
-          </p>
-
-          <div className="border-t border-edge/60 my-0.5" />
-
+      {row.impactBasis ? (
+        <MarketImpactPanel
+          basis={{ ...row.impactBasis, gexByStrike }}
+          defaultContracts={row.collateralUsd / Math.max(row.strike, 1)}
+          asset={row.asset}
+        >
+          <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between">
             <span className="text-muted">
               AI second opinion <span className="text-faint">(GonkaRouter)</span>
@@ -363,9 +357,10 @@ function RowRiskDetail({
               )}
             </>
           )}
-        </div>
+          </div>
+        </MarketImpactPanel>
       ) : (
-        <p className="text-faint">No greeks on this order — risk impact unavailable.</p>
+        <p className="text-faint">No greeks on this order — market impact unavailable.</p>
       )}
     </div>
   );

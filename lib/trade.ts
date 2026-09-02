@@ -17,6 +17,8 @@ import { computeAssetSnapshot, type NormalizedOrder } from "./engine";
 import { bsGreeks, bsOptionPrice, bsRho } from "./modelBook";
 import { computeContractRisk, type ContractRisk } from "./contractRisk";
 import { getVolContext, percentileOf } from "./realizedVol";
+import { getSpotVolume } from "./spotVolume";
+import type { ImpactBasis } from "./marketImpact";
 import { isOptionsAsset, type Asset, type OptionsAsset } from "./assets";
 import { TRADE_PERIODS, type TradePeriod } from "./tradePeriods";
 
@@ -78,6 +80,11 @@ export type TradeQuote = {
     regimeBefore: string;
     regimeAfter: string;
   } | null;
+  /** Everything lib/marketImpact.ts needs to price this fill's effect on SPOT,
+   * including the strike ladder — the trade panel holds no book snapshot of
+   * its own, and this is one quote, not 200 rows. Lets the panel re-run the
+   * math at any what-if size locally. */
+  impactBasis: ImpactBasis | null;
   /** Transactions for the wallet (book fills only): approve premium token, then fill. */
   txs: {
     chainId: string;
@@ -392,7 +399,10 @@ export async function getTradeQuote(
     if (o.takerIsLong) askUsd = askUsd === null ? px : Math.min(askUsd, px);
     else bidUsd = bidUsd === null ? px : Math.max(bidUsd, px);
   }
-  const volContext = await getVolContext(asset).catch(() => null);
+  const [volContext, spotVolume] = await Promise.all([
+    getVolContext(asset).catch(() => null),
+    getSpotVolume(asset).catch(() => null),
+  ]);
   const riskIv = greeks?.iv ?? iv;
   // Sized in the same collateral units as the resting depth it is compared
   // against — premium paid would be a different unit and a meaningless ratio.
@@ -430,6 +440,24 @@ export async function getTradeQuote(
     },
   });
 
+  const beforeSnap = snapshot.assets[asset];
+  const impactBasis: ImpactBasis | null =
+    greeks && beforeSnap
+      ? {
+          spot,
+          strike,
+          gammaPerContract: greeks.gamma,
+          deltaPerContract: greeks.delta,
+          takerIsLong: true, // the panel only buys; the dealer goes short gamma
+          netGexUsd: beforeSnap.netGexUsd,
+          gexByStrike: beforeSnap.gexByStrike,
+          advUsd: spotVolume?.advUsd ?? null,
+          advSources: spotVolume?.sources ?? [],
+          baselineVol: volContext?.baselineVol ?? null,
+          volSource: volContext?.source ?? null,
+        }
+      : null;
+
   return {
     asset,
     side,
@@ -452,6 +480,7 @@ export async function getTradeQuote(
     greeks,
     risk,
     impact,
+    impactBasis,
     txs,
   };
 }
