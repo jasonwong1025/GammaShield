@@ -132,7 +132,14 @@ export function Dashboard() {
                   <div className="grid grow grid-cols-1 xl:grid-cols-[1fr_380px] gap-px bg-edge">
                     <div className="flex flex-col gap-px min-w-0">
                       <PriceChart asset={asset} flip={a.flipStrike} livePrice={livePrice} />
-                      <BookCard rows={snap.feed} snap={a} asset={asset} live={live} spot={livePrice} />
+                      <BookCard
+                        rows={snap.feed}
+                        snap={a}
+                        asset={asset}
+                        live={live}
+                        spot={livePrice}
+                        volBaseline={snap.volBaseline?.[asset] ?? null}
+                      />
                       <RiskView snap={a} />
                       <div className="grow bg-panel" />
                     </div>

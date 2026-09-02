@@ -24,6 +24,7 @@ import type { ShadowQuote } from "@/lib/shadow";
 import { wagmiConfig } from "@/lib/wagmi";
 import { erc20Abi, useReadErc20BalanceOf } from "@/lib/generated/contracts";
 import { fmtContracts, fmtExpiryDate, fmtIv, fmtStrike, fmtUsd, riskColor } from "@/lib/format";
+import { ContractRiskPanel } from "./ContractRiskPanel";
 import { ExplorerLink } from "./ExplorerLink";
 import { useExecutionNetwork } from "./ExecutionNetworkProvider";
 import { ensureWalletChain } from "@/lib/walletChain";
@@ -545,6 +546,7 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
   const quoteInSync = !!quote && quote.requestedPeriod === period;
   const configured = validAmount && !!quote && quote.contracts > 0;
   const impact = configured && quoteInSync ? quote.impact : null;
+  const contractRisk = configured && quoteInSync ? quote.risk : null;
   const currentTradeKey = quote ? `${asset}:${side}:${quote.strike}:${quote.expiryTs}:${quote.contracts}` : null;
   const aiRiskCurrent = aiRisk && aiRiskKey === currentTradeKey ? aiRisk : null;
   const busy =
@@ -772,6 +774,11 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
           Base mainnet uses real funds. Before your wallet can send a fill, GammaShield refetches the listed OptionBook order and simulates the exact transaction against your account.
         </p>
       )}
+
+      {/* Per-contract risk for the option itself — a separate question from
+          the book-level amplification impact below, which is about what this
+          fill does to everyone else. */}
+      {contractRisk && <ContractRiskPanel risk={contractRisk} />}
 
       {/* Amplification impact — only once the trade is fully configured. One
           card: the always-on heuristic (lib/engine.ts) up top, then an

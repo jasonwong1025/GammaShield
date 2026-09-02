@@ -13,6 +13,7 @@ import {
   fmtUsd,
   riskColor,
 } from "@/lib/format";
+import { ContractRiskPanel, RiskScoreChip } from "./ContractRiskPanel";
 import { ShadowPositions } from "./ShadowPositions";
 import { ThetanutsPositions } from "./ThetanutsPositions";
 import { EXECUTION_NETWORK } from "@/lib/explorer";
@@ -24,6 +25,7 @@ export function BookCard({
   asset,
   live,
   spot,
+  volBaseline,
 }: {
   rows: FeedRow[];
   snap: AssetSnapshot;
@@ -32,6 +34,8 @@ export function BookCard({
   live: boolean;
   /** Live spot price — informational context for the AI risk read. */
   spot: number;
+  /** Realized-vol reference behind the IV component of contract risk. */
+  volBaseline?: { vol: number; windowDays: number; lookbackDays: number; source: string } | null;
 }) {
   const [tab, setTab] = useState<"book" | "expiries" | "positions">("book");
   const [positionsRefresh, setPositionsRefresh] = useState(0);
@@ -76,7 +80,7 @@ export function BookCard({
         </span>
       </div>
 
-      {tab === "book" ? <BookTable rows={filtered} asset={asset} spot={spot} /> : tab === "expiries" ? <Expiries snap={snap} /> : network === "mainnet" ? <ThetanutsPositions asset={asset} refreshKey={positionsRefresh} /> : <ShadowPositions asset={asset} />}
+      {tab === "book" ? <BookTable rows={filtered} asset={asset} spot={spot} volBaseline={volBaseline} /> : tab === "expiries" ? <Expiries snap={snap} /> : network === "mainnet" ? <ThetanutsPositions asset={asset} refreshKey={positionsRefresh} /> : <ShadowPositions asset={asset} />}
     </section>
   );
 }
@@ -98,7 +102,17 @@ function rowKey(r: FeedRow) {
   return `${r.maker}-${r.strike}-${r.expiryTs}-${r.structure}`;
 }
 
-function BookTable({ rows, asset, spot }: { rows: FeedRow[]; asset: string; spot: number }) {
+function BookTable({
+  rows,
+  asset,
+  spot,
+  volBaseline,
+}: {
+  rows: FeedRow[];
+  asset: string;
+  spot: number;
+  volBaseline?: { vol: number; windowDays: number; lookbackDays: number; source: string } | null;
+}) {
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   useEffect(() => {
     const id = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 30_000);
@@ -173,7 +187,10 @@ function BookTable({ rows, asset, spot }: { rows: FeedRow[]; asset: string; spot
             <th className="text-right font-medium px-2 py-1.5">Premium</th>
             <th className="text-right font-medium px-2 py-1.5">Delta</th>
             <th className="text-right font-medium px-2 py-1.5">IV</th>
-            <th className="text-right font-medium px-4 py-1.5">Size</th>
+            <th className="text-right font-medium px-2 py-1.5">Size</th>
+            <th className="text-right font-medium px-4 py-1.5" title="Per-contract risk, 0-100">
+              Risk
+            </th>
           </tr>
         </thead>
         <tbody className="font-mono text-[11px]">
@@ -214,13 +231,17 @@ function BookTable({ rows, asset, spot }: { rows: FeedRow[]; asset: string; spot
                   </td>
                   <td className="px-2 py-1.5 text-right num text-muted">{fmtDelta(r.delta)}</td>
                   <td className="px-2 py-1.5 text-right num text-muted">{fmtIv(r.iv)}</td>
-                  <td className="px-4 py-1.5 text-right num text-fg">{fmtUsd(r.collateralUsd)}</td>
+                  <td className="px-2 py-1.5 text-right num text-fg">{fmtUsd(r.collateralUsd)}</td>
+                  <td className="px-4 py-1.5 text-right">
+                    <RiskScoreChip risk={r.risk} />
+                  </td>
                 </tr>
                 {expanded && (
                   <tr key={`${key}-detail`} className="border-t border-edge/50">
-                    <td colSpan={7} className="px-4 py-3 bg-panel2/40 font-sans">
+                    <td colSpan={8} className="px-4 py-3 bg-panel2/40 font-sans">
                       <RowRiskDetail
                         row={r}
+                        volBaseline={volBaseline}
                         aiRisk={aiRisk}
                         aiRiskLoading={aiRiskLoading}
                         aiRiskError={aiRiskError}
@@ -234,7 +255,7 @@ function BookTable({ rows, asset, spot }: { rows: FeedRow[]; asset: string; spot
           })}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={7} className="px-5 py-10 text-center text-faint font-sans">
+              <td colSpan={8} className="px-5 py-10 text-center text-faint font-sans">
                 No live {asset} orders on the book right now.
               </td>
             </tr>
@@ -255,12 +276,14 @@ function fmtGreek(v: number | null, digits: number) {
 // manual-only — /api/risk is only ever called from the button below).
 function RowRiskDetail({
   row,
+  volBaseline,
   aiRisk,
   aiRiskLoading,
   aiRiskError,
   onGetAiRead,
 }: {
   row: FeedRow;
+  volBaseline?: { vol: number; windowDays: number; lookbackDays: number; source: string } | null;
   aiRisk: AiRiskAssessment | null;
   aiRiskLoading: boolean;
   aiRiskError: string | null;
@@ -276,6 +299,16 @@ function RowRiskDetail({
         <span>Vega <span className="text-fg">{fmtGreek(row.vega, 2)}</span></span>
         <span>Rho <span className="text-fg">{fmtGreek(row.rho, 2)}</span></span>
       </div>
+
+      {row.risk ? (
+        <ContractRiskPanel risk={row.risk} volBaseline={volBaseline} />
+      ) : (
+        <p className="text-faint">
+          {row.strikes.length > 1
+            ? "Multi-leg order — the pricing API returns one blended premium and greeks block, so per-leg contract risk is not scored."
+            : "No greeks or premium on this order — contract risk unavailable."}
+        </p>
+      )}
 
       {impact ? (
         <div className="rounded-lg border border-edge bg-panel p-2.5 flex flex-col gap-1.5">

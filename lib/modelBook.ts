@@ -4,11 +4,11 @@
 
 // --- Black-Scholes greeks ---
 
-function normPdf(x: number) {
+export function normPdf(x: number) {
   return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
 }
 
-function normCdf(x: number) {
+export function normCdf(x: number) {
   // Abramowitz & Stegun 7.1.26
   const t = 1 / (1 + 0.2316419 * Math.abs(x));
   const poly =

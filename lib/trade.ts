@@ -14,7 +14,9 @@
 import type { ThetanutsClient } from "@thetanuts-finance/thetanuts-client";
 import { getClient, getMarketSnapshot, getLastNormalizedOrders } from "./snapshot";
 import { computeAssetSnapshot, type NormalizedOrder } from "./engine";
-import { bsGreeks, bsRho } from "./modelBook";
+import { bsGreeks, bsOptionPrice, bsRho } from "./modelBook";
+import { computeContractRisk, type ContractRisk } from "./contractRisk";
+import { getVolContext, percentileOf } from "./realizedVol";
 import { isOptionsAsset, type Asset, type OptionsAsset } from "./assets";
 import { TRADE_PERIODS, type TradePeriod } from "./tradePeriods";
 
@@ -63,6 +65,10 @@ export type TradeQuote = {
    * fallback (MM/RFQ or missing pricing-API data); rho is always derived,
    * see lib/modelBook.ts. Feeds the AI risk read (lib/aiRisk.ts). */
   greeks: NormalizedOrder["greeks"];
+  /** Per-contract risk for the option being bought (lib/contractRisk.ts).
+   * Unlike the browse view in the book feed, a real size is known here, so
+   * the liquidity participation sub-score is measured rather than dropped. */
+  risk: ContractRisk | null;
   /** How filling this trade would move the market-structure risk. */
   impact: {
     scoreBefore: number;
@@ -364,6 +370,66 @@ export async function getTradeQuote(
     };
   }
 
+  // --- per-contract risk ---
+  // Depth and both quote sides come from the same normalized book the
+  // snapshot uses. An RFQ/MM quote has no resting order behind it, so those
+  // sub-scores drop out and say so rather than being modelled into existence.
+  const contractOrders = getLastNormalizedOrders().filter(
+    (o) =>
+      o.asset === asset &&
+      o.isCall === isCall &&
+      o.strikes.length === 1 &&
+      o.strike === strike &&
+      o.expiryTs === targetTs,
+  );
+  let bidUsd: number | null = null;
+  let askUsd: number | null = null;
+  let depthUsd = 0;
+  for (const o of contractOrders) {
+    depthUsd += o.collateralUsd;
+    const px = o.pricePerContractUsd;
+    if (px === null || px <= 0) continue;
+    if (o.takerIsLong) askUsd = askUsd === null ? px : Math.min(askUsd, px);
+    else bidUsd = bidUsd === null ? px : Math.max(bidUsd, px);
+  }
+  const volContext = await getVolContext(asset).catch(() => null);
+  const riskIv = greeks?.iv ?? iv;
+  // Sized in the same collateral units as the resting depth it is compared
+  // against — premium paid would be a different unit and a meaningless ratio.
+  const fillNotionalUsd = filled * (isCall ? spot : strike);
+  const risk = computeContractRisk({
+    asset,
+    spot,
+    nowSec,
+    expiryTs: targetTs,
+    legs: [
+      {
+        isCall,
+        action: "buy",
+        strike,
+        qty: filled,
+        premiumUsd: premiumPerContractUsd,
+        iv: riskIv,
+        thetaUsd: greeks?.theta ?? null,
+        vegaUsd: greeks?.vega ?? null,
+        deltaPerContract: greeks?.delta ?? null,
+      },
+    ],
+    marketScore: snapshot.assets[asset]?.score ?? null,
+    baselineVol: volContext?.baselineVol ?? null,
+    ivPercentile: volContext && riskIv ? percentileOf(volContext, riskIv) : null,
+    liquidity: {
+      bidUsd,
+      askUsd,
+      fairUsd:
+        riskIv != null
+          ? bsOptionPrice(spot, strike, riskIv, (targetTs - nowSec) / (365 * 86400), isCall)
+          : null,
+      contractDepthUsd: contractOrders.length ? depthUsd : null,
+      tradeSizeUsd: fillNotionalUsd > 0 ? fillNotionalUsd : null,
+    },
+  });
+
   return {
     asset,
     side,
@@ -384,6 +450,7 @@ export async function getTradeQuote(
     iv,
     maker,
     greeks,
+    risk,
     impact,
     txs,
   };
