@@ -23,7 +23,7 @@ export type ThetanutsAgentResult = { account: string; mandateHash?: string; scor
 
 export async function runThetanutsAgents(options: { pendingAccounts?: Iterable<string>; knownAccounts?: Iterable<string>; discoveryFromBlock?: number } = {}) {
   const config = runtimeConfig();
-  const provider = new ethers.JsonRpcProvider(config.rpcUrl);
+  const provider = baseProvider(config.rpcUrl);
   const agent = new ethers.Wallet(config.privateKey);
   const factory = new ethers.Contract(config.factory, ["event AccountCreated(address indexed account,address indexed owner,bytes32 indexed salt)"], provider);
   const latestBlock = await provider.getBlockNumber();
@@ -49,7 +49,7 @@ export async function getThetanutsUserOperationReceipt(userOpHash: string) {
   return getPolicyUserOperationReceipt(8453, runtimeConfig().pimlicoApiKey, userOpHash);
 }
 
-async function runThetanutsAgent(accountAddress: string, config: ReturnType<typeof runtimeConfig>, provider: ethers.JsonRpcProvider, agent: ethers.Wallet, snapshot: MarketSnapshot): Promise<ThetanutsAgentResult | null> {
+async function runThetanutsAgent(accountAddress: string, config: ReturnType<typeof runtimeConfig>, provider: ethers.Provider, agent: ethers.Wallet, snapshot: MarketSnapshot): Promise<ThetanutsAgentResult | null> {
   const account = new ethers.Contract(accountAddress, mandateAccountAbi, provider);
   const policy = await readPolicy(account, agent.address);
   if (!policy) return null;
@@ -95,7 +95,7 @@ async function runThetanutsAgent(accountAddress: string, config: ReturnType<type
   return config.dryRun ? { ...base, outcome: "fill-simulated", detail: "Pimlico accepted the UserOperation estimate; it was not broadcast." } : { ...base, outcome: "fill-submitted", userOpHash: userOpHash ?? undefined };
 }
 
-async function submitRisk(account: ethers.Contract, hash: string, risk: Record<string, bigint | number | string>, riskSignature: string, provider: ethers.JsonRpcProvider, agent: ethers.Wallet, sender: string, config: ReturnType<typeof runtimeConfig>, outcome: "risk-reset-submitted" | "risk-reset-simulated" | "risk-observation-submitted" | "risk-observation-simulated", base: Omit<ThetanutsAgentResult, "outcome" | "userOpHash">) {
+async function submitRisk(account: ethers.Contract, hash: string, risk: Record<string, bigint | number | string>, riskSignature: string, provider: ethers.Provider, agent: ethers.Wallet, sender: string, config: ReturnType<typeof runtimeConfig>, outcome: "risk-reset-submitted" | "risk-reset-simulated" | "risk-observation-submitted" | "risk-observation-simulated", base: Omit<ThetanutsAgentResult, "outcome" | "userOpHash">) {
   if ((await provider.getBalance(sender)) === 0n) return { ...base, outcome: "gas-unfunded" as const, detail: "Fund the policy account with Base ETH before the agent can update risk evidence." };
   const callData = account.interface.encodeFunctionData("recordRisk", [hash, risk, riskSignature]);
   const userOpHash = await submitPolicyUserOperation({ chainId: 8453, provider, agent, sender, callData, pimlicoApiKey: config.pimlicoApiKey, dryRun: config.dryRun });
@@ -123,4 +123,14 @@ function runtimeConfig() {
   const deploymentBlock = process.env.BASE_MANDATE_FACTORY_DEPLOYMENT_BLOCK;
   if (!rpcUrl || !privateKey || !pimlicoApiKey || !factory || !deploymentBlock || !/^\d+$/.test(deploymentBlock) || !ethers.isAddress(factory)) throw new Error("Base-mainnet agent configuration is incomplete");
   return { rpcUrl, privateKey: privateKey.startsWith("0x") ? privateKey : `0x${privateKey}`, pimlicoApiKey, factory: ethers.getAddress(factory), deploymentBlock: Number(deploymentBlock), dryRun: process.env.BASE_AGENT_DRY_RUN !== "false" };
+}
+
+function baseProvider(rpcUrl: string): ethers.Provider {
+  const primary = new ethers.JsonRpcProvider(rpcUrl, 8453, { staticNetwork: true });
+  const fallbackUrl = "https://mainnet.base.org";
+  if (rpcUrl.replace(/\/$/, "") === fallbackUrl) return primary;
+  return new ethers.FallbackProvider([
+    { provider: primary, priority: 1, stallTimeout: 750 },
+    { provider: new ethers.JsonRpcProvider(fallbackUrl, 8453, { staticNetwork: true }), priority: 2 },
+  ], 8453, { quorum: 1 });
 }

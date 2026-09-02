@@ -17,7 +17,7 @@ type UserOperation = {
   paymasterPostOpGasLimit: null; paymasterData: null; signature: string;
 };
 
-export async function submitPolicyUserOperation({ chainId, provider, agent, sender, callData, pimlicoApiKey, dryRun = false }: { chainId: 8453 | 84532; provider: ethers.JsonRpcProvider; agent: ethers.Wallet; sender: string; callData: string; pimlicoApiKey: string; dryRun?: boolean }) {
+export async function submitPolicyUserOperation({ chainId, provider, agent, sender, callData, pimlicoApiKey, dryRun = false }: { chainId: 8453 | 84532; provider: ethers.Provider; agent: ethers.Wallet; sender: string; callData: string; pimlicoApiKey: string; dryRun?: boolean }) {
   const entryPoint = new ethers.Contract(ENTRY_POINT, ENTRY_POINT_ABI, provider);
   const nonce = BigInt(await entryPoint.getNonce(sender, 0));
   const endpoint = `https://api.pimlico.io/v2/${chainId}/rpc?apikey=${encodeURIComponent(pimlicoApiKey)}`;
