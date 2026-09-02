@@ -56,11 +56,8 @@ export function TopBar({ activeTab = "dashboard", onTabChange, hasHighRiskAlert 
           >
             <ShieldIcon className="size-3.5 shrink-0" />
             Autonomous Hedge
-            {hasHighRiskAlert ? (
-              <span className="flex size-2 rounded-full bg-crit animate-ping" title="Danger Zone: Risk > 75%" />
-            ) : (
-              <span className="eyebrow text-[9px] px-1.5 py-0.5 rounded bg-calm/10 text-calm">Sepolia</span>
-            )}
+            <span className="eyebrow text-[9px] px-1.5 py-0.5 rounded bg-calm/10 text-calm">{EXECUTION_NETWORK[network].shortLabel}</span>
+            {hasHighRiskAlert && <span className="flex size-2 rounded-full bg-crit animate-ping" title="Danger Zone: Risk > 75%" />}
             {activeTab === "hedge" && <span className="absolute inset-x-0 -bottom-px h-[2px] bg-blue" />}
           </button>
         </nav>
