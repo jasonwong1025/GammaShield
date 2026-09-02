@@ -4,7 +4,17 @@
 import { ethers } from "ethers";
 import { mandateAccountAbi } from "@/lib/generated/contracts";
 import { getMarketSnapshot, type MarketSnapshot } from "@/lib/snapshot";
-import { getShadowQuote } from "@/lib/shadow";
+import { getShadowBookVersion, getShadowPositions, getShadowQuote, type ShadowPosition } from "@/lib/shadow";
+import { signShadowClose, isRefusal } from "@/lib/shadowExit";
+import { readAgentActions } from "@/lib/agentActionStore";
+import { proposeAgentAction } from "@/lib/agentProposal";
+import {
+  agentActionAvailability,
+  deterministicIntent,
+  resolveAgentAction,
+  type AgentLimits,
+  type OpenPosition,
+} from "@/lib/agentPolicy";
 import { TRADE_PERIODS } from "@/lib/tradePeriods";
 import { getPolicyUserOperationReceipt, submitPolicyUserOperation } from "@/lib/policyAgent4337";
 import { discoverPolicyAccounts } from "@/lib/policyAgentDiscovery";
@@ -41,7 +51,7 @@ export type ShadowAgentResult = {
   mandateHash?: string;
   score?: number;
   threshold?: number;
-  outcome: "pending-user-operation" | "risk-below-threshold" | "risk-reset-submitted" | "risk-persistence-pending" | "gas-unfunded" | "risk-observation-submitted" | "quote-unavailable" | "fill-submitted";
+  outcome: "pending-user-operation" | "risk-below-threshold" | "risk-reset-submitted" | "risk-persistence-pending" | "gas-unfunded" | "risk-observation-submitted" | "quote-unavailable" | "fill-submitted" | "close-submitted" | "roll-submitted" | "holding";
   userOpHash?: string;
   detail?: string;
 };
@@ -80,10 +90,12 @@ async function runShadowAgent(accountAddress: string, config: ReturnType<typeof 
   const account = new ethers.Contract(accountAddress, mandateAccountAbi, provider);
   const policy = await readPolicy(account, accountAddress, agent.address, config);
   if (!policy) return null;
-  const score = snapshot.assets[policy.mandate.asset as "BTC" | "ETH"].score;
+  const asset = policy.mandate.asset as "BTC" | "ETH";
+  const score = snapshot.assets[asset].score;
   const scoreBps = Math.round(score * 100);
   const base = { account: accountAddress, mandateHash: policy.hash, score, threshold: Number(policy.mandate.riskThresholdBps) / 100 };
   const now = BigInt(Math.floor(Date.now() / 1000));
+  const nowSeconds = Number(now);
   const state = riskState(await account.riskStates(policy.hash));
   const threshold = policy.mandate.riskThresholdBps;
   const risk = {
@@ -102,13 +114,30 @@ async function runShadowAgent(accountAddress: string, config: ReturnType<typeof 
     risk,
   );
 
+  // What this account is actually allowed to do: the owner's stored switches,
+  // narrowed by what the deployed shadow book can execute.
+  const [stored, bookVersion, receipts] = await Promise.all([
+    readAgentActions("sepolia", accountAddress),
+    getShadowBookVersion().catch(() => 1),
+    getShadowPositions(accountAddress).catch(() => []),
+  ]);
+  const limits: AgentLimits = { asset, maxLossUsd: 0, maxTradeNotionalUsd: 0, actions: stored.actions };
+  const availability = agentActionAvailability(limits, "sepolia", bookVersion);
+  const open = receipts.filter((receipt) => !receipt.closedAt && receipt.expiryTs > nowSeconds);
+  const positions: OpenPosition[] = open.map((receipt) => ({ positionId: receipt.id, expiryTs: receipt.expiryTs, contracts: receipt.contracts }));
+
+  // --- risk evidence bookkeeping, before any action depends on it ---
   if (scoreBps < Number(threshold)) {
-    if (state.scoreBps < threshold || state.validUntil < now) return { ...base, outcome: "risk-below-threshold" };
-    if ((await provider.getBalance(accountAddress)) === 0n) {
-      return { ...base, outcome: "gas-unfunded", detail: "Fund the policy account with Base Sepolia ETH before the agent can reset an active risk observation." };
+    const staleEvidence = state.scoreBps < threshold || state.validUntil < now;
+    if (!staleEvidence) {
+      if ((await provider.getBalance(accountAddress)) === 0n) {
+        return { ...base, outcome: "gas-unfunded", detail: "Fund the policy account with Base Sepolia ETH before the agent can reset an active risk observation." };
+      }
+      const callData = account.interface.encodeFunctionData("recordRisk", [policy.hash, risk, riskSignature]);
+      return { ...base, outcome: "risk-reset-submitted", userOpHash: (await submitPolicyUserOperation({ chainId: 84532, provider, agent, sender: accountAddress, callData, pimlicoApiKey: config.pimlicoApiKey })) ?? undefined };
     }
-    const callData = account.interface.encodeFunctionData("recordRisk", [policy.hash, risk, riskSignature]);
-    return { ...base, outcome: "risk-reset-submitted", userOpHash: (await submitPolicyUserOperation({ chainId: 84532, provider, agent, sender: accountAddress, callData, pimlicoApiKey: config.pimlicoApiKey })) ?? undefined };
+    // Risk has cooled. The only action that makes sense now is an exit.
+    return await act({ base, intent: deterministicIntent({ riskScore: score, threshold: base.threshold, persistenceMet: false, positions, now: nowSeconds }), availability, maxContracts: 0, account, accountAddress, policy, provider, agent, config, snapshot, asset, open, risk, riskSignature, now });
   }
 
   if ((await provider.getBalance(accountAddress)) === 0n) {
@@ -125,13 +154,61 @@ async function runShadowAgent(accountAddress: string, config: ReturnType<typeof 
   }
   if (!persistent) return { ...base, outcome: "risk-persistence-pending" };
 
+  const maxContracts = Math.min(1, Number(policy.mandate.maxContractsPerFill) / 1e6);
+  return await act({ base, intent: deterministicIntent({ riskScore: score, threshold: base.threshold, persistenceMet: true, positions, now: nowSeconds }), availability, maxContracts, account, accountAddress, policy, provider, agent, config, snapshot, asset, open, risk, riskSignature, now });
+}
+
+type ActContext = {
+  base: { account: string; mandateHash: string; score: number; threshold: number };
+  intent: ReturnType<typeof deterministicIntent>;
+  availability: ReturnType<typeof agentActionAvailability>;
+  maxContracts: number;
+  account: ethers.Contract;
+  accountAddress: string;
+  policy: NonNullable<Awaited<ReturnType<typeof readPolicy>>>;
+  provider: ethers.JsonRpcProvider;
+  agent: ethers.Wallet;
+  config: ReturnType<typeof runtimeConfig>;
+  snapshot: MarketSnapshot;
+  asset: "BTC" | "ETH";
+  open: ShadowPosition[];
+  risk: Record<string, bigint | number | string>;
+  riskSignature: string;
+  now: bigint;
+};
+
+/** Ask the AI to narrow the cleared action, then execute whatever survives. */
+async function act(context: ActContext): Promise<ShadowAgentResult> {
+  const { base, intent, availability, maxContracts, asset, snapshot, open } = context;
+  const proposal = intent.action === "hold"
+    ? null
+    : await proposeAgentAction({
+        asset,
+        action: intent.action,
+        maxContracts: intent.action === "close" ? (intent.position?.contracts ?? 0) : maxContracts,
+        riskScore: base.score,
+        threshold: base.threshold,
+        regime: snapshot.assets[asset].regime,
+        netGexUsd: snapshot.assets[asset].netGexUsd,
+        spot: snapshot.prices[asset],
+        openPositions: open.map((receipt) => ({ strike: receipt.strike, expiryTs: receipt.expiryTs, contracts: receipt.contracts, pnlUsd: receipt.mark?.pnlUsd ?? null })),
+      }).catch(() => null);
+
+  const resolved = resolveAgentAction({ intent, availability, maxContracts, proposal });
+  const detail = [...resolved.notes, resolved.aiRationale ? `AI: ${resolved.aiRationale}` : null].filter(Boolean).join(" ");
+  if (resolved.action === "hold") return { ...base, outcome: "holding", detail };
+  if (resolved.action === "close" || resolved.action === "roll") return await exit(context, resolved, detail);
+  return await hedge(context, resolved.contracts, detail);
+}
+
+async function hedge(context: ActContext, contracts: number, detail: string): Promise<ShadowAgentResult> {
+  const { base, account, accountAddress, policy, provider, agent, config, now } = context;
+  if (!Number.isFinite(contracts) || contracts < 0.001) return { ...base, outcome: "quote-unavailable", detail: "Mandate contract cap is below the executable minimum." };
   const period = TRADE_PERIODS.find((days) => {
     const tenor = BigInt(days * 86400);
     return tenor >= policy.mandate.minTenorSeconds && tenor <= policy.mandate.maxTenorSeconds;
   });
   if (!period) return { ...base, outcome: "quote-unavailable", detail: "No supported Thetanuts tenor fits this mandate." };
-  const contracts = Math.min(1, Number(policy.mandate.maxContractsPerFill) / 1e6);
-  if (!Number.isFinite(contracts) || contracts < 0.001) return { ...base, outcome: "quote-unavailable", detail: "Mandate contract cap is below the executable minimum." };
 
   const quote = await getShadowQuote(
     policy.mandate.asset,
@@ -153,7 +230,7 @@ async function runShadowAgent(accountAddress: string, config: ReturnType<typeof 
     tenor > policy.mandate.maxTenorSeconds || BigInt(signedQuote.validUntil) < now
   ) return { ...base, outcome: "quote-unavailable", detail: "Fresh quote does not satisfy the signed policy." };
   if (policy.control.spentPremium + premium > policy.mandate.maxPremiumTotal) {
-    return { ...base, outcome: "quote-unavailable", detail: "The signed mandate's total premium cap is exhausted." };
+    return { ...base, outcome: "quote-unavailable", detail: "The signed maximum loss is exhausted." };
   }
   if (policy.control.lastExecutionAt !== 0n && now < policy.control.lastExecutionAt + policy.mandate.minExecutionIntervalSeconds) {
     return { ...base, outcome: "quote-unavailable", detail: "The signed mandate's execution cooldown is active." };
@@ -161,8 +238,76 @@ async function runShadowAgent(accountAddress: string, config: ReturnType<typeof 
   const usdc = new ethers.Contract(policy.mandate.collateral, ERC20_ABI, provider);
   if ((await usdc.balanceOf(accountAddress)) < premium) return { ...base, outcome: "quote-unavailable", detail: "Policy account lacks enough test USDC for the exact quote." };
 
-  const callData = account.interface.encodeFunctionData("executeShadow", [policy.hash, risk, riskSignature, signedQuote, fill[1]]);
-  return { ...base, outcome: "fill-submitted", userOpHash: (await submitPolicyUserOperation({ chainId: 84532, provider, agent, sender: accountAddress, callData, pimlicoApiKey: config.pimlicoApiKey })) ?? undefined };
+  const callData = account.interface.encodeFunctionData("executeShadow", [policy.hash, context.risk, context.riskSignature, signedQuote, fill[1]]);
+  return { ...base, outcome: "fill-submitted", detail, userOpHash: (await submitPolicyUserOperation({ chainId: 84532, provider, agent, sender: accountAddress, callData, pimlicoApiKey: config.pimlicoApiKey })) ?? undefined };
+}
+
+/** A close, or a roll — a close and a replacement fill in one atomic call. */
+async function exit(context: ActContext, resolved: ReturnType<typeof resolveAgentAction>, detail: string): Promise<ShadowAgentResult> {
+  const { base, account, accountAddress, policy, provider, agent, config, open, now } = context;
+  const receipt = open.find((value) => value.id === resolved.position?.positionId);
+  if (!receipt) return { ...base, outcome: "quote-unavailable", detail: "The receipt this exit targets is no longer open." };
+
+  const usdc = new ethers.Contract(policy.mandate.collateral, ERC20_ABI, provider);
+  const signed = await signShadowClose({
+    position: receipt,
+    mandateHash: policy.hash,
+    account: accountAddress,
+    chainId: 84532,
+    optionBook: policy.mandate.optionBook,
+    bookBalanceUsdc: await usdc.balanceOf(policy.mandate.optionBook),
+    agent,
+  });
+  if (isRefusal(signed)) return { ...base, outcome: "quote-unavailable", detail: signed.reason };
+
+  if (resolved.action === "close") {
+    const callData = account.interface.encodeFunctionData("executeShadowClose", [policy.hash, signed.attestation, signed.attestationSignature, signed.close, signed.closeSignature]);
+    return { ...base, outcome: "close-submitted", detail, userOpHash: (await submitPolicyUserOperation({ chainId: 84532, provider, agent, sender: accountAddress, callData, pimlicoApiKey: config.pimlicoApiKey })) ?? undefined };
+  }
+
+  // Roll: the replacement leg is quoted and bounded exactly like a fresh hedge.
+  const period = TRADE_PERIODS.find((days) => {
+    const tenor = BigInt(days * 86400);
+    return tenor >= policy.mandate.minTenorSeconds && tenor <= policy.mandate.maxTenorSeconds;
+  });
+  if (!period) return { ...base, outcome: "quote-unavailable", detail: "No supported Thetanuts tenor fits this mandate for the replacement leg." };
+  const quote = await getShadowQuote(
+    policy.mandate.asset,
+    accountAddress,
+    policy.mandate.side === 0 ? "call" : "put",
+    resolved.contracts,
+    period,
+    true,
+    Number(policy.mandate.maxPremiumPerFill) / 1e6,
+  );
+  if (quote.source.liquidity !== "book") return { ...base, outcome: "quote-unavailable", detail: "No fresh listed order is eligible for the replacement leg." };
+  const fill = new ethers.Interface(FILL_ABI).decodeFunctionData("fillShadow", quote.txs.fill.data);
+  const replacement = fill[0];
+  const premium = BigInt(replacement.premiumUsdc);
+  const tenor = BigInt(replacement.expiry) - now;
+  if (
+    replacement.buyer.toLowerCase() !== accountAddress.toLowerCase() || premium > policy.mandate.maxPremiumPerFill ||
+    BigInt(replacement.contractsE6) > policy.mandate.maxContractsPerFill || tenor < policy.mandate.minTenorSeconds ||
+    tenor > policy.mandate.maxTenorSeconds || BigInt(replacement.validUntil) < now
+  ) return { ...base, outcome: "quote-unavailable", detail: "The replacement leg does not satisfy the signed policy." };
+  // The exit credit lands first, so the cap is measured against the net figure.
+  const credited = signed.close.proceedsUsdc > policy.control.spentPremium ? policy.control.spentPremium : signed.close.proceedsUsdc;
+  if (policy.control.spentPremium - credited + premium > policy.mandate.maxPremiumTotal) {
+    return { ...base, outcome: "quote-unavailable", detail: "The replacement leg would breach the signed maximum loss." };
+  }
+
+  const request = {
+    risk: context.risk,
+    riskSignature: context.riskSignature,
+    attestation: signed.attestation,
+    attestationSignature: signed.attestationSignature,
+    close: signed.close,
+    closeSignature: signed.closeSignature,
+    quote: replacement,
+    quoteSignature: fill[1],
+  };
+  const callData = account.interface.encodeFunctionData("executeShadowRoll", [policy.hash, request]);
+  return { ...base, outcome: "roll-submitted", detail, userOpHash: (await submitPolicyUserOperation({ chainId: 84532, provider, agent, sender: accountAddress, callData, pimlicoApiKey: config.pimlicoApiKey })) ?? undefined };
 }
 
 function riskState(raw: { scoreBps: bigint; eligibleSince: bigint; observedAt: bigint; validUntil: bigint }): RiskState {

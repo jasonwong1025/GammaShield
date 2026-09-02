@@ -3,6 +3,8 @@ pragma solidity 0.8.24;
 
 interface IERC20 {
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
+    function transfer(address to, uint256 amount) external returns (bool);
+    function balanceOf(address account) external view returns (uint256);
 }
 
 /// @notice Base Sepolia-only receipt book. It mirrors signed GammaShield snapshots,
@@ -19,6 +21,18 @@ contract ShadowOptionBook {
         uint64 validUntil;
         uint128 contractsE6;
         uint128 premiumUsdc;
+    }
+
+    /// @notice An attested exit mark for one open shadow position. `proceedsUsdc`
+    /// is what the attester says the position is worth now; this book holds no
+    /// market and cannot discover that price itself.
+    struct ShadowClose {
+        bytes32 closeId;
+        uint256 positionId;
+        address seller;
+        uint64 validUntil;
+        uint128 contractsE6;
+        uint128 proceedsUsdc;
     }
 
     struct Position {
@@ -38,6 +52,9 @@ contract ShadowOptionBook {
     bytes32 private constant QUOTE_TYPEHASH = keccak256(
         "ShadowQuote(bytes32 fillId,bytes32 sourceHash,bytes32 asset,address buyer,bool isCall,uint128 strikeE8,uint64 expiry,uint64 validUntil,uint128 contractsE6,uint128 premiumUsdc)"
     );
+    bytes32 private constant CLOSE_TYPEHASH = keccak256(
+        "ShadowClose(bytes32 closeId,uint256 positionId,address seller,uint64 validUntil,uint128 contractsE6,uint128 proceedsUsdc)"
+    );
     bytes32 private constant NAME_HASH = keccak256("GammaShield Shadow OptionBook");
     bytes32 private constant VERSION_HASH = keccak256("1");
     uint256 private constant SECP256K1N_HALF =
@@ -47,7 +64,10 @@ contract ShadowOptionBook {
     address public immutable attester;
     uint256 public nextPositionId;
     mapping(bytes32 => bool) public usedFillIds;
+    mapping(bytes32 => bool) public usedCloseIds;
     mapping(uint256 => Position) public positions;
+    /// @notice Unix time a position was closed, or 0 while it is still open.
+    mapping(uint256 => uint64) public closedAt;
 
     event ShadowOrderFilled(
         uint256 indexed positionId,
@@ -60,6 +80,14 @@ contract ShadowOptionBook {
         uint64 expiry,
         uint128 contractsE6,
         uint128 premiumUsdc
+    );
+
+    event ShadowPositionClosed(
+        uint256 indexed positionId,
+        bytes32 indexed closeId,
+        address seller,
+        uint128 contractsE6,
+        uint128 proceedsUsdc
     );
 
     constructor(address collateral_, address attester_) {
@@ -104,6 +132,40 @@ contract ShadowOptionBook {
         );
     }
 
+    /// @notice Close one open shadow position at an attested mark and pay the
+    /// seller out of this book's own collateral balance.
+    ///
+    /// Full closes only. A partial exit would split one receipt's premium
+    /// across two lots, and the loss accounting in MandateAccount treats
+    /// `spentPremium` as a single net number per position.
+    function closeShadow(ShadowClose calldata close, bytes calldata signature) external returns (uint128 proceedsUsdc) {
+        Position memory position = positions[close.positionId];
+        require(position.buyer != address(0), "unknown position");
+        require(position.buyer == msg.sender && close.seller == msg.sender, "wrong seller");
+        require(closedAt[close.positionId] == 0, "already closed");
+        require(close.validUntil >= block.timestamp, "close expired");
+        require(close.contractsE6 == position.contractsE6, "partial close");
+        require(!usedCloseIds[close.closeId], "close used");
+        require(_recover(_closeDigest(close), signature) == attester, "invalid attestation");
+        require(collateral.balanceOf(address(this)) >= close.proceedsUsdc, "book underfunded");
+
+        usedCloseIds[close.closeId] = true;
+        closedAt[close.positionId] = uint64(block.timestamp);
+        proceedsUsdc = close.proceedsUsdc;
+
+        // A worthless option closes for nothing; that is a real outcome, not an error.
+        if (proceedsUsdc > 0) {
+            require(collateral.transfer(msg.sender, proceedsUsdc), "payout failed");
+        }
+        emit ShadowPositionClosed(close.positionId, close.closeId, msg.sender, close.contractsE6, proceedsUsdc);
+    }
+
+    /// @notice 1 = fill only. 2 = fill and close. An older deployment has no
+    /// such function at all, so a failed call means "fill only".
+    function version() external pure returns (uint16) {
+        return 2;
+    }
+
     function domainSeparator() public view returns (bytes32) {
         return keccak256(abi.encode(DOMAIN_TYPEHASH, NAME_HASH, VERSION_HASH, block.chainid, address(this)));
     }
@@ -122,6 +184,21 @@ contract ShadowOptionBook {
                 quote.validUntil,
                 quote.contractsE6,
                 quote.premiumUsdc
+            )
+        );
+        return keccak256(abi.encodePacked("\x19\x01", domainSeparator(), structHash));
+    }
+
+    function _closeDigest(ShadowClose calldata close) private view returns (bytes32) {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                CLOSE_TYPEHASH,
+                close.closeId,
+                close.positionId,
+                close.seller,
+                close.validUntil,
+                close.contractsE6,
+                close.proceedsUsdc
             )
         );
         return keccak256(abi.encodePacked("\x19\x01", domainSeparator(), structHash));

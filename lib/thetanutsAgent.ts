@@ -7,6 +7,16 @@ import { getTradeQuote } from "@/lib/trade";
 import { TRADE_PERIODS } from "@/lib/tradePeriods";
 import { getPolicyUserOperationReceipt, submitPolicyUserOperation } from "@/lib/policyAgent4337";
 import { discoverPolicyAccounts } from "@/lib/policyAgentDiscovery";
+import { getThetanutsPositions } from "@/lib/positions";
+import { readAgentActions } from "@/lib/agentActionStore";
+import { proposeAgentAction } from "@/lib/agentProposal";
+import {
+  agentActionAvailability,
+  deterministicIntent,
+  resolveAgentAction,
+  type AgentLimits,
+  type OpenPosition,
+} from "@/lib/agentPolicy";
 
 const ENTRY_POINT = "0x0000000071727De22E5E9d8BAf0edAc6f37da032";
 const RISK_LIFETIME_SECONDS = 120;
@@ -19,7 +29,7 @@ const ERC20_ABI = ["function balanceOf(address) view returns (uint256)"] as cons
 type Mandate = { agent: string; optionBook: string; collateral: string; asset: "BTC" | "ETH"; side: number; maxPremiumPerFill: bigint; maxPremiumTotal: bigint; maxContractsPerFill: bigint; minTenorSeconds: bigint; maxTenorSeconds: bigint; riskThresholdBps: bigint; persistenceSeconds: bigint; minExecutionIntervalSeconds: bigint; expiresAt: bigint };
 type Control = { spentPremium: bigint; lastExecutionAt: bigint };
 type RiskState = { scoreBps: bigint; eligibleSince: bigint; validUntil: bigint };
-export type ThetanutsAgentResult = { account: string; mandateHash?: string; score?: number; threshold?: number; outcome: "pending-user-operation" | "risk-below-threshold" | "risk-reset-submitted" | "risk-reset-simulated" | "risk-persistence-pending" | "gas-unfunded" | "risk-observation-submitted" | "risk-observation-simulated" | "quote-unavailable" | "fill-submitted" | "fill-simulated"; userOpHash?: string; detail?: string };
+export type ThetanutsAgentResult = { account: string; mandateHash?: string; score?: number; threshold?: number; outcome: "pending-user-operation" | "risk-below-threshold" | "risk-reset-submitted" | "risk-reset-simulated" | "risk-persistence-pending" | "gas-unfunded" | "risk-observation-submitted" | "risk-observation-simulated" | "quote-unavailable" | "fill-submitted" | "fill-simulated" | "holding"; userOpHash?: string; detail?: string };
 
 export async function runThetanutsAgents(options: { pendingAccounts?: Iterable<string>; knownAccounts?: Iterable<string>; discoveryFromBlock?: number } = {}) {
   const config = runtimeConfig();
@@ -70,9 +80,46 @@ async function runThetanutsAgent(accountAddress: string, config: ReturnType<type
     return submitRisk(account, policy.hash, risk, riskSignature, provider, agent, accountAddress, config, config.dryRun ? "risk-observation-simulated" : "risk-observation-submitted", base);
   }
   if (!persistent) return { ...base, outcome: "risk-persistence-pending" };
+
+  // Base mainnet executes exactly one of the three actions. The other two are
+  // reported unavailable with a reason rather than silently skipped, and the
+  // owner's stored switches can still narrow what is left.
+  const [stored, openPositions] = await Promise.all([
+    readAgentActions("mainnet", accountAddress),
+    getThetanutsPositions(accountAddress).catch(() => []),
+  ]);
+  const limits: AgentLimits = { asset: policy.mandate.asset, maxLossUsd: 0, maxTradeNotionalUsd: 0, actions: stored.actions };
+  const availability = agentActionAvailability(limits, "mainnet", null);
+  const nowSeconds = Number(now);
+  // The indexer's ids are opaque strings, so index them positionally. Nothing
+  // on mainnet acts on a position id — only close and roll would, and neither
+  // has an adapter here — but collapsing distinct ids to 0 would be a trap.
+  const positions: OpenPosition[] = openPositions
+    .filter((position) => position.asset === policy.mandate.asset && !position.isCall && position.expiryTs > nowSeconds)
+    .map((position, index) => ({ positionId: index, expiryTs: position.expiryTs, contracts: position.contracts }));
+
+  const maxContracts = Math.min(1, Number(policy.mandate.maxContractsPerFill) / 1e6);
+  const intent = deterministicIntent({ riskScore: score, threshold: base.threshold, persistenceMet: true, positions, now: nowSeconds });
+  const proposal = intent.action === "hold"
+    ? null
+    : await proposeAgentAction({
+        asset: policy.mandate.asset,
+        action: intent.action,
+        maxContracts,
+        riskScore: score,
+        threshold: base.threshold,
+        regime: snapshot.assets[policy.mandate.asset].regime,
+        netGexUsd: snapshot.assets[policy.mandate.asset].netGexUsd,
+        spot: snapshot.prices[policy.mandate.asset],
+        openPositions: openPositions.map((position) => ({ strike: position.strike, expiryTs: position.expiryTs, contracts: position.contracts, pnlUsd: position.pnlUsd })),
+      }).catch(() => null);
+  const resolved = resolveAgentAction({ intent, availability, maxContracts, proposal });
+  const decisionDetail = [...resolved.notes, resolved.aiRationale ? `AI: ${resolved.aiRationale}` : null].filter(Boolean).join(" ");
+  if (resolved.action !== "hedge") return { ...base, outcome: "holding", detail: decisionDetail };
+
   const period = TRADE_PERIODS.find((days) => BigInt(days * 86400) >= policy.mandate.minTenorSeconds && BigInt(days * 86400) <= policy.mandate.maxTenorSeconds);
   if (!period) return { ...base, outcome: "quote-unavailable", detail: "No supported Thetanuts tenor fits this mandate." };
-  const contracts = Math.min(1, Number(policy.mandate.maxContractsPerFill) / 1e6);
+  const contracts = resolved.contracts;
   if (!Number.isFinite(contracts) || contracts < 0.001) return { ...base, outcome: "quote-unavailable", detail: "Mandate contract cap is below the executable minimum." };
   const quote = await getTradeQuote(policy.mandate.asset, "put", contracts, period, {
     fresh: true,
@@ -85,6 +132,11 @@ async function runThetanutsAgent(accountAddress: string, config: ReturnType<type
   const premium = BigInt(order.price) * BigInt(order.numContracts) / 100_000_000n;
   const tenor = BigInt(order.expiry) - now;
   if (order.isCall || order.isLong || String(decoded[2]).toLowerCase() !== ethers.ZeroAddress || premium <= 0n || premium > policy.mandate.maxPremiumPerFill || BigInt(order.numContracts) > policy.mandate.maxContractsPerFill || tenor < policy.mandate.minTenorSeconds || tenor > policy.mandate.maxTenorSeconds || BigInt(order.orderExpiryTimestamp) <= now) return { ...base, outcome: "quote-unavailable", detail: "The fresh SDK preview does not satisfy the signed policy." };
+  // The mandate caps contracts; the user set a notional limit. Check the real
+  // strike here, where it is finally known, rather than trusting the conversion.
+  const fillNotionalUsd = (Number(order.numContracts) / 1e6) * (Number(order.strikes[0]) / 1e8);
+  const signedNotionalCap = (Number(policy.mandate.maxContractsPerFill) / 1e6) * (Number(order.strikes[0]) / 1e8);
+  if (fillNotionalUsd > signedNotionalCap + 1e-9) return { ...base, outcome: "quote-unavailable", detail: "The fill's notional exceeds the signed per-trade limit at this strike." };
   if (policy.control.spentPremium + premium > policy.mandate.maxPremiumTotal) return { ...base, outcome: "quote-unavailable", detail: "The signed mandate's total premium cap is exhausted." };
   if (policy.control.lastExecutionAt !== 0n && now < policy.control.lastExecutionAt + policy.mandate.minExecutionIntervalSeconds) return { ...base, outcome: "quote-unavailable", detail: "The signed mandate's execution cooldown is active." };
   if ((await new ethers.Contract(BASE_USDC, ERC20_ABI, provider).balanceOf(accountAddress)) < premium) return { ...base, outcome: "quote-unavailable", detail: "Policy account lacks enough USDC for the exact SDK preview." };

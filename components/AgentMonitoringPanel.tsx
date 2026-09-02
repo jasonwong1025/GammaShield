@@ -60,7 +60,7 @@ export function AgentMonitoringPanel({ account, mandateHash, network }: { accoun
   return <section className="mt-4 border-t border-edge pt-4" aria-label="Agent monitoring">
     <p className="text-[10px] font-semibold uppercase tracking-wide text-blue">Step 4 · Agent monitoring</p>
     <h3 className="mt-1 text-[14px] font-bold text-fg">{agent?.worker === "error" || agent?.worker === "stale" || agentError ? "Agent needs attention" : "Policy is active"}</h3>
-    <p className="mt-1 text-[12px] text-muted">The external {network === "mainnet" ? "Thetanuts" : "shadow"} worker checks the live book and risk every 10–15 seconds. It can only submit after funding, the signed threshold and persistence period, and a fresh eligible quote.</p>
+    <p className="mt-1 text-[12px] text-muted">The external {network === "mainnet" ? "Thetanuts" : "shadow"} worker checks the live book and risk every 10–15 seconds. It can only act after funding, the signed threshold and persistence period, and a fresh eligible quote — and only through the actions you switched on. {network === "mainnet" ? "On Base mainnet that is Auto-Hedge alone." : "On Base Sepolia all three actions are available."}</p>
     <div className="mt-3 grid gap-2 rounded-lg border border-edge bg-panel2 p-3 text-[11px] sm:grid-cols-[150px_1fr]">
       <span className="text-faint">Worker</span><span className="text-fg">{workerText(agent, agentError, now)}</span>
       <span className="text-faint">Execution mode</span><span className="text-fg">{!agent ? "Checking worker mode…" : agent.dryRun ? "Dry run — validates only; it cannot spend funds." : network === "mainnet" ? "Broadcast enabled — a qualifying fill may use policy funds." : "Shadow execution — Base Sepolia test funds only."}</span>
@@ -95,7 +95,10 @@ function decisionText(latest: NonNullable<AgentStatus["latest"]>) {
     "quote-unavailable": "Waiting: no fresh listed order satisfies the signed policy.",
     "gas-unfunded": "Waiting: the policy account needs more native ETH for UserOperation gas.",
     "pending-user-operation": "Waiting for the prior UserOperation receipt.",
-    "fill-submitted": "Fill UserOperation submitted; awaiting confirmation.",
+    "fill-submitted": "Auto-Hedge: fill UserOperation submitted; awaiting confirmation.",
+    "close-submitted": "Auto-Close: exit UserOperation submitted; awaiting confirmation.",
+    "roll-submitted": "Auto-Roll: close-and-replace UserOperation submitted; awaiting confirmation.",
+    "holding": "Holding — no action cleared every gate this cycle.",
     "fill-simulated": "Dry-run: a fresh quote passed every policy check; no fill was broadcast.",
   };
   return `${labels[latest.outcome] ?? latest.outcome}${latest.detail ? ` ${latest.detail}` : ""}`;

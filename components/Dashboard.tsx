@@ -9,7 +9,7 @@ import { PriceChart } from "./PriceChart";
 import { RiskView } from "./RiskView";
 import { BookCard } from "./BookFeed";
 import { CopilotWidget } from "./CopilotWidget";
-import { HedgeView } from "./HedgeView";
+import { AgentView } from "./AgentView";
 import { ExecutionNetworkProvider } from "./ExecutionNetworkProvider";
 import { ALL_ASSETS, isOptionsAsset, type Asset } from "@/lib/assets";
 
@@ -151,9 +151,9 @@ export function Dashboard() {
                   </div>
                 )}
 
-                {/* TAB 2: Autonomous Thetanuts Hedging Workspace */}
-                {activeTab === "hedge" && (
-                  <HedgeView
+                {/* TAB 2: AI agent workspace — limits, policy, monitoring */}
+                {activeTab === "agent" && (
+                  <AgentView
                     snap={a}
                     feed={snap.feed}
                     asset={asset}
@@ -169,8 +169,8 @@ export function Dashboard() {
 
       <CopilotWidget
         snap={a}
-        onNavigateToHedge={() => {
-          setActiveTab("hedge");
+        onNavigateToAgent={() => {
+          setActiveTab("agent");
         }}
       />
     </div>

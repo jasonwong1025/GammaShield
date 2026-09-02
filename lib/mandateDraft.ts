@@ -7,22 +7,23 @@ import { TRADE_PERIODS, type TradePeriod } from "@/lib/tradePeriods";
 import type { OptionsAsset } from "@/lib/assets";
 import { gonkaApiKey, gonkaBaseUrl } from "@/lib/gonkaConfig";
 
-export type MandateDraftTerms = {
-  asset: OptionsAsset;
-  side: "put";
-  premiumPerFill: string;
-  premiumTotal: string;
-  contracts: string;
-  minTenorDays: string;
-  maxTenorDays: string;
+/** Signed terms the five user-facing limits do not cover. */
+export type MandateDraftTiming = {
   riskScore: string;
   persistenceMinutes: string;
   cooldownMinutes: string;
   validityHours: string;
+  minTenorDays: string;
+  maxTenorDays: string;
 };
 
 export type AiMandateDraft = {
-  terms: MandateDraftTerms;
+  asset: OptionsAsset;
+  /** Premium the agent may put at risk in total — the user's "maximum loss". */
+  maxLossUsd: number;
+  /** Notional of one trade, taken from the live quote this draft actually found. */
+  maxTradeNotionalUsd: number;
+  timing: MandateDraftTiming;
   source: "gonka" | "deterministic";
   rationale: string;
   quote: { strike: number; expiryTs: number; contracts: number; premiumUsd: number; period: TradePeriod; liquidity: "book" | "mm"; capturedAt: number };
@@ -37,21 +38,21 @@ export async function createAiMandateDraft(asset: string): Promise<AiMandateDraf
   const now = Math.floor(Date.now() / 1000);
   const daysToExpiry = Math.max(1, Math.ceil((quote.expiryTs - now) / 86400));
   const timing = await getAiTiming(asset, quote, daysToExpiry);
-  const premiumPerFill = usd(quote.totalCostUsd);
 
   return {
-    terms: {
-      asset,
-      side: "put",
-      premiumPerFill,
-      premiumTotal: premiumPerFill,
-      contracts: quantity(quote.contracts),
-      minTenorDays: "1",
-      maxTenorDays: String(Math.min(28, Math.max(7, daysToExpiry + 3))),
+    asset,
+    // Enough budget for the fill it found plus a roll or two, never less than
+    // one fill. Rounded up to a whole dollar so the signed cap reads cleanly.
+    maxLossUsd: Math.max(1, Math.ceil(quote.totalCostUsd * 3)),
+    // The real notional of a real listed order, not a round number.
+    maxTradeNotionalUsd: Math.max(1, Math.ceil(quote.contracts * quote.strike)),
+    timing: {
       riskScore: String(timing.riskScore),
       persistenceMinutes: String(timing.persistenceMinutes),
       cooldownMinutes: String(timing.cooldownMinutes),
       validityHours: String(timing.validityHours),
+      minTenorDays: "1",
+      maxTenorDays: String(Math.min(28, Math.max(7, daysToExpiry + 3))),
     },
     source: timing.source,
     rationale: timing.rationale || (quote.source === "book"
@@ -119,12 +120,4 @@ async function getAiTiming(asset: OptionsAsset, quote: Awaited<ReturnType<typeof
 
 function clampInteger(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, Math.round(value)));
-}
-
-function usd(value: number) {
-  return (Math.ceil(value * 1e6) / 1e6).toFixed(6).replace(/\.?0+$/, "");
-}
-
-function quantity(value: number) {
-  return value.toFixed(6).replace(/\.?0+$/, "");
 }

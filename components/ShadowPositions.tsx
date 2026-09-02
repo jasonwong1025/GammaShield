@@ -104,12 +104,12 @@ export function ShadowPositions({ asset }: { asset: Asset }) {
         <tbody className="font-mono text-[11px]">
           {filtered.map((position) => (
             <tr key={position.id} className="border-t border-edge/50">
-              <td className="px-4 py-2 font-sans"><span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${position.isCall ? "text-calm bg-calm/10" : "text-crit bg-crit/10"}`}>{position.isCall ? "CALL" : "PUT"}</span>{position.custody === "policy" && <span className="ml-1 text-[9px] font-semibold text-blue">AGENT</span>}</td>
+              <td className="px-4 py-2 font-sans"><span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${position.isCall ? "text-calm bg-calm/10" : "text-crit bg-crit/10"}`}>{position.isCall ? "CALL" : "PUT"}</span>{position.custody === "policy" && <span className="ml-1 text-[9px] font-semibold text-blue">AGENT</span>}{position.closedAt && <span className="ml-1 text-[9px] font-semibold text-faint">CLOSED</span>}</td>
               <td className="px-2 py-2 text-right num text-fg">{fmtStrike(position.strike)}</td>
               <td className="px-2 py-2 text-right text-muted whitespace-nowrap">{fmtExpiryDate(position.expiryTs)} <span className="text-faint">· {fmtCountdown(position.expiryTs, now)}</span></td>
               <td className="px-2 py-2 text-right num text-fg">{fmtUsd(position.premiumUsd, false, 6)} USDC</td>
               <td className="px-2 py-2 text-right num" title={position.mark ? `Modeled from ${position.mark.source}; not a fillable Thetanuts price or settlement.` : "No live IV mark is available."}>
-                {position.mark ? <><span style={{ color: position.mark.pnlUsd >= 0 ? "var(--calm)" : "var(--crit)" }}>{position.mark.pnlUsd >= 0 ? "+" : "−"}{fmtUsd(Math.abs(position.mark.pnlUsd), false, 6)}</span><span className="block text-[10px] text-faint">{position.mark.source}</span></> : <span className="text-faint">No live mark</span>}
+                {position.mark ? <><span style={{ color: position.mark.pnlUsd >= 0 ? "var(--calm)" : "var(--crit)" }}>{position.mark.pnlUsd >= 0 ? "+" : "−"}{fmtUsd(Math.abs(position.mark.pnlUsd), false, 6)}</span><span className="block text-[10px] text-faint">{position.mark.source}</span></> : <span className="text-faint">{position.closedAt ? "Closed by the agent" : "No live mark"}</span>}
               </td>
               <td className="px-2 py-2 text-right num text-fg">{fmtContracts(position.contracts)}</td>
               <td className="px-4 py-2 text-right">{position.txHash ? <ExplorerLink network="sepolia" resource="tx" value={position.txHash} className="text-blue hover:underline">View receipt</ExplorerLink> : <span className="text-muted">#{position.id}</span>}</td>

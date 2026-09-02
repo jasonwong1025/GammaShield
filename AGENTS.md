@@ -23,10 +23,12 @@ npm run lint    # eslint — must pass before committing
 npm run wagmi:generate # regenerate typed ABIs after changing generated-contract config
 npm run check:risk     # contract risk model self-check (pure math, no network)
 npm run check:impact   # market impact model self-check (pure math, no network)
-cd contracts && forge test # ShadowOptionBook tests
+npm run check:agent    # AI agent action model self-check (pure, no network)
+npm run deploy:sepolia:shadow # redeploy the Base Sepolia shadow book + policy factory
+cd contracts && forge test # ShadowOptionBook + MandateAccount tests
 ```
 
-Verification = `npm run lint`, `npm run build`, `npm run check:risk` when you touch the risk model, `npm run check:impact` when you touch the impact model, `cd contracts && forge test` when contracts change, and eyeballing the dashboard against live data.
+Verification = `npm run lint`, `npm run build`, `npm run check:risk` when you touch the risk model, `npm run check:impact` when you touch the impact model, `npm run check:agent` when you touch the agent's action model or limits, `cd contracts && forge test` when contracts change, and eyeballing the dashboard against live data.
 
 ## Architecture — read this before editing
 
@@ -46,7 +48,11 @@ Data flows in one direction: **exchange/chain → server (lib/ + app/api/) → c
 - `lib/format.ts` — shared number/USD/percent formatters. Use these instead of ad-hoc `toFixed`/`toLocaleString`.
 - `lib/trade.ts` — live OptionBook quote construction. It uses SDK preview/encoding, rejects unknown collateral/implementations/targets, and returns wallet calldata only for a fresh listed order.
 - `lib/positions.ts` — normalizes the Thetanuts indexer’s open positions. Prefer `implementationName` over raw option-type values when identifying call/put products.
-- `lib/shadow.ts` — Base Sepolia-only, signed receipt-book demo. It mirrors a mainnet quote but is never a Thetanuts position.
+- `lib/shadow.ts` — Base Sepolia-only, signed receipt-book demo. It mirrors a mainnet quote but is never a Thetanuts position. Reads `closedAt` per receipt, and `getShadowBookVersion()` reports whether the deployed book can close at all (1 = fill only, 2 = fill and close).
+- `lib/agentPolicy.ts` — the **AI agent's action model**, and the only place a user's plain limits become signed terms. Pure, and shared verbatim by the browser and the workers so they cannot disagree about a limit. Three invariants: availability is separate from permission (an action the deployment cannot execute is reported unavailable **with a reason**, never skipped silently); the toggles and the AI may only **narrow** what the signed policy already permits; and the notional→contracts conversion always rounds **down**. Covered by `npm run check:agent`.
+- `lib/agentProposal.ts` — the AI half of the agent. It is offered exactly one already-cleared action per cycle and may agree, shrink the size, or stand down. It cannot pick a different action, raise a size, or reach past the risk gate; `agentPolicy.ts` enforces that on the way back. Unreachable, slow or malformed all return `null`, which means "no opinion" — the agent is never blocked on the model.
+- `lib/agentActionStore.ts` — server-side store for the three action switches, written only with a signature that recovers to the policy account's on-chain `owner()` and only when newer than the stored entry. Deliberately off-chain: putting the switches in the signed mandate would change the EIP-712 type and orphan every deployed account.
+- `lib/shadowExit.ts` — builds and signs the two structs a shadow exit needs (the book's `ShadowClose`, and the account's mandate-bound attestation). Refuses to close an unpriceable receipt, or one worth more than the book's balance, rather than inventing a mark.
 
 ### API routes (`app/api/`)
 
@@ -55,6 +61,7 @@ Data flows in one direction: **exchange/chain → server (lib/ + app/api/) → c
 - `rfq` — custom-expiry RFQ support. Prepare/settle are disabled unless `ENABLE_RFQ_EXECUTION=true`; RFQs escrow collateral and require a separate review. Status reads remain available.
 - `positions` — real Base-mainnet OptionBook positions from the Thetanuts indexer.
 - `shadow/quote`, `shadow/positions` — Base Sepolia demonstration positions only; label them as shadow, never live Thetanuts positions.
+- `agent-actions` — reads (public) and writes (owner-signed) the AI agent's three action switches for one policy account.
 - `whatif` — natural-language spot-order impact. Uses the same measured volume/vol and the same one-round law as `lib/marketImpact.ts`; it must not reintroduce hardcoded market size.
 - `stream` — SSE price ticks (init snapshot, then `price` events, 15s heartbeats).
 - `klines` — OHLCV proxy: Coinbase first, Binance fallback, staleness guard, aggregates finer candles for non-native intervals.
@@ -64,13 +71,14 @@ Routes return `502` with `{ error }` on upstream failure — keep that shape.
 
 ### Client (`components/`)
 
-All chart/dashboard components are `"use client"`. Layout: `Dashboard.tsx` composes `TopBar`, `AssetRail` (asset switcher w/ live prices), `PriceChart` (lightweight-charts, 10 chart types, live tick-built candles), `TradePanel` (user-reviewed live/shadow fills and risk impact), `GexChart` + `Heatmap` (ECharts via the shared `EChart.tsx` wrapper), `BookFeed` (including live and shadow position tabs).
+All chart/dashboard components are `"use client"`. Layout: `Dashboard.tsx` composes `TopBar`, `AssetRail` (asset switcher w/ live prices), `PriceChart` (lightweight-charts, 10 chart types, live tick-built candles), `TradePanel` (user-reviewed live/shadow fills and risk impact), `GexChart` + `Heatmap` (ECharts via the shared `EChart.tsx` wrapper), `BookFeed` (including live and shadow position tabs). The second tab is `AgentView.tsx` (tab key `agent`).
 
 - Live prices come from the `/api/stream` SSE feed (see `LivePrice.tsx`), not polling.
 - New ECharts charts go through `EChart.tsx`; don't instantiate echarts directly.
 - Per-contract risk renders through `ContractRiskPanel.tsx` (book feed drill-down and `TradePanel`). It must keep showing which sub-scores were dropped and why — that panel is the honesty surface for the model.
 - Market impact renders through `MarketImpactPanel.tsx` (same two places), which replaced the older score-before/after "amplification risk impact" card. Its what-if size box re-runs `lib/marketImpact.ts` in the browser — the math is pure and linear in contracts, so no round trip. Keep the volume/vol provenance footer and the negligible floor: a fill on this book genuinely cannot move spot, and the panel must say so rather than print zeros.
 - Asset logos live in `public/coins/` as SVGs, keyed by lowercase symbol.
+- `MandateSigningPanel.tsx` is the AI agent's limits form: **five controls only** — asset, maximum loss, maximum trade size, and the three action switches. Everything else the mandate needs is derived and shown read-only under "What gets signed"; never re-expose the derived terms as inputs. It must keep saying which limit is exact and which is approximate — maximum loss is metered on-chain to the cent, the trade cap is notional converted at a strike ceiling and re-checked exactly before each fill.
 - `TradePanel` must keep approvals and fills as separate user actions. Before a mainnet fill it must refetch the order, require the reviewed maker/option/expiry/collateral/size/cost to match, and preflight the exact calldata.
 
 ## Conventions

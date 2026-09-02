@@ -14,7 +14,10 @@ const RECEIPT_CACHE_MS = 15_000;
 
 const BOOK_ABI = [
   "function fillShadow((bytes32 fillId,bytes32 sourceHash,bytes32 asset,address buyer,bool isCall,uint128 strikeE8,uint64 expiry,uint64 validUntil,uint128 contractsE6,uint128 premiumUsdc) quote,bytes signature)",
+  "function closeShadow((bytes32 closeId,uint256 positionId,address seller,uint64 validUntil,uint128 contractsE6,uint128 proceedsUsdc) close,bytes signature) returns (uint128)",
   "function nextPositionId() view returns (uint256)",
+  "function closedAt(uint256) view returns (uint64)",
+  "function version() view returns (uint16)",
   "function positions(uint256) view returns (bytes32 sourceHash,bytes32 asset,address buyer,bool isCall,uint128 strikeE8,uint64 expiry,uint128 contractsE6,uint128 premiumUsdc)",
   "event ShadowOrderFilled(uint256 indexed positionId,bytes32 indexed fillId,bytes32 indexed sourceHash,address buyer,bytes32 asset,bool isCall,uint128 strikeE8,uint64 expiry,uint128 contractsE6,uint128 premiumUsdc)",
 ] as const;
@@ -62,6 +65,8 @@ export type ShadowQuote = {
 
 export type ShadowPosition = {
   id: number;
+  /** Unix seconds this receipt was closed, or null while it is still open. */
+  closedAt: number | null;
   buyer: string;
   asset: OptionsAsset;
   isCall: boolean;
@@ -214,7 +219,9 @@ export async function getShadowPositions(buyers: string | string[]): Promise<Sha
   if (!positions.length) return positions;
 
   const snapshot = await getMarketSnapshot().catch(() => null);
-  return snapshot ? positions.map((position) => ({ ...position, mark: markPosition(position, snapshot) })) : positions;
+  return snapshot
+    ? positions.map((position) => ({ ...position, mark: position.closedAt ? null : markPosition(position, snapshot) }))
+    : positions;
 }
 
 async function readShadowReceiptBook(): Promise<UnmarkedShadowPosition[]> {
@@ -236,6 +243,12 @@ async function readShadowReceiptBookUncached(): Promise<UnmarkedShadowPosition[]
   const provider = new ethers.JsonRpcProvider(rpcUrl());
   const book = new ethers.Contract(config.optionBook, BOOK_ABI, provider);
   const count = Number(await book.nextPositionId());
+  // Only a version-2 book can close a receipt. On the older deployment there is
+  // no such function, so every receipt is open by definition.
+  const supportsClose = (await bookVersion(book)) >= 2;
+  const closed: (number | null)[] = supportsClose
+    ? (await Promise.all(Array.from({ length: count }, (_, id) => book.closedAt(id)))).map((value) => (Number(value) > 0 ? Number(value) : null))
+    : [];
   // ponytail: scans this small hackathon receipt book; add indexed buyer IDs when it becomes a shared venue.
   const entries = await Promise.all(Array.from({ length: count }, (_, id) => book.positions(id)));
   const event = book.interface.getEvent("ShadowOrderFilled");
@@ -263,9 +276,26 @@ async function readShadowReceiptBookUncached(): Promise<UnmarkedShadowPosition[]
       contracts: Number(entry.contractsE6) / 1e6,
       premiumUsd: Number(entry.premiumUsdc) / 1e6,
       txHash: txHashes.get(id) ?? null,
+      closedAt: closed[id] ?? null,
     }];
   });
   return positions;
+}
+
+/** 1 = fill only, 2 = fill and close. Returns 1 when the call is unavailable. */
+async function bookVersion(book: ethers.Contract): Promise<number> {
+  try {
+    return Number(await book.version());
+  } catch {
+    return 1;
+  }
+}
+
+/** Whether the deployed Base Sepolia book can close a receipt at all. */
+export async function getShadowBookVersion(): Promise<number> {
+  const config = contracts();
+  const provider = new ethers.JsonRpcProvider(rpcUrl());
+  return bookVersion(new ethers.Contract(config.optionBook, BOOK_ABI, provider));
 }
 
 function markPosition(position: ShadowPosition, snapshot: MarketSnapshot): ShadowPosition["mark"] {
