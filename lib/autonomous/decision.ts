@@ -302,7 +302,6 @@ function evaluateHold(input: DecisionInput): Candidate {
   const parts: string[] = [];
   if (score !== null) parts.push(`per-contract risk is ${score.toFixed(0)}`);
   parts.push(`book risk is ${input.bookRiskScore.toFixed(0)}`);
-  parts.push(describeTrend(input.trend));
   if (input.position) parts.push(input.thesis.valid ? "and the view still holds" : "though the view is in question");
   return {
     action: "HOLD",
@@ -385,11 +384,7 @@ function urgencyOf(input: DecisionInput): Urgency {
 function explain(input: DecisionInput, chosen: Candidate, codes: ReasonCode[]): string {
   const lines = [capitalize(chosen.reason) + "."];
 
-  if (codes.includes("INSUFFICIENT_HISTORY")) {
-    lines.push(`Trend: ${describeTrend(input.trend)}.`);
-  } else {
-    lines.push(`Risk is ${describeTrend(input.trend)}.`);
-  }
+  lines.push(codes.includes("INSUFFICIENT_HISTORY") ? `Trend: ${describeTrend(input.trend)}.` : `Risk is ${describeTrend(input.trend)}.`);
 
   if (chosen.action === "CLOSE" && chosen.estimatedCostUsd !== null) {
     lines.push(`Exiting returns about ${usd(Math.abs(chosen.estimatedCostUsd))} at the current market-maker bid.`);

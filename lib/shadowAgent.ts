@@ -397,7 +397,7 @@ async function act(context: ActContext): Promise<ShadowAgentResult> {
   const resolved = resolveAgentAction({ intent, availability, maxContracts, proposal });
   const detail = [
     decision.explanation,
-    ...resolved.notes,
+    ...resolved.notes.slice(1),
     context.triggers.triggered
       ? `Reassessed because ${context.triggers.reasons[0]}.`
       : "Nothing moved enough to reassess, so the previous reading stands.",

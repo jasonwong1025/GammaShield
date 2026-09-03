@@ -262,7 +262,7 @@ async function runThetanutsAgent(accountAddress: string, config: ReturnType<type
   const resolved = resolveAgentAction({ intent, availability, maxContracts, proposal });
   const decisionDetail = [
     decision.explanation,
-    ...resolved.notes,
+    ...resolved.notes.slice(1),
     triggers.triggered
       ? `Reassessed because ${triggers.reasons[0]}.`
       : "Nothing moved enough to reassess, so the previous reading stands.",
