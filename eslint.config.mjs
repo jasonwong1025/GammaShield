@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Reference copies of other codebases kept for comparison. They are not
+    // ours to fix, and letting them fail the lint gate makes the gate useless.
+    ".compare/**",
   ]),
 ]);
 
