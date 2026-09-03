@@ -16,7 +16,7 @@ type Props = {
 
 export function AgentView({ snap, feed, asset, live, spot }: Props) {
   return (
-    <div className="grid grow grid-cols-1 xl:grid-cols-[1fr_380px] gap-px bg-edge">
+    <div className="grid grow grid-cols-1 xl:grid-cols-[7fr_3fr] gap-px bg-edge">
       {/* Main Column: Policy account setup */}
       <div className="flex flex-col gap-px min-w-0">
         <PolicyAccountPanel spot={spot} />
