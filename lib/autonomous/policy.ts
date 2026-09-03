@@ -131,6 +131,29 @@ export function agentActionAvailability(
   });
 }
 
+/**
+ * Availability for the READ-ONLY strategy panel, where the question is "what
+ * is the right thing to do with this position?" rather than "what may this
+ * deployment execute?".
+ *
+ * THE AGENT MUST NEVER USE THIS. It exists because gating the decision engine
+ * on real availability makes a mainnet close unpickable — no exit adapter
+ * exists there — so the panel would silently never suggest selling, which is
+ * the opposite of honest. The panel therefore asks the engine on merit and
+ * separately reports, per action, whether anything here can actually execute
+ * it. Everything that authorizes an execution path uses
+ * `agentActionAvailability` instead, and passes the result through
+ * `resolveAgentAction`, which this never touches.
+ */
+export function advisoryAvailability(): ActionAvailability[] {
+  return AGENT_ACTIONS.map((action) => ({ action, enabled: true, available: true, reason: null }));
+}
+
+/** Budget sentinel for an advisory read of a position with no signed mandate.
+ *  A real cap of 0 would read as "budget exhausted" and suppress every buy, so
+ *  a position the user opened themselves is scored with no budget binding. */
+export const NO_BUDGET = Number.MAX_SAFE_INTEGER;
+
 export const isActionArmed = (availability: ActionAvailability[], action: AgentAction): boolean =>
   availability.some((entry) => entry.action === action && entry.enabled && entry.available);
 

@@ -54,15 +54,27 @@ function normalize(position: Position): ThetanutsPosition | null {
 export type PositionMark = { bidUsd: number | null; askUsd: number | null; markUsd: number | null };
 
 /**
- * Live market-maker quote for a position the user already holds.
+ * Live market-maker quote for a position the user already holds, in USD per
+ * contract.
  *
- * This is the one number the exit path genuinely needs, and the venue does
- * publish it — `mmPricing.getPositionPricing` prices any ticker, held or not.
- * Worth being precise about what it is and is not: it is a real, current bid,
- * and on Base mainnet there is no mechanism to hit it. `BaseOption.close()` is
- * bilateral, the OptionBook has no maker-order creation for end users, and RFQ
- * mints new options rather than buying back existing ones. So this prices a
- * recommendation, not an executable exit.
+ * Worth being precise about what this is and is not: it is a real, current
+ * bid, and on Base mainnet there is no mechanism to hit it. `BaseOption.close()`
+ * is bilateral, the OptionBook has no maker-order creation for end users, and
+ * RFQ mints new options rather than buying back existing ones. So this prices
+ * a recommendation, not an executable exit.
+ *
+ * Two SDK traps are deliberately avoided here, both found by calling it:
+ *
+ *   1. `mmPricing.getPositionPricing` is unusable for BTC. It scales the
+ *      strike by 1e12 through `floatToBigInt`, and 78500e12 exceeds
+ *      Number.MAX_SAFE_INTEGER, so it throws for any BTC-scale strike. It also
+ *      requires an integer `numContracts`, which our fractional sizes are not.
+ *      `getTickerPricing` returns the identical bid/ask with neither problem —
+ *      verified equal on ETH, where both calls succeed.
+ *   2. Raw MM prices are FRACTIONS OF THE UNDERLYING, not USD. The SDK's own
+ *      `premiumPerContract` documents the rule: for quote (USDC) collateral,
+ *      multiply by spot. Returning them unconverted understates the position
+ *      by roughly five orders of magnitude.
  *
  * Returns nulls rather than throwing: an unpriceable position must read as
  * unpriced, never as worthless.
@@ -71,22 +83,20 @@ export async function getPositionMark(position: ThetanutsPosition): Promise<Posi
   const empty: PositionMark = { bidUsd: null, askUsd: null, markUsd: null };
   try {
     const ticker = buildTicker(position.asset, position.expiryTs, position.strike, position.isCall);
-    const pricing = await getClient().mmPricing.getPositionPricing({
-      ticker,
-      isLong: true,
-      numContracts: position.contracts,
-      collateralToken: "USDC",
-    });
-    // Prefer the USD-collateral quote, since that is the collateral these
-    // policies use; fall back to whatever the maker returned rather than
-    // silently reporting no quote.
+    const pricing = await getClient().mmPricing.getTickerPricing(ticker);
+    const spot = pricing.underlyingPrice;
+    if (!(spot > 0)) return empty;
+
+    // These policies collateralise in USDC, so the quote-collateral entry is
+    // the one that prices our exit. Its `collateralAmount` is the strike in
+    // USD, which is how it identifies itself as the quote side.
     const byCollateral = Object.values(pricing.byCollateral ?? {});
     const quote = byCollateral.find((entry) => entry.collateralAsset?.toUpperCase().includes("USD")) ?? byCollateral[0];
-    return {
-      bidUsd: positive(quote?.mmBidPrice),
-      askUsd: positive(quote?.mmAskPrice),
-      markUsd: positive(pricing.markPrice),
+    const usd = (value: number | undefined) => {
+      const fraction = positive(value);
+      return fraction === null ? null : fraction * spot;
     };
+    return { bidUsd: usd(quote?.mmBidPrice), askUsd: usd(quote?.mmAskPrice), markUsd: usd(pricing.markPrice) };
   } catch {
     return empty;
   }

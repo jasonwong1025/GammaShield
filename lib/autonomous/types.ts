@@ -70,6 +70,10 @@ export const THESIS_BREAK_MOVE = 0.1;
 
 export type ThesisVerdict = {
   valid: boolean;
+  /** Whether a view was ever recorded. An absent view is `valid` because
+   *  nothing can invalidate it — which is NOT the same as a view that is
+   *  holding up, and the two must never be worded the same way. */
+  recorded: boolean;
   /** Plain-language reason, always present — including when still valid. */
   reason: string;
 };

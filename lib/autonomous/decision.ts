@@ -189,7 +189,9 @@ function evaluateClose(input: DecisionInput): Candidate {
     eligible: false,
     reason: input.targetReached
       ? "the target is met, but this objective prefers keeping the exposure"
-      : `the view still holds and per-contract risk is ${score === null ? "unpriced" : score.toFixed(0)}`,
+      : `${input.thesis.recorded ? "the view still holds" : "no view is recorded to invalidate"} and per-contract risk is ${
+          score === null ? "unpriced" : score.toFixed(0)
+        }`,
     codes: ["THESIS_HOLDS"],
   };
 }
@@ -260,7 +262,15 @@ function evaluateHedge(input: DecisionInput): Candidate {
   if (gate) return { ...base, eligible: false, reason: gate.reason, codes: gate.codes };
 
   if (input.position) {
-    return { ...base, eligible: false, reason: REASON_TEXT.COVER_ALREADY_OPEN, codes: ["COVER_ALREADY_OPEN"] };
+    return {
+      ...base,
+      eligible: false,
+      reason:
+        input.position.role === "cover"
+          ? REASON_TEXT.COVER_ALREADY_OPEN
+          : "this is your own directional position, not cover — sizing protection alongside it is not something this engine does yet",
+      codes: ["COVER_ALREADY_OPEN"],
+    };
   }
   if (input.bookRiskScore < input.bookThreshold) {
     return {
@@ -302,7 +312,15 @@ function evaluateHold(input: DecisionInput): Candidate {
   const parts: string[] = [];
   if (score !== null) parts.push(`per-contract risk is ${score.toFixed(0)}`);
   parts.push(`book risk is ${input.bookRiskScore.toFixed(0)}`);
-  if (input.position) parts.push(input.thesis.valid ? "and the view still holds" : "though the view is in question");
+  if (input.position) {
+    parts.push(
+      !input.thesis.recorded
+        ? "and no view is recorded for it"
+        : input.thesis.valid
+          ? "and the view still holds"
+          : "though the view is in question",
+    );
+  }
   return {
     action: "HOLD",
     eligible: true,

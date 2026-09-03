@@ -55,19 +55,17 @@ export function thesisMessage(
  * basis — but only a close, and only inside the signed limits.
  */
 export function evaluateThesis(thesis: TradingThesis | null, spot: number, nowSec: number): ThesisVerdict {
-  if (!thesis) return { valid: true, reason: "no thesis was recorded for this position, so nothing can invalidate it" };
+  if (!thesis) return { valid: true, recorded: false, reason: "no view was recorded for this position, so nothing about your intent could be weighed" };
 
   if (thesis.horizonEndsAt !== null && nowSec >= thesis.horizonEndsAt) {
-    return { valid: false, reason: "the time horizon the view was given has elapsed" };
+    return { valid: false, recorded: true, reason: "the time horizon the view was given has elapsed" };
   }
 
   if (thesis.referenceSpot !== null && thesis.referenceSpot > 0) {
     const move = (spot - thesis.referenceSpot) / thesis.referenceSpot;
     const against = thesis.direction === "BULLISH" ? -move : thesis.direction === "BEARISH" ? move : Math.abs(move);
     if (against >= THESIS_BREAK_MOVE) {
-      return {
-        valid: false,
-        reason:
+      return { valid: false, recorded: true, reason:
           thesis.direction === "NEUTRAL"
             ? `spot has moved ${pct(Math.abs(move))} from the ${usd(thesis.referenceSpot)} reference, against a neutral view`
             : `spot has moved ${pct(against)} against the ${thesis.direction.toLowerCase()} view taken at ${usd(thesis.referenceSpot)}`,
@@ -80,11 +78,11 @@ export function evaluateThesis(thesis: TradingThesis | null, spot: number, nowSe
     if (reached && thesis.direction !== "NEUTRAL") {
       // Reaching a target does not break a view — it completes it. Whether
       // that means closing depends on the objective, which decision.ts reads.
-      return { valid: true, reason: `the ${usd(thesis.targetPrice)} target has been reached` };
+      return { valid: true, recorded: true, reason: `the ${usd(thesis.targetPrice)} target has been reached` };
     }
   }
 
-  return { valid: true, reason: "spot is still inside the range the view allows for" };
+  return { valid: true, recorded: true, reason: "spot is still inside the range the view allows for" };
 }
 
 /** Whether the recorded target has been hit, which PROFIT_FROM_OPTIONS acts on. */

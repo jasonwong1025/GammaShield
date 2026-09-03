@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { useAccount, useBytecode, useReadContract } from "wagmi";
 import { zeroHash, type Address } from "viem";
 import type { Asset } from "@/lib/assets";
@@ -9,11 +9,14 @@ import { fmtContracts, fmtCountdown, fmtExpiryDate, fmtStrike, fmtUsd } from "@/
 import { ExplorerLink } from "./ExplorerLink";
 import { mandateAccountFactoryAbi } from "@/lib/generated/contracts";
 import { policyNetwork } from "@/lib/policyNetwork";
+import { PositionStrategyPanel } from "./PositionStrategyPanel";
 
 const policy = policyNetwork("mainnet");
 type DisplayPosition = ThetanutsPosition & { custody: "wallet" | "policy" };
 
 export function ThetanutsPositions({ asset, refreshKey = 0, fill = false }: { asset: Asset; refreshKey?: number; fill?: boolean }) {
+  // One row expanded at a time, matching the OptionBook feed's drill-down.
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const { address } = useAccount();
   const { data: policyAccount } = useReadContract({
     address: policy.factory,
@@ -84,14 +87,37 @@ export function ThetanutsPositions({ asset, refreshKey = 0, fill = false }: { as
         <thead className="sticky top-0 bg-panel z-10 text-[10px] text-faint"><tr>
           <th className="text-left font-medium px-4 py-1.5">Type</th><th className="text-right font-medium px-2 py-1.5">Strike</th><th className="text-right font-medium px-2 py-1.5">Expiry</th><th className="text-right font-medium px-2 py-1.5">PnL</th><th className="text-right font-medium px-2 py-1.5">Contracts</th><th className="text-right font-medium px-4 py-1.5">Transaction</th>
         </tr></thead>
-        <tbody className="font-mono text-[11px]">{filtered.map((position) => <tr key={`${position.custody}-${position.id}`} className="border-t border-edge/50">
+        <tbody className="font-mono text-[11px]">{filtered.map((position) => {
+          const key = `${position.custody}-${position.id}`;
+          const expanded = expandedKey === key;
+          return (
+          <Fragment key={key}>
+          <tr
+            onClick={() => setExpandedKey((current) => (current === key ? null : key))}
+            aria-expanded={expanded}
+            className={`border-t border-edge/50 cursor-pointer transition-colors hover:bg-panel2/60 ${expanded ? "bg-panel2/60" : ""}`}
+          >
           <td className="px-4 py-2 font-sans"><span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${position.isCall ? "text-calm bg-calm/10" : "text-crit bg-crit/10"}`}>{position.isCall ? "CALL" : "PUT"}</span>{position.custody === "policy" && <span className="ml-1 text-[9px] font-semibold text-blue">AGENT</span>}<span className="ml-1.5 text-[10px] text-faint">{position.status}</span></td>
           <td className="px-2 py-2 text-right num text-fg">{fmtStrike(position.strike)}</td>
           <td className="px-2 py-2 text-right text-muted whitespace-nowrap">{fmtExpiryDate(position.expiryTs)} <span className="text-faint">· {fmtCountdown(position.expiryTs, now)}</span></td>
           <td className="px-2 py-2 text-right num" title="Reported by the Thetanuts indexer.">{position.pnlUsd == null ? <span className="text-faint">—</span> : <span style={{ color: position.pnlUsd >= 0 ? "var(--calm)" : "var(--crit)" }}>{position.pnlUsd >= 0 ? "+" : "−"}{fmtUsd(Math.abs(position.pnlUsd), false, 6)}</span>}</td>
           <td className="px-2 py-2 text-right num text-fg">{fmtContracts(position.contracts)}</td>
           <td className="px-4 py-2 text-right">{position.entryTxHash ? <ExplorerLink network="mainnet" resource="tx" value={position.entryTxHash} className="text-blue hover:underline">View fill</ExplorerLink> : <span className="text-faint">—</span>}</td>
-        </tr>)}</tbody>
+          </tr>
+          {expanded && (
+            <tr className="bg-panel2/40">
+              <td colSpan={6} className="px-4 py-3">
+                <PositionStrategyPanel
+                  position={{ id: position.id, asset: position.asset, isCall: position.isCall, strike: position.strike, expiryTs: position.expiryTs, contracts: position.contracts, custody: position.custody }}
+                  network="mainnet"
+                  policyAccount={deployedPolicy ? policyAccount : null}
+                />
+              </td>
+            </tr>
+          )}
+          </Fragment>
+          );
+        })}</tbody>
       </table>
       <p className="px-4 py-2 text-[10px] text-faint">Open OptionBook positions, including indexer-reported PnL. New fills can take a short time to index.</p>
     </div>

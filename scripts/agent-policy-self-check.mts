@@ -17,6 +17,8 @@ import {
   DEFAULT_AGENT_LIMITS,
   MIN_UNIT,
   NOTIONAL_STRIKE_HEADROOM,
+  NO_BUDGET,
+  advisoryAvailability,
   agentActionAvailability,
   deriveMandateCaps,
   fillExceedsNotionalCap,
@@ -210,7 +212,11 @@ const limits = (over: Partial<AgentLimits> = {}): AgentLimits => ({ ...DEFAULT_A
   // No recorded view cannot be invalidated, and must say so rather than
   // pretending a neutral one was given.
   const none = evaluateThesis(null, 80_000, now);
-  assert.ok(none.valid && none.reason.includes("no thesis"), "an absent view is stated, not assumed");
+  // Absent is valid only because nothing can invalidate it — which must never
+  // be worded, or reasoned about, as a view that is holding up.
+  assert.ok(none.valid, "an absent view cannot be invalidated");
+  assert.equal(none.recorded, false, "an absent view is flagged as unrecorded");
+  assert.ok(evaluateThesis(thesis(), 78_000, now).recorded, "a real view is flagged as recorded");
 
   // Reaching a target completes a view rather than breaking it.
   const hit = evaluateThesis(thesis({ targetPrice: 85_000 }), 86_000, now);
@@ -254,7 +260,7 @@ const limits = (over: Partial<AgentLimits> = {}): AgentLimits => ({ ...DEFAULT_A
     positionRiskScore: null,
     positionThreshold: 70,
     trend: trend(),
-    thesis: { valid: true, reason: "spot is still inside the range the view allows for" },
+    thesis: { valid: true, recorded: true, reason: "spot is still inside the range the view allows for" },
     objective: "HEDGE_EXISTING_POSITION",
     targetReached: false,
     availability: armed,
@@ -289,7 +295,7 @@ const limits = (over: Partial<AgentLimits> = {}): AgentLimits => ({ ...DEFAULT_A
   const closing = decide(input({
     position: cover(),
     positionRiskScore: 50,
-    thesis: { valid: false, reason: "spot has moved 12% against the bullish view" },
+    thesis: { valid: false, recorded: true, reason: "spot has moved 12% against the bullish view" },
   }));
   assert.equal(closing.action, "CLOSE", "scenario D closes");
   assert.ok(closing.reasonCodes.includes("THESIS_INVALIDATED"));
@@ -356,11 +362,58 @@ const limits = (over: Partial<AgentLimits> = {}): AgentLimits => ({ ...DEFAULT_A
   }
 
   // A deployment that cannot execute reports a recommendation, not a fill.
-  const recommendation = decide(input({ position: cover(), positionRiskScore: 50, thesis: { valid: false, reason: "the view broke" }, executable: false }));
+  const recommendation = decide(input({ position: cover(), positionRiskScore: 50, thesis: { valid: false, recorded: true, reason: "the view broke" }, executable: false }));
   assert.equal(recommendation.action, "CLOSE");
   assert.ok(recommendation.recommendationOnly, "an unexecutable action is flagged as advisory");
   assert.ok(recommendation.explanation.includes("recommendation only"), "and says so");
   assert.ok(!decide(input({ position: cover(), positionRiskScore: 30 })).recommendationOnly, "holding is never a recommendation");
+}
+
+// --- the advisory path used by the position-strategy panel ---
+{
+  const now = 1_800_000_000;
+  const held = {
+    id: "1", asset: "BTC" as const, isCall: false, strike: 78_000, expiryTs: now + 10 * 86_400,
+    contracts: 0.01, entryPremiumUsd: null, markUsd: 25, askUsd: 60, pnlUsd: null,
+    role: "directional" as const,
+  };
+  const advisory = (over: Partial<DecisionInput> = {}): DecisionInput => ({
+    position: held, bookRiskScore: 40, bookThreshold: 75, bookPersistenceMet: true,
+    positionRiskScore: 65, positionThreshold: 70,
+    trend: { oneHour: null, sixHours: null, twentyFourHours: null, historySeconds: 0, samples: 0 },
+    thesis: { valid: true, recorded: false, reason: "no view was recorded" },
+    objective: null, targetReached: false,
+    availability: advisoryAvailability(),
+    maxContracts: 0.01, quotedPremiumUsd: 60,
+    lossBudgetUsd: NO_BUDGET, spentPremiumUsd: 0, executable: false, nowSec: now, ...over,
+  });
+
+  // Every action is considered on merit. Gating on real availability would
+  // make a mainnet close unpickable, so the panel could never suggest selling.
+  for (const action of AGENT_ACTIONS) {
+    assert.ok(isActionArmed(advisoryAvailability(), action), `${action} is considered in an advisory read`);
+  }
+
+  // The budget sentinel must not read as an exhausted budget, which would
+  // suppress every buy on a position the user opened themselves.
+  const codes = decide(advisory()).reasonCodes;
+  assert.ok(!codes.includes("LOSS_BUDGET_NEAR"), "no signed budget must not read as an exhausted one");
+
+  // A broken view still closes, and an unexecutable deployment says so rather
+  // than quietly declining to suggest it.
+  const broken = decide(advisory({ thesis: { valid: false, recorded: true, reason: "the view broke" } }));
+  assert.equal(broken.action, "CLOSE", "an advisory read can still call for a sell");
+  assert.ok(broken.recommendationOnly, "and flags that it cannot be executed here");
+
+  // A position the user opened is not cover, and must not be described as it.
+  const hedgeAlternative = decide(advisory()).alternatives.find((entry) => entry.action === "HEDGE");
+  assert.ok(!hedgeAlternative!.rejected.includes("cover is already in place"), "a directional position is not called cover");
+
+  // With no view recorded, nothing may claim the view is holding up.
+  const holding = decide(advisory());
+  assert.equal(holding.action, "HOLD");
+  assert.ok(holding.reason.includes("no view is recorded"), "an absent view is stated in the verdict");
+  assert.ok(!holding.reason.includes("still holds"), "an absent view is never reported as holding");
 }
 
 // --- resolution: toggles, availability and the AI can only subtract ---
