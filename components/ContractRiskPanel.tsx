@@ -82,16 +82,16 @@ export function ContractRiskPanel({
   const color = riskColor(risk.score);
   return (
     <div className="rounded-lg border border-edge bg-panel p-2.5 flex flex-col gap-2.5">
-      <div className="flex flex-col gap-0.5">
-        <div className="flex items-center justify-between gap-3">
-          <span className="panel-title text-[13px]">Contract risk</span>
-          <span className="num font-semibold" style={{ color }}>
-            {risk.score.toFixed(0)} <span className="text-[11px]">{LEVEL_LABEL[risk.level]}</span>
+      <div className="flex items-center justify-between">
+        <span className="text-muted">
+          Contract risk{" "}
+          <span className="text-faint">
+            ({risk.direction} · {risk.daysToExpiry.toFixed(1)}d · ×{risk.expiryMultiplier} near-expiry)
           </span>
-        </div>
-        <p className="text-[11px] text-faint">
-          {risk.direction} · {risk.daysToExpiry.toFixed(1)}d to expiry · ×{risk.expiryMultiplier} near-expiry weight
-        </p>
+        </span>
+        <span className="num font-semibold" style={{ color }}>
+          {risk.score.toFixed(0)} <span className="text-[11px]">{LEVEL_LABEL[risk.level]}</span>
+        </span>
       </div>
 
       {risk.lossProbability !== null && (

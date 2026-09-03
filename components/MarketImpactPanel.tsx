@@ -108,7 +108,7 @@ export function MarketImpactPanel({
   return (
     <div className="rounded-md border border-edge p-3 text-[12px] flex flex-col gap-2">
       <div className="flex items-center justify-between gap-3">
-        <span className="panel-title text-[13px]">Market impact</span>
+        <span className="text-muted">Market impact</span>
         <label className="flex items-center gap-1.5 text-faint text-[11px]">
           size
           <input

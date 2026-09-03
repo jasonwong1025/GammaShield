@@ -526,8 +526,8 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
 
   if (!live) {
     return (
-      <section className="card card-primary p-5" aria-label="Trade options">
-        <h2 className="panel-title">Trade {asset} options</h2>
+      <section className="card p-5" aria-label="Trade options">
+        <h2 className="text-[14px] font-semibold">Trade {asset} options</h2>
         <p className="mt-2 text-[12px] text-muted leading-relaxed">
           {asset} has no live options market on Thetanuts yet — trading unlocks the moment a
           book launches on Base. BTC and ETH are tradable now.
@@ -586,9 +586,9 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
     protectedValueAtExpiry !== null && quote ? protectedValueAtExpiry - quote.totalCostUsd : null;
 
   return (
-    <section className="card card-primary p-5 flex flex-col gap-4" aria-label="Trade options">
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-        <h2 className="panel-title">Trade {asset} options</h2>
+    <section className="card p-5 flex flex-col gap-4" aria-label="Trade options">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-[14px] font-semibold">Trade {asset} options</h2>
         <div className="flex items-center gap-2">
           <div className="flex rounded-lg bg-panel2 p-1 text-[10px] font-semibold"><button onClick={() => setView("single")} aria-pressed={view === "single"} className={`h-6 rounded px-2 ${view === "single" ? "bg-panel text-fg shadow-sm" : "text-muted"}`}>Single</button><button onClick={() => setView("strategy")} aria-pressed={view === "strategy"} className={`h-6 rounded px-2 ${view === "strategy" ? "bg-panel text-fg shadow-sm" : "text-muted"}`}>Strategies</button></div>
           <span className="hidden sm:flex items-center gap-1.5 text-[11px] text-muted"><span className="live-dot inline-block size-1.5 rounded-full bg-calm" />OptionBook (live)</span>
