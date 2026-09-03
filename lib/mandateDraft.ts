@@ -6,10 +6,17 @@ import { getTradeQuote } from "@/lib/trade";
 import { TRADE_PERIODS, type TradePeriod } from "@/lib/tradePeriods";
 import type { OptionsAsset } from "@/lib/assets";
 import { gonkaApiKey, gonkaBaseUrl } from "@/lib/gonkaConfig";
+import { DEFAULT_POSITION_RISK_TRIGGER } from "@/lib/autonomous/policy";
 
 /** Signed terms the five user-facing limits do not cover. */
 export type MandateDraftTiming = {
   riskScore: string;
+  /** Per-contract trigger arming close and roll. Set lower than the book
+   *  trigger on purpose: a held position scores on four components rather than
+   *  six (this venue publishes no implied vol for a position), so the same
+   *  number would not mean the same thing on both scales. 70 is the bottom of
+   *  contractRisk's "high" band. */
+  positionRiskScore: string;
   persistenceMinutes: string;
   cooldownMinutes: string;
   validityHours: string;
@@ -48,6 +55,9 @@ export async function createAiMandateDraft(asset: string): Promise<AiMandateDraf
     maxTradeNotionalUsd: Math.max(1, Math.ceil(quote.contracts * quote.strike)),
     timing: {
       riskScore: String(timing.riskScore),
+      // Not asked of the model: a held position scores on four components, so
+      // this scale is fixed by contractRisk's bands rather than tuned per trade.
+      positionRiskScore: String(DEFAULT_POSITION_RISK_TRIGGER),
       persistenceMinutes: String(timing.persistenceMinutes),
       cooldownMinutes: String(timing.cooldownMinutes),
       validityHours: String(timing.validityHours),

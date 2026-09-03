@@ -17,6 +17,9 @@ export type Mandate = {
   minTenorSeconds: number;
   maxTenorSeconds: number;
   riskThresholdBps: number;
+  /** Trigger for the PER-CONTRACT risk of a held position, which arms close
+   *  and roll. `riskThresholdBps` above arms a hedge from the book score. */
+  positionRiskThresholdBps: number;
   persistenceSeconds: number;
   minExecutionIntervalSeconds: number;
   validAfter: number;
@@ -49,6 +52,7 @@ export const MANDATE_EIP712_TYPES = {
     { name: "minTenorSeconds", type: "uint64" },
     { name: "maxTenorSeconds", type: "uint64" },
     { name: "riskThresholdBps", type: "uint16" },
+    { name: "positionRiskThresholdBps", type: "uint16" },
     { name: "persistenceSeconds", type: "uint64" },
     { name: "minExecutionIntervalSeconds", type: "uint64" },
     { name: "validAfter", type: "uint64" },
@@ -73,6 +77,7 @@ export function mandateMessage(mandate: Mandate) {
     minTenorSeconds: BigInt(mandate.minTenorSeconds),
     maxTenorSeconds: BigInt(mandate.maxTenorSeconds),
     riskThresholdBps: mandate.riskThresholdBps,
+    positionRiskThresholdBps: mandate.positionRiskThresholdBps,
     persistenceSeconds: BigInt(mandate.persistenceSeconds),
     minExecutionIntervalSeconds: BigInt(mandate.minExecutionIntervalSeconds),
     validAfter: BigInt(mandate.validAfter),
@@ -120,7 +125,11 @@ export function assertValidMandate(mandate: Mandate): void {
     mandate.persistenceSeconds > mandate.expiresAt - mandate.validAfter ||
     mandate.riskThresholdBps < 0 ||
     mandate.riskThresholdBps > 10_000 ||
-    !Number.isInteger(mandate.riskThresholdBps)
+    !Number.isInteger(mandate.riskThresholdBps) ||
+    // Zero would arm close and roll permanently; the account rejects it too.
+    mandate.positionRiskThresholdBps <= 0 ||
+    mandate.positionRiskThresholdBps > 10_000 ||
+    !Number.isInteger(mandate.positionRiskThresholdBps)
   ) {
     throw new Error("mandate contains invalid timing or risk terms");
   }

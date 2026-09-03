@@ -6,7 +6,29 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type Network = "mainnet" | "sepolia";
-type Latest = { account: string; outcome: string; detail: string | null; userOpHash: string | null; score: number | null; threshold: number | null; checkedAt: string };
+type Alternative = { action: string; rejected: string; estimatedRiskAfter: number | null; estimatedCostUsd: number | null };
+type Decision = {
+  action: string | null;
+  urgency: string | null;
+  reasonCodes: string[];
+  explanation: string | null;
+  riskBefore: number | null;
+  estimatedCostUsd: number | null;
+  alternatives: Alternative[];
+  aiInitiated: boolean;
+  recommendationOnly: boolean;
+};
+type Latest = {
+  account: string;
+  outcome: string;
+  detail: string | null;
+  userOpHash: string | null;
+  score: number | null;
+  threshold: number | null;
+  checkedAt: string;
+  health?: string | null;
+  decision?: Decision | null;
+};
 type Recent = { account: string; userOpHash: string; submittedAt: string; checkedAt: string; status: "confirmed" | "reverted"; transactionHash: string | null };
 
 export async function GET(request: Request) {

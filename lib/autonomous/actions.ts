@@ -20,7 +20,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { createPublicClient, http, isAddress, recoverMessageAddress, type Address } from "viem";
 import { base, baseSepolia } from "viem/chains";
-import { AGENT_ACTIONS, type AgentAction, type NetworkKind } from "./agentPolicy";
+import { AGENT_ACTIONS, type AgentAction, type NetworkKind } from "./policy";
 
 /** A signed payload is only accepted this close to the moment it was signed. */
 const FRESHNESS_SECONDS = 600;

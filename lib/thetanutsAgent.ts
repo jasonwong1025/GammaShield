@@ -7,16 +7,22 @@ import { getTradeQuote } from "@/lib/trade";
 import { TRADE_PERIODS } from "@/lib/tradePeriods";
 import { getPolicyUserOperationReceipt, submitPolicyUserOperation } from "@/lib/policyAgent4337";
 import { discoverPolicyAccounts } from "@/lib/policyAgentDiscovery";
-import { getThetanutsPositions } from "@/lib/positions";
-import { readAgentActions } from "@/lib/agentActionStore";
-import { proposeAgentAction } from "@/lib/agentProposal";
+import { getPositionMark, getThetanutsPositions } from "@/lib/positions";
+import { readAgentActions } from "@/lib/autonomous/actions";
+import { proposeAgentAction } from "@/lib/autonomous/proposal";
 import {
   agentActionAvailability,
-  deterministicIntent,
+  isActionArmed,
   resolveAgentAction,
   type AgentLimits,
   type OpenPosition,
-} from "@/lib/agentPolicy";
+} from "@/lib/autonomous/policy";
+import { decide, intentOf, type ManagedPosition } from "@/lib/autonomous/decision";
+import { computePositionRisk, positionRiskBps } from "@/lib/autonomous/positionRisk";
+import { riskTrendFrom } from "@/lib/autonomous/trend";
+import { evaluateTriggers, type TriggerObservation } from "@/lib/autonomous/triggers";
+import { evaluateThesis, readThesisRecord, targetReached, thesisFor } from "@/lib/autonomous/thesis";
+import { positionHealthOf, type AutonomousDecision, type PositionHealth } from "@/lib/autonomous/types";
 
 const ENTRY_POINT = "0x0000000071727De22E5E9d8BAf0edAc6f37da032";
 const RISK_LIFETIME_SECONDS = 120;
@@ -26,10 +32,21 @@ const BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const FILL_ABI = ["function fillOrder((address maker,uint256 orderExpiryTimestamp,address collateral,bool isCall,address priceFeed,address implementation,bool isLong,uint256 maxCollateralUsable,uint256[] strikes,uint256 expiry,uint256 price,uint256 numContracts,bytes extraOptionData),bytes signature,address referrer) returns (address)"] as const;
 const ERC20_ABI = ["function balanceOf(address) view returns (uint256)"] as const;
 
-type Mandate = { agent: string; optionBook: string; collateral: string; asset: "BTC" | "ETH"; side: number; maxPremiumPerFill: bigint; maxPremiumTotal: bigint; maxContractsPerFill: bigint; minTenorSeconds: bigint; maxTenorSeconds: bigint; riskThresholdBps: bigint; persistenceSeconds: bigint; minExecutionIntervalSeconds: bigint; expiresAt: bigint };
+type Mandate = { agent: string; optionBook: string; collateral: string; asset: "BTC" | "ETH"; side: number; maxPremiumPerFill: bigint; maxPremiumTotal: bigint; maxContractsPerFill: bigint; minTenorSeconds: bigint; maxTenorSeconds: bigint; riskThresholdBps: bigint; positionRiskThresholdBps: bigint; persistenceSeconds: bigint; minExecutionIntervalSeconds: bigint; expiresAt: bigint };
 type Control = { spentPremium: bigint; lastExecutionAt: bigint };
 type RiskState = { scoreBps: bigint; eligibleSince: bigint; validUntil: bigint };
-export type ThetanutsAgentResult = { account: string; mandateHash?: string; score?: number; threshold?: number; outcome: "pending-user-operation" | "risk-below-threshold" | "risk-reset-submitted" | "risk-reset-simulated" | "risk-persistence-pending" | "gas-unfunded" | "risk-observation-submitted" | "risk-observation-simulated" | "quote-unavailable" | "fill-submitted" | "fill-simulated" | "holding"; userOpHash?: string; detail?: string };
+export type ThetanutsAgentResult = {
+  account: string;
+  mandateHash?: string;
+  score?: number;
+  threshold?: number;
+  /** "recommendation" is mainnet-only: an exit this venue cannot execute. */
+  outcome: "pending-user-operation" | "risk-below-threshold" | "risk-reset-submitted" | "risk-reset-simulated" | "risk-persistence-pending" | "gas-unfunded" | "risk-observation-submitted" | "risk-observation-simulated" | "quote-unavailable" | "fill-submitted" | "fill-simulated" | "holding" | "recommendation";
+  userOpHash?: string;
+  detail?: string;
+  decision?: AutonomousDecision;
+  health?: PositionHealth;
+};
 
 export async function runThetanutsAgents(options: { pendingAccounts?: Iterable<string>; knownAccounts?: Iterable<string>; discoveryFromBlock?: number } = {}) {
   const config = runtimeConfig();
@@ -67,9 +84,43 @@ async function runThetanutsAgent(accountAddress: string, config: ReturnType<type
   const scoreBps = Math.round(score * 100);
   const now = BigInt(Math.floor(Date.now() / 1000));
   const state = riskState(await account.riskStates(policy.hash));
-  const risk = { mandateHash: policy.hash, riskScoreBps: scoreBps, observedAt: now, validUntil: now + BigInt(RISK_LIFETIME_SECONDS), persistenceSeconds: policy.mandate.persistenceSeconds };
-  const riskSignature = await agent.signTypedData({ name: "GammaShield Risk", version: "1", chainId: 8453, verifyingContract: accountAddress }, { RiskAttestation: [{ name: "mandateHash", type: "bytes32" }, { name: "riskScoreBps", type: "uint16" }, { name: "observedAt", type: "uint64" }, { name: "validUntil", type: "uint64" }, { name: "persistenceSeconds", type: "uint64" }] }, risk);
   const base = { account: accountAddress, mandateHash: policy.hash, score, threshold: Number(policy.mandate.riskThresholdBps) / 100 };
+
+  // The subject position, priced. Read before the attestation, which now
+  // carries the position's own per-contract risk score.
+  const nowSeconds = Number(now);
+  const openPositions = await getThetanutsPositions(accountAddress).catch(() => []);
+  const candidates = openPositions.filter(
+    (position) => position.asset === policy.mandate.asset && !position.isCall && position.expiryTs > nowSeconds,
+  );
+  const subject = [...candidates].sort((a, b) => a.expiryTs - b.expiryTs)[0] ?? null;
+  const mark = subject ? await getPositionMark(subject) : null;
+  const spot = snapshot.prices[policy.mandate.asset];
+  const managed: ManagedPosition | null = subject
+    ? {
+        id: subject.id,
+        asset: policy.mandate.asset,
+        isCall: subject.isCall,
+        strike: subject.strike,
+        expiryTs: subject.expiryTs,
+        contracts: subject.contracts,
+        // The indexer reports PnL, not the premium paid per contract.
+        entryPremiumUsd: null,
+        markUsd: mark?.bidUsd ?? mark?.markUsd ?? null,
+        askUsd: mark?.askUsd ?? null,
+        pnlUsd: subject.pnlUsd,
+        // A mainnet OptionBook position is the user's own directional
+        // exposure, not cover this agent opened, so a calmer book is not by
+        // itself a reason to exit it.
+        role: "directional",
+      }
+    : null;
+  const positionRisk = managed
+    ? computePositionRisk({ position: managed, spot, nowSec: nowSeconds, marketScore: score, contractDepthUsd: null })
+    : null;
+
+  const risk = { mandateHash: policy.hash, riskScoreBps: scoreBps, positionRiskScoreBps: positionRiskBps(positionRisk), observedAt: now, validUntil: now + BigInt(RISK_LIFETIME_SECONDS), persistenceSeconds: policy.mandate.persistenceSeconds };
+  const riskSignature = await agent.signTypedData({ name: "GammaShield Risk", version: "1", chainId: 8453, verifyingContract: accountAddress }, { RiskAttestation: [{ name: "mandateHash", type: "bytes32" }, { name: "riskScoreBps", type: "uint16" }, { name: "positionRiskScoreBps", type: "uint16" }, { name: "observedAt", type: "uint64" }, { name: "validUntil", type: "uint64" }, { name: "persistenceSeconds", type: "uint64" }] }, risk);
   if (scoreBps < Number(policy.mandate.riskThresholdBps)) {
     if (state.scoreBps < policy.mandate.riskThresholdBps || state.validUntil < now) return { ...base, outcome: "risk-below-threshold" };
     return submitRisk(account, policy.hash, risk, riskSignature, provider, agent, accountAddress, config, config.dryRun ? "risk-reset-simulated" : "risk-reset-submitted", base);
@@ -84,38 +135,160 @@ async function runThetanutsAgent(accountAddress: string, config: ReturnType<type
   // Base mainnet executes exactly one of the three actions. The other two are
   // reported unavailable with a reason rather than silently skipped, and the
   // owner's stored switches can still narrow what is left.
-  const [stored, openPositions] = await Promise.all([
+  const [stored, thesisRecord, history] = await Promise.all([
     readAgentActions("mainnet", accountAddress),
-    getThetanutsPositions(accountAddress).catch(() => []),
+    readThesisRecord("mainnet", accountAddress),
+    account.getRiskHistory(policy.hash).catch(() => []),
   ]);
   const limits: AgentLimits = { asset: policy.mandate.asset, maxLossUsd: 0, maxTradeNotionalUsd: 0, actions: stored.actions };
   const availability = agentActionAvailability(limits, "mainnet", null);
-  const nowSeconds = Number(now);
   // The indexer's ids are opaque strings, so index them positionally. Nothing
   // on mainnet acts on a position id — only close and roll would, and neither
   // has an adapter here — but collapsing distinct ids to 0 would be a trap.
-  const positions: OpenPosition[] = openPositions
-    .filter((position) => position.asset === policy.mandate.asset && !position.isCall && position.expiryTs > nowSeconds)
-    .map((position, index) => ({ positionId: index, expiryTs: position.expiryTs, contracts: position.contracts }));
+  const positions: OpenPosition[] = candidates.map((position, index) => ({
+    positionId: index,
+    expiryTs: position.expiryTs,
+    contracts: position.contracts,
+  }));
+  const subjectPosition = managed
+    ? positions[candidates.findIndex((position) => position.id === managed.id)] ?? null
+    : null;
+
+  const trend = riskTrendFrom(
+    (history as { observedAt: bigint; bookScoreBps: number; positionScoreBps: number }[]).map((sample) => ({
+      observedAt: Number(sample.observedAt),
+      bookScoreBps: Number(sample.bookScoreBps),
+      positionScoreBps: Number(sample.positionScoreBps),
+    })),
+    managed ? "position" : "book",
+    nowSeconds,
+  );
+  const thesis = thesisFor(thesisRecord, managed?.id ?? null);
+  const thesisVerdict = evaluateThesis(thesis, spot, nowSeconds);
+
+  // Whether anything moved enough to warrant a fresh AI assessment. The
+  // previous observation is the newest sample the account already retains, so
+  // no extra store is needed — which also means the spot, implied-vol and
+  // position-value triggers stay quiet here rather than comparing against a
+  // value that would have to be invented.
+  const samples = (history as { observedAt: bigint; bookScoreBps: number; positionScoreBps: number }[]).map((sample) => ({
+    observedAt: Number(sample.observedAt),
+    bookScoreBps: Number(sample.bookScoreBps),
+    positionScoreBps: Number(sample.positionScoreBps),
+  }));
+  const newest = samples.length ? samples.reduce((a, b) => (b.observedAt > a.observedAt ? b : a)) : null;
+  const previousObservation: TriggerObservation | null = newest
+    ? {
+        at: newest.observedAt,
+        bookRiskScore: newest.bookScoreBps / 100,
+        positionRiskScore: newest.positionScoreBps ? newest.positionScoreBps / 100 : null,
+        spot,
+        avgIv: null,
+        regime: snapshot.assets[policy.mandate.asset].regime,
+        positionValueUsd: null,
+      }
+    : null;
+  const triggers = evaluateTriggers({
+    previous: previousObservation,
+    current: {
+      at: nowSeconds,
+      bookRiskScore: score,
+      positionRiskScore: positionRisk?.score ?? null,
+      spot,
+      avgIv: snapshot.assets[policy.mandate.asset].avgIv,
+      regime: snapshot.assets[policy.mandate.asset].regime,
+      positionValueUsd: managed?.markUsd != null ? managed.markUsd * managed.contracts : null,
+    },
+    trend,
+    daysToExpiry: managed ? (managed.expiryTs - nowSeconds) / 86_400 : null,
+  });
 
   const maxContracts = Math.min(1, Number(policy.mandate.maxContractsPerFill) / 1e6);
-  const intent = deterministicIntent({ riskScore: score, threshold: base.threshold, persistenceMet: true, positions, now: nowSeconds });
-  const proposal = intent.action === "hold"
+  const decision = decide({
+    position: managed,
+    bookRiskScore: score,
+    bookThreshold: base.threshold,
+    bookPersistenceMet: true,
+    positionRiskScore: positionRisk?.score ?? null,
+    positionThreshold: Number(policy.mandate.positionRiskThresholdBps) / 100,
+    trend,
+    thesis: thesisVerdict,
+    objective: thesis?.objective ?? null,
+    targetReached: targetReached(thesis, spot),
+    availability,
+    maxContracts,
+    // A hedge is quoted below, in the fill path. Weighing one here would mean
+    // two quotes per tick for a number the fill path re-fetches anyway.
+    quotedPremiumUsd: null,
+    lossBudgetUsd: Number(policy.mandate.maxPremiumTotal) / 1e6,
+    spentPremiumUsd: Number(policy.control.spentPremium) / 1e6,
+    // Only a hedge executes here. Close and roll have no adapter on mainnet,
+    // so a decision to exit becomes a priced recommendation for the user.
+    executable: false,
+    nowSec: nowSeconds,
+  });
+  const health = positionHealthOf(decision.riskBefore, trend);
+  const intent = intentOf(decision, subjectPosition);
+  const closeArmed = isActionArmed(availability, "close");
+  // Two gates on the model call, in order: has anything changed, and is there
+  // an action it could legally ask for.
+  const worthAsking = triggers.triggered && (intent.action !== "hold" || (closeArmed && subjectPosition !== null));
+  const proposal = !worthAsking
     ? null
     : await proposeAgentAction({
         asset: policy.mandate.asset,
-        action: intent.action,
+        action: intent.action === "hold" ? "close" : intent.action,
         maxContracts,
         riskScore: score,
         threshold: base.threshold,
         regime: snapshot.assets[policy.mandate.asset].regime,
         netGexUsd: snapshot.assets[policy.mandate.asset].netGexUsd,
-        spot: snapshot.prices[policy.mandate.asset],
-        openPositions: openPositions.map((position) => ({ strike: position.strike, expiryTs: position.expiryTs, contracts: position.contracts, pnlUsd: position.pnlUsd })),
+        spot,
+        openPositions: candidates.map((position) => ({ strike: position.strike, expiryTs: position.expiryTs, contracts: position.contracts, pnlUsd: position.pnlUsd })),
+        positionRiskScore: positionRisk?.score ?? null,
+        positionThreshold: Number(policy.mandate.positionRiskThresholdBps) / 100,
+        trend: { oneHour: trend.oneHour, sixHours: trend.sixHours, twentyFourHours: trend.twentyFourHours },
+        thesis: thesis && {
+          direction: thesis.direction,
+          objective: thesis.objective,
+          targetPrice: thesis.targetPrice,
+          referenceSpot: thesis.referenceSpot,
+          horizonEndsAt: thesis.horizonEndsAt,
+          note: thesis.note,
+          deterministicVerdict: thesisVerdict.reason,
+        },
+        closeArmed,
       }).catch(() => null);
   const resolved = resolveAgentAction({ intent, availability, maxContracts, proposal });
-  const decisionDetail = [...resolved.notes, resolved.aiRationale ? `AI: ${resolved.aiRationale}` : null].filter(Boolean).join(" ");
-  if (resolved.action !== "hedge") return { ...base, outcome: "holding", detail: decisionDetail };
+  const decisionDetail = [
+    decision.explanation,
+    ...resolved.notes,
+    triggers.triggered
+      ? `Reassessed because ${triggers.reasons[0]}.`
+      : "Nothing moved enough to reassess, so the previous reading stands.",
+    resolved.aiRationale ? `AI: ${resolved.aiRationale}` : null,
+  ].filter(Boolean).join(" ");
+  const report = { ...base, decision, health };
+
+  // Mainnet cannot exit or roll a live Thetanuts position: `BaseOption.close()`
+  // is bilateral, the OptionBook exposes no maker-order creation to end users,
+  // and RFQ mints new options rather than buying back existing ones. So an
+  // exit decision is surfaced, priced at the maker's current bid, for the user
+  // to act on — never executed here.
+  if (decision.action === "CLOSE" || decision.action === "ROLL") {
+    const proceeds = managed?.markUsd !== null && managed?.markUsd !== undefined ? managed.markUsd * managed.contracts : null;
+    return {
+      ...report,
+      outcome: "recommendation",
+      detail: [
+        decisionDetail,
+        proceeds === null
+          ? "No market-maker bid is available to price the exit."
+          : `A market maker currently bids about $${proceeds.toLocaleString("en-US", { maximumFractionDigits: 2 })} for this position.`,
+      ].join(" "),
+    };
+  }
+  if (resolved.action !== "hedge") return { ...report, outcome: "holding", detail: decisionDetail };
 
   const period = TRADE_PERIODS.find((days) => BigInt(days * 86400) >= policy.mandate.minTenorSeconds && BigInt(days * 86400) <= policy.mandate.maxTenorSeconds);
   if (!period) return { ...base, outcome: "quote-unavailable", detail: "No supported Thetanuts tenor fits this mandate." };
@@ -158,7 +331,7 @@ async function readPolicy(account: ethers.Contract, agentAddress: string) {
   const [entryPoint, riskAttester, hash] = await Promise.all([account.entryPoint(), account.riskAttester(), account.activeMandateHash()]);
   if (entryPoint.toLowerCase() !== ENTRY_POINT.toLowerCase() || riskAttester.toLowerCase() !== agentAddress.toLowerCase() || hash === ethers.ZeroHash) return null;
   const [raw, control] = await Promise.all([account.getMandate(hash), account.controls(hash)]);
-  const mandate: Mandate = { agent: ethers.getAddress(raw.agent), optionBook: ethers.getAddress(raw.optionBook), collateral: ethers.getAddress(raw.collateral), asset: ethers.decodeBytes32String(raw.asset) as "BTC" | "ETH", side: Number(raw.side), maxPremiumPerFill: BigInt(raw.maxPremiumPerFill), maxPremiumTotal: BigInt(raw.maxPremiumTotal), maxContractsPerFill: BigInt(raw.maxContractsPerFill), minTenorSeconds: BigInt(raw.minTenorSeconds), maxTenorSeconds: BigInt(raw.maxTenorSeconds), riskThresholdBps: BigInt(raw.riskThresholdBps), persistenceSeconds: BigInt(raw.persistenceSeconds), minExecutionIntervalSeconds: BigInt(raw.minExecutionIntervalSeconds), expiresAt: BigInt(raw.expiresAt) };
+  const mandate: Mandate = { agent: ethers.getAddress(raw.agent), optionBook: ethers.getAddress(raw.optionBook), collateral: ethers.getAddress(raw.collateral), asset: ethers.decodeBytes32String(raw.asset) as "BTC" | "ETH", side: Number(raw.side), maxPremiumPerFill: BigInt(raw.maxPremiumPerFill), maxPremiumTotal: BigInt(raw.maxPremiumTotal), maxContractsPerFill: BigInt(raw.maxContractsPerFill), minTenorSeconds: BigInt(raw.minTenorSeconds), maxTenorSeconds: BigInt(raw.maxTenorSeconds), riskThresholdBps: BigInt(raw.riskThresholdBps), positionRiskThresholdBps: BigInt(raw.positionRiskThresholdBps), persistenceSeconds: BigInt(raw.persistenceSeconds), minExecutionIntervalSeconds: BigInt(raw.minExecutionIntervalSeconds), expiresAt: BigInt(raw.expiresAt) };
   if (!["BTC", "ETH"].includes(mandate.asset) || mandate.side !== 1 || mandate.agent.toLowerCase() !== agentAddress.toLowerCase() || mandate.optionBook.toLowerCase() !== BASE_OPTION_BOOK.toLowerCase() || mandate.collateral.toLowerCase() !== BASE_USDC.toLowerCase() || control.paused || control.revoked || BigInt(Math.floor(Date.now() / 1000)) >= mandate.expiresAt) return null;
   return { hash: hash as string, mandate, control: { spentPremium: BigInt(control.spentPremium), lastExecutionAt: BigInt(control.lastExecutionAt) } satisfies Control };
 }

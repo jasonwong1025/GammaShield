@@ -5,8 +5,8 @@
 // action back on. See lib/agentActionStore.ts for why this is off-chain.
 
 import { isAddress, type Address } from "viem";
-import { AGENT_ACTIONS, type AgentAction } from "@/lib/agentPolicy";
-import { readAgentActions, writeAgentActions } from "@/lib/agentActionStore";
+import { AGENT_ACTIONS, type AgentAction } from "@/lib/autonomous/policy";
+import { readAgentActions, writeAgentActions } from "@/lib/autonomous/actions";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

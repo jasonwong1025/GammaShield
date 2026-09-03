@@ -16,7 +16,7 @@
 import "server-only";
 
 import { ethers } from "ethers";
-import type { ShadowPosition } from "./shadow";
+import type { ShadowPosition } from "../shadow";
 
 const CLOSE_LIFETIME_SECONDS = 120;
 

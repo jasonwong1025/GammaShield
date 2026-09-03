@@ -2,11 +2,19 @@
 
 // The AI agent's limits, and the policy the wallet signs to enforce them.
 //
-// The user sets five things: which asset, how much they can lose in total, the
-// largest single trade, and which of the three predefined actions the agent may
-// take. Everything else the mandate needs — tenor window, risk trigger,
-// persistence, cooldown, validity — is derived, and shown read-only next to the
-// signature so nothing is signed unseen.
+// The user sets seven things: which asset, how much they can lose in total, the
+// largest single trade, which of the three predefined actions the agent may
+// take, and — because the agent now manages positions rather than just opening
+// cover — the objective and the standing view behind them. Everything else the
+// mandate needs (tenor window, both risk triggers, persistence, cooldown,
+// validity) is derived, and shown read-only next to the signature so nothing is
+// signed unseen.
+//
+// The objective and the standing thesis are the newest controls and the only
+// ones that are not limits. They exist because nothing on-chain records WHY a
+// position was opened, and the decision to close, roll or hold turns on that.
+// A position opened at the trade desk can override the standing view; anything
+// without a view of its own inherits this one.
 //
 // Two limits behave differently and the panel has to say which is which:
 //
@@ -31,15 +39,25 @@ import {
   ACTION_LABEL,
   AGENT_ACTIONS,
   DEFAULT_AGENT_LIMITS,
+  DEFAULT_POSITION_RISK_TRIGGER,
   agentActionAvailability,
   deriveMandateCaps,
   toUnitString,
   type AgentAction,
   type AgentLimits,
   type DerivedCaps,
-} from "@/lib/agentPolicy";
+} from "@/lib/autonomous/policy";
 import { fmtExpiryDate, fmtStrike, fmtUsd, shortAddr } from "@/lib/format";
 import type { AiMandateDraft, MandateDraftTiming } from "@/lib/mandateDraft";
+import {
+  OBJECTIVE_DESCRIPTION,
+  OBJECTIVE_LABEL,
+  TRADING_OBJECTIVES,
+  type ThesisDirection,
+  type TradingObjective,
+  type TradingThesis,
+} from "@/lib/autonomous/types";
+import { thesisMessage } from "@/lib/autonomous/thesisRules";
 import type { OptionsAsset } from "@/lib/assets";
 import { ExplorerLink } from "./ExplorerLink";
 import { policyNetwork } from "@/lib/policyNetwork";
@@ -50,6 +68,7 @@ import { ensureWalletChain, walletActionError } from "@/lib/walletChain";
  *  proposes better ones; always rendered before signing. */
 const DEFAULT_TIMING: MandateDraftTiming = {
   riskScore: "75",
+  positionRiskScore: String(DEFAULT_POSITION_RISK_TRIGGER),
   persistenceMinutes: "10",
   cooldownMinutes: "60",
   validityHours: "24",
@@ -84,8 +103,19 @@ export function MandateSigningPanel({
     [asset, actions, maxLossText, maxTradeText],
   );
   const [timing, setTiming] = useState<MandateDraftTiming>(DEFAULT_TIMING);
+  const [objective, setObjective] = useState<TradingObjective>("HEDGE_EXISTING_POSITION");
+  const [direction, setDirection] = useState<ThesisDirection>("NEUTRAL");
+  const [targetText, setTargetText] = useState("");
+  const [horizonText, setHorizonText] = useState("");
+  const [savedThesis, setSavedThesis] = useState<TradingThesis | null>(null);
+  const [positionTheses, setPositionTheses] = useState<Record<string, TradingThesis>>({});
+  const [savedPositionTheses, setSavedPositionTheses] = useState<Record<string, TradingThesis>>({});
+  const [savingThesis, setSavingThesis] = useState(false);
   const [savedActions, setSavedActions] = useState<Record<AgentAction, boolean> | null>(null);
   const [nonce] = useState(() => BigInt(Date.now()));
+  /** Fixed at mount so the horizon memo stays pure. A view's horizon is set in
+   *  days, so a reference a few minutes old changes nothing meaningful. */
+  const [openedAt] = useState(() => Math.floor(Date.now() / 1000));
   const [signed, setSigned] = useState<{ mandate: Mandate; signature: Hex } | null>(null);
   const [draft, setDraft] = useState<AiMandateDraft | null>(null);
   const [drafting, setDrafting] = useState(false);
@@ -140,6 +170,28 @@ export function MandateSigningPanel({
   }, [limits, spot]);
   const actionsDirty = savedActions != null && AGENT_ACTIONS.some((action) => savedActions[action] !== actions[action]);
 
+  // The standing view, as it would be stored. `referenceSpot` is captured now,
+  // because "spot moved against the view" is meaningless without the price the
+  // view was taken at.
+  const thesis = useMemo<TradingThesis>(() => {
+    const days = Number(horizonText);
+    return {
+      direction,
+      objective,
+      targetPrice: Number(targetText) > 0 ? Number(targetText) : null,
+      horizonEndsAt: Number.isFinite(days) && days > 0 ? openedAt + days * 86_400 : null,
+      referenceSpot: spot > 0 ? spot : null,
+      note: null,
+    };
+  }, [direction, objective, targetText, horizonText, spot, openedAt]);
+  const thesisDirty =
+    savedThesis == null ||
+    savedThesis.direction !== thesis.direction ||
+    savedThesis.objective !== thesis.objective ||
+    savedThesis.targetPrice !== thesis.targetPrice ||
+    JSON.stringify(Object.keys(positionTheses).sort().map((id) => [id, positionTheses[id]!.direction])) !==
+      JSON.stringify(Object.keys(savedPositionTheses).sort().map((id) => [id, savedPositionTheses[id]!.direction]));
+
   // Load whatever switches this account last saved, so the panel shows the
   // agent's real configuration rather than a fresh set of defaults.
   useEffect(() => {
@@ -160,6 +212,72 @@ export function MandateSigningPanel({
       cancelled = true;
     };
   }, [account, network]);
+
+  // The policy account's own open positions. Not the user's wallet positions:
+  // the agent manages only what this account holds, so those are the only ones
+  // a per-position view can govern.
+  const [managedPositions, setManagedPositions] = useState<{ id: string; label: string }[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const url =
+          network === "sepolia"
+            ? `/api/shadow/positions?buyer=${account}`
+            : `/api/positions?address=${account}`;
+        const response = await fetch(url, { cache: "no-store" });
+        if (!response.ok) return;
+        const data = (await response.json()) as {
+          positions?: { id: string | number; strike: number; expiryTs: number; contracts: number; isCall: boolean; closedAt?: number | null }[];
+        };
+        if (cancelled || !data.positions) return;
+        setManagedPositions(
+          data.positions
+            .filter((position) => !position.closedAt)
+            .map((position) => ({
+              id: String(position.id),
+              label: `${position.isCall ? "CALL" : "PUT"} ${fmtStrike(position.strike)} · ${fmtExpiryDate(position.expiryTs)} · ${position.contracts} contracts`,
+            })),
+        );
+      } catch {
+        // No list simply means no per-position overrides can be edited here.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [account, network]);
+
+  // The stored view, loaded separately from the switches because they are
+  // separate stores with separate signatures.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch(`/api/agent-thesis?network=${network}&account=${account}`, { cache: "no-store" });
+        if (!response.ok) return;
+        const state = (await response.json()) as { thesis?: TradingThesis | null; positionTheses?: Record<string, TradingThesis> };
+        if (cancelled) return;
+        setPositionTheses(state.positionTheses ?? {});
+        setSavedPositionTheses(state.positionTheses ?? {});
+        if (!state.thesis) return;
+        setSavedThesis(state.thesis);
+        setObjective(state.thesis.objective);
+        setDirection(state.thesis.direction);
+        setTargetText(state.thesis.targetPrice ? String(state.thesis.targetPrice) : "");
+        setHorizonText(
+          state.thesis.horizonEndsAt
+            ? String(Math.max(1, Math.round((state.thesis.horizonEndsAt - openedAt) / 86_400)))
+            : "",
+        );
+      } catch {
+        // The view simply shows as unsaved; nothing here is load-bearing.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [account, network, openedAt]);
 
   useEffect(() => {
     if (!isSuccess) return;
@@ -194,6 +312,29 @@ export function MandateSigningPanel({
       setSavingActions(false);
     }
   }, [account, actions, network, signMessageAsync]);
+
+  const saveThesis = useCallback(async () => {
+    setError(null);
+    setSavingThesis(true);
+    try {
+      const updatedAt = Math.floor(Date.now() / 1000);
+      const record = { standing: thesis, positions: positionTheses, updatedAt };
+      const signature = await signMessageAsync({ message: thesisMessage(account, network, record) });
+      const response = await fetch("/api/agent-thesis", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ network, account, ...record, signature }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? `thesis update ${response.status}`);
+      setSavedThesis(data.thesis as TradingThesis);
+      setSavedPositionTheses((data.positionTheses ?? {}) as Record<string, TradingThesis>);
+    } catch (error) {
+      setError(`The objective and view were not saved: ${walletActionError(error, "the agent still uses the stored view.")}`);
+    } finally {
+      setSavingThesis(false);
+    }
+  }, [account, network, positionTheses, signMessageAsync, thesis]);
 
   const signMandate = async () => {
     if (!policy.optionBook || !policy.collateral || !policy.agent || !("value" in caps)) return;
@@ -296,6 +437,104 @@ export function MandateSigningPanel({
             />
           </div>
 
+          <div className="mt-3 rounded-lg border border-edge bg-panel2 p-3">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-faint">Objective and standing view</p>
+            <p className="mt-1 text-[11px] leading-relaxed text-faint">
+              Nothing on-chain records why a position was opened, and whether to close, roll or hold turns on exactly that. This
+              is the view the agent assumes for anything it opens itself; a position opened at the trade desk can carry its own.
+            </p>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              <label className="rounded-lg border border-edge bg-panel p-2.5 text-[11px] text-faint">
+                <span className="block">Objective</span>
+                <select
+                  value={objective}
+                  onChange={(event) => setObjective(event.target.value as TradingObjective)}
+                  className="mt-1 h-8 w-full rounded-md border border-edge bg-panel2 px-2 text-[12px] font-semibold text-fg"
+                >
+                  {TRADING_OBJECTIVES.map((value) => (
+                    <option key={value} value={value}>{OBJECTIVE_LABEL[value]}</option>
+                  ))}
+                </select>
+                <span className="mt-1 block leading-relaxed">{OBJECTIVE_DESCRIPTION[objective]}</span>
+              </label>
+              <label className="rounded-lg border border-edge bg-panel p-2.5 text-[11px] text-faint">
+                <span className="block">Direction</span>
+                <select
+                  value={direction}
+                  onChange={(event) => setDirection(event.target.value as ThesisDirection)}
+                  className="mt-1 h-8 w-full rounded-md border border-edge bg-panel2 px-2 text-[12px] font-semibold text-fg"
+                >
+                  <option value="BULLISH">Bullish</option>
+                  <option value="BEARISH">Bearish</option>
+                  <option value="NEUTRAL">Neutral</option>
+                </select>
+                <span className="mt-1 block leading-relaxed">
+                  Measured against {fmtUsd(spot)} spot now. A 10% move against the view marks it broken.
+                </span>
+              </label>
+              <MoneyField
+                label="Price target (optional)"
+                hint="reaching it can take profit, depending on the objective"
+                value={targetText}
+                onChange={setTargetText}
+              />
+              <MoneyField
+                label="Time horizon in days (optional)"
+                hint="the view expires with it; blank leaves it open-ended"
+                value={horizonText}
+                onChange={setHorizonText}
+              />
+            </div>
+            {managedPositions.length > 0 && (
+              <div className="mt-2 rounded-lg border border-edge bg-panel p-2.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-faint">Per-position overrides</p>
+                <p className="mt-1 text-[11px] leading-relaxed text-faint">
+                  A position with its own view ignores the standing one. Because a broken view can trigger an exit, these are keyed
+                  to the position id the agent actually acts on — never inferred from a recent trade.
+                </p>
+                <ul className="mt-2 grid gap-1.5">
+                  {managedPositions.map((position) => {
+                    const override = positionTheses[position.id] ?? null;
+                    return (
+                      <li key={position.id} className="flex flex-wrap items-center gap-2 text-[11px]">
+                        <span className="font-mono text-fg">#{position.id}</span>
+                        <span className="text-faint">{position.label}</span>
+                        <select
+                          value={override ? override.direction : "STANDING"}
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            setPositionTheses((current) => {
+                              const next = { ...current };
+                              if (value === "STANDING") delete next[position.id];
+                              else next[position.id] = { ...thesis, direction: value as ThesisDirection };
+                              return next;
+                            });
+                          }}
+                          className="h-7 rounded-md border border-edge bg-panel2 px-2 text-[11px] font-semibold text-fg"
+                        >
+                          <option value="STANDING">Use standing view</option>
+                          <option value="BULLISH">Bullish</option>
+                          <option value="BEARISH">Bearish</option>
+                          <option value="NEUTRAL">Neutral</option>
+                        </select>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
+
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-faint">
+              <span>Stored off-chain and owner-signed, like the switches — a target price is a revisable opinion, not a spending limit.</span>
+              {thesisDirty && (
+                <button type="button" onClick={() => void saveThesis()} disabled={savingThesis} className="h-7 rounded-lg bg-blue px-2.5 text-[11px] font-semibold text-white disabled:cursor-wait disabled:opacity-60">
+                  {savingThesis ? "Confirm in wallet…" : "Save view"}
+                </button>
+              )}
+              {savedThesis && !thesisDirty && <span className="text-calm">View saved.</span>}
+            </div>
+          </div>
+
           <div className="mt-3 grid gap-2 sm:grid-cols-3">
             {availability.map((entry) => (
               <ActionToggle
@@ -386,7 +625,8 @@ function SignedTerms({
         <Term label="Max premium, total" value={`${toUnitString(caps.maxPremiumTotal)} ${collateralLabel}`} />
         <Term label="Max premium, per fill" value={`${toUnitString(caps.maxPremiumPerFill)} ${collateralLabel}`} />
         <Term label="Max contracts, per fill" value={toUnitString(caps.maxContractsPerFill)} />
-        <Term label="Risk trigger" value={`${timing.riskScore} / 100`} />
+        <Term label="Hedge trigger, book risk" value={`${timing.riskScore} / 100`} />
+        <Term label="Exit trigger, position risk" value={`${timing.positionRiskScore} / 100`} />
         <Term label="Tenor window" value={`${timing.minTenorDays}–${timing.maxTenorDays} days`} />
         <Term label="Risk persistence" value={`${timing.persistenceMinutes} min`} />
         <Term label="Cooldown between fills" value={`${timing.cooldownMinutes} min`} />
@@ -474,6 +714,10 @@ function buildMandate(
     minTenorSeconds: minTenorDays * 86400,
     maxTenorSeconds: maxTenorDays * 86400,
     riskThresholdBps: whole(timing.riskScore, "risk trigger", 0, 100) * 100,
+    // Arms close and roll. Its own trigger because a held position is scored
+    // on four components rather than six — this venue publishes no implied
+    // vol for a position — so 70 there is not 70 on the book scale.
+    positionRiskThresholdBps: whole(timing.positionRiskScore, "position risk trigger", 1, 100) * 100,
     persistenceSeconds: persistenceMinutes * 60,
     minExecutionIntervalSeconds: whole(timing.cooldownMinutes, "fill cooldown", 0, validityHours * 60) * 60,
     validAfter: now,

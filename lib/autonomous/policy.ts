@@ -15,11 +15,29 @@
 //   2. The toggles narrow, they never widen. A registered policy already
 //      permits every action its network supports; switching one off is an
 //      off-chain restriction on top. The on-chain off switch is pause/revoke.
-//   3. The AI can only subtract. It picks among the actions the deterministic
-//      gate has already cleared, and may shrink the size or stand down. It can
-//      never introduce an action, raise a size, or bypass the risk gate.
+//   3. The AI can only subtract, with ONE bounded exception. It picks among
+//      the actions the deterministic gate has already cleared, and may shrink
+//      the size or stand down. It may never raise a size or bypass the risk
+//      gate.
+//
+//      The exception: it may INITIATE A CLOSE, and only a close, when it
+//      judges the position's thesis broken for a reason no deterministic rule
+//      here covers. That is a deliberate reversal of the old "never
+//      introduce an action" rule, made because a thesis is a human judgement
+//      that cannot be reduced to a threshold — and it is bounded hard:
+//
+//        - close only; a proposed hedge or roll the gate did not clear is
+//          still refused outright,
+//        - a position must actually be open and close must be armed,
+//        - the model must say the thesis is broken and say why,
+//        - the size is the whole position, never a number the model chose,
+//        - and on Base mainnet, where no exit adapter exists, the result is a
+//          recommendation the user executes rather than an autonomous fill.
+//
+//      Everything downstream is unchanged: the signed mandate, the account's
+//      own validation, and the exit-mark checks all still apply.
 
-import type { OptionsAsset } from "./assets";
+import type { OptionsAsset } from "../assets";
 
 export const AGENT_ACTIONS = ["hedge", "close", "roll"] as const;
 export type AgentAction = (typeof AGENT_ACTIONS)[number];
@@ -33,6 +51,15 @@ export type AgentDecision = AgentAction | "hold";
  *  a hedge this agent selects, and the exact notional is re-checked against the
  *  real strike before every fill. */
 export const NOTIONAL_STRIKE_HEADROOM = 1.25;
+/** Default trigger for the PER-CONTRACT score that arms close and roll.
+ *
+ *  Deliberately lower than the book trigger. A held position is scored on four
+ *  components rather than six — this venue publishes no implied vol for a
+ *  position, so the IV and time-decay components drop and the rest
+ *  renormalize — so the two numbers are not on the same scale. 70 is the
+ *  bottom of contractRisk's "high" band. */
+export const DEFAULT_POSITION_RISK_TRIGGER = 70;
+
 /** How close to expiry a position has to be before a roll is considered. */
 export const ROLL_WINDOW_SECONDS = 24 * 3600;
 /** Smallest size the signed mandate can express: USDC and contracts are 6dp. */
@@ -147,15 +174,11 @@ export function fillExceedsNotionalCap(limits: AgentLimits, contracts: number, s
 
 export type OpenPosition = { positionId: number; expiryTs: number; contracts: number };
 
-export type GateState = {
-  riskScore: number;
-  threshold: number;
-  /** Whether the on-chain risk observation has held above the trigger long enough. */
-  persistenceMet: boolean;
-  positions: OpenPosition[];
-  now: number;
-};
-
+/**
+ * The intended action, as the decision engine produced it. Kept as its own
+ * shape so the engine (./decision.ts) and this guard stay independently
+ * testable: the engine decides WHAT, the guard decides whether it is allowed.
+ */
 export type DeterministicIntent = {
   action: AgentDecision;
   /** The position an exit or roll would act on. */
@@ -163,43 +186,16 @@ export type DeterministicIntent = {
   reason: string;
 };
 
-/**
- * The rule-based decision, before any toggle, availability check or AI opinion.
- * Each action has its own distinct trigger:
- *
- *   hedge — risk is above the trigger and has stayed there, and nothing is open.
- *   close — risk has fallen back under the trigger, so the hedge is spare.
- *   roll  — a hedge is about to expire and risk is STILL above the trigger.
- *           If risk has cooled, the position is left to expire instead.
- */
-export function deterministicIntent(state: GateState): DeterministicIntent {
-  const hot = state.riskScore >= state.threshold;
-  const expiring = [...state.positions]
-    .filter((position) => position.expiryTs - state.now <= ROLL_WINDOW_SECONDS)
-    .sort((a, b) => a.expiryTs - b.expiryTs)[0] ?? null;
-
-  if (!hot) {
-    const open = state.positions[0] ?? null;
-    if (!open) return { action: "hold", position: null, reason: "Risk is under the trigger and nothing is open." };
-    return { action: "close", position: open, reason: "Risk fell back under the trigger, so the hedge is spare." };
-  }
-  if (!state.persistenceMet) {
-    return { action: "hold", position: null, reason: "Risk is above the trigger but has not held there long enough." };
-  }
-  if (expiring) {
-    return { action: "roll", position: expiring, reason: "The open hedge expires soon and risk is still above the trigger." };
-  }
-  if (state.positions.length > 0) {
-    return { action: "hold", position: state.positions[0], reason: "Risk is above the trigger and a hedge is already open." };
-  }
-  return { action: "hedge", position: null, reason: "Risk has held above the trigger with nothing open." };
-}
-
-/** What the AI returns. Advisory: every field is a request to do LESS. */
+/** What the AI returns. Every field is a request to do less, except
+ *  `thesisBroken`, which is the one claim that can initiate a close. */
 export type AgentProposal = {
   action: AgentDecision;
   contracts: number;
   rationale: string;
+  /** The model's claim that the view behind the position no longer holds.
+   *  Only meaningful alongside `action: "close"`, and only ever unlocks a
+   *  close — never a hedge or a roll. */
+  thesisBroken?: boolean;
 };
 
 export type ResolvedAction = {
@@ -210,17 +206,23 @@ export type ResolvedAction = {
   notes: string[];
   /** Set when the AI narrowed the rule-based decision. */
   aiRationale: string | null;
+  /** True only when the AI initiated this action rather than narrowing one.
+   *  By construction this can only ever be a close. */
+  aiInitiated: boolean;
 };
 
 /**
  * Intersect the rule-based intent with the user's toggles, what the deployment
  * can execute, and the AI's opinion.
  *
- * The AI may agree, shrink the size, or stand the agent down. It may not swap
- * one action for another, raise a size, or revive an action the gate, the
- * toggles or the deployment ruled out — an unreachable proposal collapses to
- * `hold`. A missing or unparsable proposal changes nothing: the rule-based
- * decision stands, exactly as it does when no AI is configured.
+ * The AI may agree, shrink the size, or stand the agent down. It may not raise
+ * a size, and it may not revive an action the gate, the toggles or the
+ * deployment ruled out — those still collapse to `hold`. It may swap in
+ * exactly one action it was not offered: a close, on a stated thesis break.
+ * See invariant 3 at the top of this file for why, and for the bounds.
+ *
+ * A missing or unparsable proposal changes nothing: the rule-based decision
+ * stands, exactly as it does when no AI is configured.
  */
 export function resolveAgentAction({
   intent,
@@ -236,10 +238,17 @@ export function resolveAgentAction({
   const notes = [intent.reason];
   const hold = (note: string): ResolvedAction => {
     notes.push(note);
-    return { action: "hold", contracts: 0, position: intent.position, notes, aiRationale: null };
+    return { action: "hold", contracts: 0, position: intent.position, notes, aiRationale: null, aiInitiated: false };
   };
 
-  if (intent.action === "hold") return { action: "hold", contracts: 0, position: intent.position, notes, aiRationale: null };
+  // The one action the AI may introduce. Checked before the intent is
+  // resolved, because by definition the gate did not clear it.
+  const initiated = resolveThesisClose({ intent, availability, proposal, notes });
+  if (initiated) return initiated;
+
+  if (intent.action === "hold") {
+    return { action: "hold", contracts: 0, position: intent.position, notes, aiRationale: null, aiInitiated: false };
+  }
 
   const entry = availability.find((value) => value.action === intent.action);
   if (!entry?.available) return hold(entry?.reason ?? `${ACTION_LABEL[intent.action]} is not available here.`);
@@ -266,7 +275,77 @@ export function resolveAgentAction({
     aiRationale = proposal.rationale || null;
   }
 
-  return { action: intent.action, contracts, position: intent.position, notes, aiRationale };
+  return { action: intent.action, contracts, position: intent.position, notes, aiRationale, aiInitiated: false };
+}
+
+/**
+ * The bounded exception to "the AI can only subtract": a close the
+ * deterministic gate did not select, on a stated thesis break.
+ *
+ * Returns null whenever any bound fails, so the caller falls through to the
+ * ordinary narrowing path and the model's request simply has no effect. Every
+ * refusal is written into `notes`, because a proposal that was silently
+ * dropped is indistinguishable from one that was never made.
+ */
+function resolveThesisClose({
+  intent,
+  availability,
+  proposal,
+  notes,
+}: {
+  intent: DeterministicIntent;
+  availability: ActionAvailability[];
+  proposal: AgentProposal | null;
+  notes: string[];
+}): ResolvedAction | null {
+  if (!proposal || proposal.action !== "close" || intent.action === "close") return null;
+
+  // A thesis break is a claim about a position. Without one there is nothing
+  // to close, and this is not a route to opening anything.
+  if (!intent.position) {
+    notes.push("The AI asked to close on a thesis break, but no position is open.");
+    return null;
+  }
+  if (!proposal.thesisBroken) {
+    notes.push(
+      `The AI asked for ${ACTION_LABEL.close} where the gate cleared ${
+        intent.action === "hold" ? "no action" : ACTION_LABEL[intent.action]
+      }, without claiming the view had broken; only a stated thesis break can initiate a close.`,
+    );
+    return null;
+  }
+  if (!proposal.rationale?.trim()) {
+    notes.push("The AI claimed a thesis break but gave no reason, so it was not acted on.");
+    return null;
+  }
+
+  const entry = availability.find((value) => value.action === "close");
+  if (!entry?.available) {
+    notes.push(entry?.reason ?? `${ACTION_LABEL.close} is not available here.`);
+    return null;
+  }
+  if (!entry.enabled) {
+    notes.push(`${ACTION_LABEL.close} is switched off, so the AI's thesis break could not be acted on.`);
+    return null;
+  }
+
+  // Full size, always. The model does not get to choose how much of a broken
+  // view to keep, and the book takes full exits only.
+  const contracts = intent.position.contracts;
+  if (!(contracts > 0)) {
+    notes.push("The open position has no closeable size.");
+    return null;
+  }
+
+  notes.push(`The AI initiated a close on a thesis break: ${proposal.rationale.trim()}`);
+  return {
+    action: "close",
+    contracts,
+    position: intent.position,
+    notes,
+    aiRationale: proposal.rationale.trim(),
+    aiInitiated: true,
+  };
 }
 
 /** Round DOWN to the 6dp the mandate and USDC both use, so no derived cap ever

@@ -68,6 +68,11 @@ export const mandateAccountAbi = [
         components: [
           { name: 'mandateHash', internalType: 'bytes32', type: 'bytes32' },
           { name: 'riskScoreBps', internalType: 'uint16', type: 'uint16' },
+          {
+            name: 'positionRiskScoreBps',
+            internalType: 'uint16',
+            type: 'uint16',
+          },
           { name: 'observedAt', internalType: 'uint64', type: 'uint64' },
           { name: 'validUntil', internalType: 'uint64', type: 'uint64' },
           {
@@ -157,6 +162,11 @@ export const mandateAccountAbi = [
             components: [
               { name: 'mandateHash', internalType: 'bytes32', type: 'bytes32' },
               { name: 'riskScoreBps', internalType: 'uint16', type: 'uint16' },
+              {
+                name: 'positionRiskScoreBps',
+                internalType: 'uint16',
+                type: 'uint16',
+              },
               { name: 'observedAt', internalType: 'uint64', type: 'uint64' },
               { name: 'validUntil', internalType: 'uint64', type: 'uint64' },
               {
@@ -244,6 +254,11 @@ export const mandateAccountAbi = [
         components: [
           { name: 'mandateHash', internalType: 'bytes32', type: 'bytes32' },
           { name: 'riskScoreBps', internalType: 'uint16', type: 'uint16' },
+          {
+            name: 'positionRiskScoreBps',
+            internalType: 'uint16',
+            type: 'uint16',
+          },
           { name: 'observedAt', internalType: 'uint64', type: 'uint64' },
           { name: 'validUntil', internalType: 'uint64', type: 'uint64' },
           {
@@ -312,6 +327,11 @@ export const mandateAccountAbi = [
           { name: 'maxTenorSeconds', internalType: 'uint64', type: 'uint64' },
           { name: 'riskThresholdBps', internalType: 'uint16', type: 'uint16' },
           {
+            name: 'positionRiskThresholdBps',
+            internalType: 'uint16',
+            type: 'uint16',
+          },
+          {
             name: 'persistenceSeconds',
             internalType: 'uint64',
             type: 'uint64',
@@ -324,6 +344,24 @@ export const mandateAccountAbi = [
           { name: 'validAfter', internalType: 'uint64', type: 'uint64' },
           { name: 'expiresAt', internalType: 'uint64', type: 'uint64' },
           { name: 'nonce', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'hash', internalType: 'bytes32', type: 'bytes32' }],
+    name: 'getRiskHistory',
+    outputs: [
+      {
+        name: 'samples',
+        internalType: 'struct MandateAccount.RiskSample[]',
+        type: 'tuple[]',
+        components: [
+          { name: 'observedAt', internalType: 'uint64', type: 'uint64' },
+          { name: 'bookScoreBps', internalType: 'uint16', type: 'uint16' },
+          { name: 'positionScoreBps', internalType: 'uint16', type: 'uint16' },
         ],
       },
     ],
@@ -373,6 +411,11 @@ export const mandateAccountAbi = [
           { name: 'maxTenorSeconds', internalType: 'uint64', type: 'uint64' },
           { name: 'riskThresholdBps', internalType: 'uint16', type: 'uint16' },
           {
+            name: 'positionRiskThresholdBps',
+            internalType: 'uint16',
+            type: 'uint16',
+          },
+          {
             name: 'persistenceSeconds',
             internalType: 'uint64',
             type: 'uint64',
@@ -417,6 +460,11 @@ export const mandateAccountAbi = [
         components: [
           { name: 'mandateHash', internalType: 'bytes32', type: 'bytes32' },
           { name: 'riskScoreBps', internalType: 'uint16', type: 'uint16' },
+          {
+            name: 'positionRiskScoreBps',
+            internalType: 'uint16',
+            type: 'uint16',
+          },
           { name: 'observedAt', internalType: 'uint64', type: 'uint64' },
           { name: 'validUntil', internalType: 'uint64', type: 'uint64' },
           {
@@ -461,6 +509,11 @@ export const mandateAccountAbi = [
           { name: 'minTenorSeconds', internalType: 'uint64', type: 'uint64' },
           { name: 'maxTenorSeconds', internalType: 'uint64', type: 'uint64' },
           { name: 'riskThresholdBps', internalType: 'uint16', type: 'uint16' },
+          {
+            name: 'positionRiskThresholdBps',
+            internalType: 'uint16',
+            type: 'uint16',
+          },
           {
             name: 'persistenceSeconds',
             internalType: 'uint64',
@@ -513,9 +566,17 @@ export const mandateAccountAbi = [
   {
     type: 'function',
     inputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    name: 'riskObservationCount',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
     name: 'riskStates',
     outputs: [
       { name: 'scoreBps', internalType: 'uint16', type: 'uint16' },
+      { name: 'positionScoreBps', internalType: 'uint16', type: 'uint16' },
       { name: 'eligibleSince', internalType: 'uint64', type: 'uint64' },
       { name: 'observedAt', internalType: 'uint64', type: 'uint64' },
       { name: 'validUntil', internalType: 'uint64', type: 'uint64' },
@@ -729,6 +790,12 @@ export const mandateAccountAbi = [
       },
       {
         name: 'scoreBps',
+        internalType: 'uint16',
+        type: 'uint16',
+        indexed: false,
+      },
+      {
+        name: 'positionScoreBps',
         internalType: 'uint16',
         type: 'uint16',
         indexed: false,
@@ -1210,6 +1277,15 @@ export const useReadMandateAccountGetMandate =
   })
 
 /**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"getRiskHistory"`
+ */
+export const useReadMandateAccountGetRiskHistory =
+  /*#__PURE__*/ createUseReadContract({
+    abi: mandateAccountAbi,
+    functionName: 'getRiskHistory',
+  })
+
+/**
  * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"isMandateRegistered"`
  */
 export const useReadMandateAccountIsMandateRegistered =
@@ -1260,6 +1336,15 @@ export const useReadMandateAccountRiskDomainSeparator =
   /*#__PURE__*/ createUseReadContract({
     abi: mandateAccountAbi,
     functionName: 'riskDomainSeparator',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"riskObservationCount"`
+ */
+export const useReadMandateAccountRiskObservationCount =
+  /*#__PURE__*/ createUseReadContract({
+    abi: mandateAccountAbi,
+    functionName: 'riskObservationCount',
   })
 
 /**

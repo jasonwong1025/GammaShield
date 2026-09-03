@@ -84,6 +84,11 @@ contract MandateAccount {
         uint64 minTenorSeconds;
         uint64 maxTenorSeconds;
         uint16 riskThresholdBps;
+        /// @notice Trigger for the PER-CONTRACT risk of a held position, which
+        /// arms close and roll. The book-level `riskThresholdBps` above arms a
+        /// hedge: a hedge is a bet on the market regime, an exit is a judgement
+        /// about one position, and they are not the same number.
+        uint16 positionRiskThresholdBps;
         uint64 persistenceSeconds;
         uint64 minExecutionIntervalSeconds;
         uint64 validAfter;
@@ -94,6 +99,11 @@ contract MandateAccount {
     struct RiskAttestation {
         bytes32 mandateHash;
         uint16 riskScoreBps;
+        /// @notice Per-contract risk of the position this observation is about,
+        /// or 0 when nothing is open. Deliberately not a trend: the account
+        /// keeps the samples and the trend is DERIVED from them, so the agent
+        /// never gets to assert a rate of change it could compute wrongly.
+        uint16 positionRiskScoreBps;
         uint64 observedAt;
         uint64 validUntil;
         uint64 persistenceSeconds;
@@ -141,8 +151,18 @@ contract MandateAccount {
         uint64 lastExecutionAt;
     }
 
+    /// @notice One observation, as recorded. Kept on-chain because no
+    /// off-chain store outlives a worker restart, and a trend computed from
+    /// samples the agent could have replaced at will is not evidence.
+    struct RiskSample {
+        uint64 observedAt;
+        uint16 bookScoreBps;
+        uint16 positionScoreBps;
+    }
+
     struct RiskState {
         uint16 scoreBps;
+        uint16 positionScoreBps;
         uint64 eligibleSince;
         uint64 observedAt;
         uint64 validUntil;
@@ -162,10 +182,10 @@ contract MandateAccount {
         "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
     );
     bytes32 private constant MANDATE_TYPEHASH = keccak256(
-        "Mandate(address owner,address account,address agent,address optionBook,address collateral,bytes32 asset,uint8 side,uint256 maxPremiumPerFill,uint256 maxPremiumTotal,uint256 maxContractsPerFill,uint64 minTenorSeconds,uint64 maxTenorSeconds,uint16 riskThresholdBps,uint64 persistenceSeconds,uint64 minExecutionIntervalSeconds,uint64 validAfter,uint64 expiresAt,uint256 nonce)"
+        "Mandate(address owner,address account,address agent,address optionBook,address collateral,bytes32 asset,uint8 side,uint256 maxPremiumPerFill,uint256 maxPremiumTotal,uint256 maxContractsPerFill,uint64 minTenorSeconds,uint64 maxTenorSeconds,uint16 riskThresholdBps,uint16 positionRiskThresholdBps,uint64 persistenceSeconds,uint64 minExecutionIntervalSeconds,uint64 validAfter,uint64 expiresAt,uint256 nonce)"
     );
     bytes32 private constant RISK_TYPEHASH = keccak256(
-        "RiskAttestation(bytes32 mandateHash,uint16 riskScoreBps,uint64 observedAt,uint64 validUntil,uint64 persistenceSeconds)"
+        "RiskAttestation(bytes32 mandateHash,uint16 riskScoreBps,uint16 positionRiskScoreBps,uint64 observedAt,uint64 validUntil,uint64 persistenceSeconds)"
     );
     bytes32 private constant THETANUTS_QUOTE_TYPEHASH = keccak256(
         "ThetanutsQuote(bytes32 mandateHash,bytes32 fillCalldataHash,uint256 premium,uint256 contracts,uint64 observedAt,uint64 validUntil)"
@@ -178,6 +198,11 @@ contract MandateAccount {
     bytes32 private constant SHADOW_CLOSE_NAME_HASH = keccak256("GammaShield Shadow Close");
     bytes32 private constant VERSION_HASH = keccak256("1");
 
+    /// @notice Samples kept per mandate. The agent observes hourly, so 32
+    /// slots hold just over a day — enough for the 1h/6h/24h deltas the
+    /// decision layer reads, and no more.
+    uint256 private constant RISK_HISTORY_SLOTS = 32;
+
     address public immutable entryPoint;
     address public immutable owner;
     address public immutable riskAttester;
@@ -185,6 +210,10 @@ contract MandateAccount {
     mapping(bytes32 => Mandate) private mandates;
     mapping(bytes32 => bool) public isMandateRegistered;
     mapping(bytes32 => RiskState) public riskStates;
+    mapping(bytes32 => RiskSample[RISK_HISTORY_SLOTS]) private riskHistory;
+    /// @notice Total observations ever recorded. Head and depth both derive
+    /// from it, so the ring needs no second counter.
+    mapping(bytes32 => uint256) public riskObservationCount;
     bytes32 public activeMandateHash;
 
     event MandateRegistered(bytes32 indexed mandateHash, uint64 expiresAt);
@@ -192,7 +221,7 @@ contract MandateAccount {
     event MandateResumed(bytes32 indexed mandateHash);
     event MandateRevoked(bytes32 indexed mandateHash);
     event MandateExecuted(bytes32 indexed mandateHash, bytes32 indexed fillId, uint256 premiumUsdc, uint256 positionId);
-    event RiskObserved(bytes32 indexed mandateHash, uint16 scoreBps, uint64 eligibleSince, uint64 validUntil);
+    event RiskObserved(bytes32 indexed mandateHash, uint16 scoreBps, uint16 positionScoreBps, uint64 eligibleSince, uint64 validUntil);
     event MandateClosed(bytes32 indexed mandateHash, bytes32 indexed closeId, uint256 positionId, uint256 proceedsUsdc);
     event MandateRolled(bytes32 indexed mandateHash, uint256 closedPositionId, uint256 openedPositionId);
 
@@ -216,18 +245,18 @@ contract MandateAccount {
     receive() external payable {}
 
     function mandateHash(Mandate memory mandate) public pure returns (bytes32 hash) {
-        // The mandate has 18 static ABI fields. Encoding its fixed-width words
+        // The mandate has 19 static ABI fields. Encoding its fixed-width words
         // directly avoids a stack-too-deep compiler limitation without changing
-        // the EIP-712 encoding.
+        // the EIP-712 encoding. 19 words is 608 bytes, plus the type hash: 640.
         bytes32 typeHash = MANDATE_TYPEHASH;
         assembly {
             let ptr := mload(0x40)
             mstore(ptr, typeHash)
-            for { let offset := 0 } lt(offset, 576) { offset := add(offset, 32) } {
+            for { let offset := 0 } lt(offset, 608) { offset := add(offset, 32) } {
                 mstore(add(ptr, add(32, offset)), mload(add(mandate, offset)))
             }
-            mstore(0x40, add(ptr, 608))
-            hash := keccak256(ptr, 608)
+            mstore(0x40, add(ptr, 640))
+            hash := keccak256(ptr, 640)
         }
     }
 
@@ -382,6 +411,18 @@ contract MandateAccount {
         emit MandateRegistered(hash, mandate.expiresAt);
     }
 
+    /// @notice Every retained observation for a mandate, oldest first.
+    /// Returns fewer than RISK_HISTORY_SLOTS entries until the ring fills, so
+    /// a reader can tell a genuinely flat trend from an absent one.
+    function getRiskHistory(bytes32 hash) external view returns (RiskSample[] memory samples) {
+        uint256 count = riskObservationCount[hash];
+        uint256 depth = count < RISK_HISTORY_SLOTS ? count : RISK_HISTORY_SLOTS;
+        samples = new RiskSample[](depth);
+        for (uint256 i = 0; i < depth; i++) {
+            samples[i] = riskHistory[hash][(count - depth + i) % RISK_HISTORY_SLOTS];
+        }
+    }
+
     function getMandate(bytes32 hash) external view returns (Mandate memory) {
         require(isMandateRegistered[hash], "mandate unavailable");
         return mandates[hash];
@@ -420,10 +461,21 @@ contract MandateAccount {
         bool continuous = eligible && state.eligibleSince != 0 && state.scoreBps >= mandate.riskThresholdBps &&
             state.validUntil >= block.timestamp && risk.observedAt >= state.observedAt;
         state.eligibleSince = continuous ? state.eligibleSince : (eligible ? uint64(block.timestamp) : 0);
+        // A stale observation may not rewrite newer state, and may not enter
+        // the history: a trend is only meaningful over samples ordered in time.
+        require(risk.observedAt >= state.observedAt, "risk observation stale");
+        bool isNew = risk.observedAt > state.observedAt || riskObservationCount[hash] == 0;
         state.scoreBps = risk.riskScoreBps;
+        state.positionScoreBps = risk.positionRiskScoreBps;
         state.observedAt = risk.observedAt;
         state.validUntil = risk.validUntil;
-        emit RiskObserved(hash, risk.riskScoreBps, state.eligibleSince, risk.validUntil);
+        if (isNew) {
+            uint256 count = riskObservationCount[hash];
+            riskHistory[hash][count % RISK_HISTORY_SLOTS] =
+                RiskSample(risk.observedAt, risk.riskScoreBps, risk.positionRiskScoreBps);
+            riskObservationCount[hash] = count + 1;
+        }
+        emit RiskObserved(hash, risk.riskScoreBps, risk.positionRiskScoreBps, state.eligibleSince, risk.validUntil);
     }
 
     function executeShadow(
@@ -558,14 +610,29 @@ contract MandateAccount {
 
     /// @dev Every condition a roll must satisfy, shared by 4337 validation and
     /// execution so the simulated call and the real one can never disagree.
+    /// @dev A roll replaces one position with another, so what matters is
+    /// whether THAT position is still risky — not whether the wider book is.
+    /// The book's persistence clock exists to stop a hedge being opened on a
+    /// blip; it is the wrong clock for deciding whether an expiring position
+    /// deserves replacing, so the position threshold gates this instead. The
+    /// spend cooldown still applies, inside `_isRollWithinCaps`, because a
+    /// roll does buy.
     function _isRollValid(bytes32 hash, Mandate memory mandate, RollRequest memory request) private view returns (bool) {
         MandateControl storage control = controls[hash];
         return !control.paused && !control.revoked &&
-            _isPersistentRisk(riskStates[hash], mandate) &&
-            _isRiskValid(hash, mandate, request.risk, request.riskSignature) &&
+            _isPositionRiskValid(hash, mandate, request.risk, request.riskSignature) &&
             _isShadowCloseValid(hash, request.attestation, request.attestationSignature, request.close) &&
             _isQuoteValid(mandate, request.quote) &&
             _isRollWithinCaps(control, request.attestation, request.quote, mandate);
+    }
+
+    function _isPositionRiskValid(bytes32 mandateHash_, Mandate memory mandate, RiskAttestation memory risk, bytes memory signature)
+        private
+        view
+        returns (bool)
+    {
+        if (risk.positionRiskScoreBps < mandate.positionRiskThresholdBps) return false;
+        return _isRiskObservationValid(mandateHash_, mandate, risk, signature);
     }
 
     /// @dev `spentPremium` is the loss meter the signed cap is measured against:
@@ -638,6 +705,7 @@ contract MandateAccount {
             mandate.optionBook == address(0) || mandate.collateral == address(0) || mandate.side > 1 ||
             mandate.maxPremiumPerFill == 0 || mandate.maxPremiumTotal < mandate.maxPremiumPerFill || mandate.maxContractsPerFill == 0 ||
             mandate.minTenorSeconds == 0 || mandate.maxTenorSeconds < mandate.minTenorSeconds || mandate.riskThresholdBps > 10_000 ||
+            mandate.positionRiskThresholdBps == 0 || mandate.positionRiskThresholdBps > 10_000 ||
             mandate.expiresAt <= mandate.validAfter || mandate.persistenceSeconds > mandate.expiresAt - mandate.validAfter ||
             block.timestamp < mandate.validAfter || block.timestamp >= mandate.expiresAt
         ) return false;
@@ -654,12 +722,23 @@ contract MandateAccount {
 
     function _isRiskObservationValid(bytes32 mandateHash_, Mandate memory mandate, RiskAttestation memory risk, bytes memory signature) private view returns (bool) {
         if (
-            risk.mandateHash != mandateHash_ || risk.riskScoreBps > 10_000 || risk.observedAt > block.timestamp ||
+            risk.mandateHash != mandateHash_ || risk.riskScoreBps > 10_000 ||
+            risk.positionRiskScoreBps > 10_000 || risk.observedAt > block.timestamp ||
             block.timestamp - risk.observedAt > MAX_RISK_OBSERVATION_AGE || risk.validUntil < risk.observedAt ||
             risk.validUntil - risk.observedAt > MAX_RISK_OBSERVATION_AGE || risk.validUntil < block.timestamp ||
             risk.persistenceSeconds < mandate.persistenceSeconds
         ) return false;
-        bytes32 riskHash = keccak256(abi.encode(RISK_TYPEHASH, risk.mandateHash, risk.riskScoreBps, risk.observedAt, risk.validUntil, risk.persistenceSeconds));
+        bytes32 riskHash = keccak256(
+            abi.encode(
+                RISK_TYPEHASH,
+                risk.mandateHash,
+                risk.riskScoreBps,
+                risk.positionRiskScoreBps,
+                risk.observedAt,
+                risk.validUntil,
+                risk.persistenceSeconds
+            )
+        );
         return _recover(_typedDataHash(_domainSeparator(RISK_NAME_HASH), riskHash), signature) == riskAttester;
     }
 

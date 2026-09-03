@@ -23,12 +23,12 @@ npm run lint    # eslint — must pass before committing
 npm run wagmi:generate # regenerate typed ABIs after changing generated-contract config
 npm run check:risk     # contract risk model self-check (pure math, no network)
 npm run check:impact   # market impact model self-check (pure math, no network)
-npm run check:agent    # AI agent action model self-check (pure, no network)
+npm run check:agent    # autonomous engine self-check: action model, decision engine, trend, thesis (pure)
 npm run deploy:sepolia:shadow # redeploy the Base Sepolia shadow book + policy factory
 cd contracts && forge test # ShadowOptionBook + MandateAccount tests
 ```
 
-Verification = `npm run lint`, `npm run build`, `npm run check:risk` when you touch the risk model, `npm run check:impact` when you touch the impact model, `npm run check:agent` when you touch the agent's action model or limits, `cd contracts && forge test` when contracts change, and eyeballing the dashboard against live data.
+Verification = `npm run lint`, `npm run build`, `npm run check:risk` when you touch the risk model, `npm run check:impact` when you touch the impact model, `npm run check:agent` when you touch anything under `lib/autonomous/`, `cd contracts && forge test` when contracts change, and eyeballing the dashboard against live data.
 
 ## Architecture — read this before editing
 
@@ -49,10 +49,26 @@ Data flows in one direction: **exchange/chain → server (lib/ + app/api/) → c
 - `lib/trade.ts` — live OptionBook quote construction. It uses SDK preview/encoding, rejects unknown collateral/implementations/targets, and returns wallet calldata only for a fresh listed order.
 - `lib/positions.ts` — normalizes the Thetanuts indexer’s open positions. Prefer `implementationName` over raw option-type values when identifying call/put products.
 - `lib/shadow.ts` — Base Sepolia-only, signed receipt-book demo. It mirrors a mainnet quote but is never a Thetanuts position. Reads `closedAt` per receipt, and `getShadowBookVersion()` reports whether the deployed book can close at all (1 = fill only, 2 = fill and close).
-- `lib/agentPolicy.ts` — the **AI agent's action model**, and the only place a user's plain limits become signed terms. Pure, and shared verbatim by the browser and the workers so they cannot disagree about a limit. Three invariants: availability is separate from permission (an action the deployment cannot execute is reported unavailable **with a reason**, never skipped silently); the toggles and the AI may only **narrow** what the signed policy already permits; and the notional→contracts conversion always rounds **down**. Covered by `npm run check:agent`.
-- `lib/agentProposal.ts` — the AI half of the agent. It is offered exactly one already-cleared action per cycle and may agree, shrink the size, or stand down. It cannot pick a different action, raise a size, or reach past the risk gate; `agentPolicy.ts` enforces that on the way back. Unreachable, slow or malformed all return `null`, which means "no opinion" — the agent is never blocked on the model.
-- `lib/agentActionStore.ts` — server-side store for the three action switches, written only with a signature that recovers to the policy account's on-chain `owner()` and only when newer than the stored entry. Deliberately off-chain: putting the switches in the signed mandate would change the EIP-712 type and orphan every deployed account.
-- `lib/shadowExit.ts` — builds and signs the two structs a shadow exit needs (the book's `ShadowClose`, and the account's mandate-bound attestation). Refuses to close an unpriceable receipt, or one worth more than the book's balance, rather than inventing a mark.
+
+#### `lib/autonomous/` — the position-management engine
+
+Everything the agent decides lives here. The flow is **monitor → trigger → decide → guard → execute**, one module per stage so each can be tested alone. The pure modules run unchanged in the browser, the workers and the self-check.
+
+- `policy.ts` — the **action model** and the only place a user's plain limits become signed terms. Three invariants: availability is separate from permission (an action the deployment cannot execute is reported unavailable **with a reason**, never skipped silently); the toggles may only **narrow** what the signed policy permits; and the notional→contracts conversion always rounds **down**. The AI may only subtract too, with **one bounded exception** — it may initiate a **close**, and only a close, on a stated thesis break: never a hedge or roll, only on an open position with close armed, always full size, always with a reason. `resolveAgentAction` enforces every bound.
+- `decision.ts` — the **single decision engine**: evaluates HOLD/HEDGE/CLOSE/ROLL, records why each rejected action lost, and picks by fixed precedence (close > roll > hedge > hold). Two rules are load-bearing: it never closes on a drawdown (drawdown is not an input — a bought option's loss is fixed at entry), and expiry proximity is **necessary but never sufficient** for a roll. `intentOf` bridges it to `policy.ts`.
+- `positionRisk.ts` — `contractRisk.ts` applied to a position the user **holds**. Thetanuts publishes greeks and IV on **listed orders only**, so the IV inputs are passed as null and the scorer drops the IV and time-decay components, renormalizing 20/15/10/20/25/10 down to roughly 27/27/33/13 across premium, liquidity, market and expiry. Deriving an IV from the mark was considered and rejected: it would feed a modelled number into a signed on-chain trigger, and a component that appears only when a matching order happens to be listed would jump the score and reset the persistence clock.
+- `trend.ts` — risk trend from the samples the account stores. Every window is `number | null`; **null means the history is too short, never that risk is flat**, and the UI must keep that distinction.
+- `thesisRules.ts` — pure: what a recorded view means and whether it still holds (a 10% move against it, an elapsed horizon, a reached target). Split from the store so the browser, the server and the self-check share one implementation.
+- `thesis.ts` — the **store** for the objective and thesis, owner-signed and replay-guarded. Off-chain on purpose: the mandate is a spending limit, and a target price is a revisable opinion. A standing view covers what the agent opens itself; per-position views override it. **A position with no recorded view has none** — never treat that as a neutral view.
+- `triggers.ts` — whether anything moved enough to warrant a fresh assessment. Fails **open**: with nothing to compare against it assesses, because assessment is read-only and skipping one is the worse error. Two of the spec's triggers are listed in `UNSOURCEABLE_TRIGGERS` with reasons.
+- `actions.ts` — store for the three action switches, same signature discipline as `thesis.ts`.
+- `proposal.ts` — the AI half. Unreachable, slow or malformed all return `null`, which means "no opinion"; the agent is never blocked on the model. There is deliberately **no confidence score**: an LLM's self-report is not calibrated and nothing gates on it.
+- `exit.ts` — builds and signs the two structs a shadow exit needs. Refuses to close an unpriceable receipt, or one worth more than the book's balance, rather than inventing a mark.
+- `types.ts` — shared shapes, plus `UNSOURCEABLE_REASON_CODES`: every reason code the spec asked for that this venue cannot support, with why. That list is the honesty surface for the decision engine, the way dropped sub-scores are for the risk model.
+
+**Two risk scores, two triggers, and they are not interchangeable.** The **book** score (`engine.ts`) arms a hedge, because opening cover is a bet on the market regime. The **per-contract** score (`positionRisk.ts`) arms a close or a roll, because exiting or replacing is a judgement about one position. The mandate signs `riskThresholdBps` and `positionRiskThresholdBps` separately, and `MandateAccount` gates each action on the right one — a roll is armed by the position's own risk, so a calm book no longer blocks replacing a genuinely risky expiring leg.
+
+**What the Thetanuts SDK cannot do, so the engine does not pretend to.** `BaseOption.close()` is **bilateral** (both sides must agree off-chain), the OptionBook exposes **no maker-order creation** to end users — `fillOrder` and nothing else — and RFQ mints a *new* option rather than buying back one you hold. So there is no unilateral exit on Base mainnet at any price. `mmPricing.getPositionPricing` *will* quote a live bid on a held position, which is why a mainnet exit is surfaced as a **priced recommendation** (`outcome: "recommendation"`) and never as a fill. Autonomous close and roll exist only against GammaShield's own Base Sepolia `ShadowOptionBook`.
 
 ### API routes (`app/api/`)
 
@@ -62,6 +78,7 @@ Data flows in one direction: **exchange/chain → server (lib/ + app/api/) → c
 - `positions` — real Base-mainnet OptionBook positions from the Thetanuts indexer.
 - `shadow/quote`, `shadow/positions` — Base Sepolia demonstration positions only; label them as shadow, never live Thetanuts positions.
 - `agent-actions` — reads (public) and writes (owner-signed) the AI agent's three action switches for one policy account.
+- `agent-thesis` — reads (public) and writes (owner-signed) the objective and trading thesis for one policy account. Owner-gated because a broken thesis can trigger an exit, so anyone able to rewrite it could make someone else's agent sell.
 - `whatif` — natural-language spot-order impact. Uses the same measured volume/vol and the same one-round law as `lib/marketImpact.ts`; it must not reintroduce hardcoded market size.
 - `stream` — SSE price ticks (init snapshot, then `price` events, 15s heartbeats).
 - `klines` — OHLCV proxy: Coinbase first, Binance fallback, staleness guard, aggregates finer candles for non-native intervals.
@@ -78,7 +95,8 @@ All chart/dashboard components are `"use client"`. Layout: `Dashboard.tsx` compo
 - Per-contract risk renders through `ContractRiskPanel.tsx` (book feed drill-down and `TradePanel`). It must keep showing which sub-scores were dropped and why — that panel is the honesty surface for the model.
 - Market impact renders through `MarketImpactPanel.tsx` (same two places), which replaced the older score-before/after "amplification risk impact" card. Its what-if size box re-runs `lib/marketImpact.ts` in the browser — the math is pure and linear in contracts, so no round trip. Keep the volume/vol provenance footer and the negligible floor: a fill on this book genuinely cannot move spot, and the panel must say so rather than print zeros.
 - Asset logos live in `public/coins/` as SVGs, keyed by lowercase symbol.
-- `MandateSigningPanel.tsx` is the AI agent's limits form: **five controls only** — asset, maximum loss, maximum trade size, and the three action switches. Everything else the mandate needs is derived and shown read-only under "What gets signed"; never re-expose the derived terms as inputs. It must keep saying which limit is exact and which is approximate — maximum loss is metered on-chain to the cent, the trade cap is notional converted at a strike ceiling and re-checked exactly before each fill.
+- `MandateSigningPanel.tsx` is the AI agent's form: **seven controls only** — asset, maximum loss, maximum trade size, the three action switches, and the objective plus standing view. Everything else the mandate needs (tenor window, **both** risk triggers, persistence, cooldown, validity) is derived and shown read-only under "What gets signed"; never re-expose the derived terms as inputs. It must keep saying which limit is exact and which is approximate — maximum loss is metered on-chain to the cent, the trade cap is notional converted at a strike ceiling and re-checked exactly before each fill. Per-position view overrides are edited here too, keyed to the **policy account's** open positions: those are the only positions the agent manages, and a view keyed to anything less certain than a real position id could attach to the wrong one and trigger the wrong exit.
+- `AgentMonitoringPanel.tsx` renders the assessment behind each cycle — action, urgency, position health, reason codes, and **the three actions that were not taken with the reason for each**. A hold has to read as a judgement, not as inactivity. It must keep flagging an AI-initiated close as such, and must keep explaining that a mainnet exit is a priced recommendation rather than a fill.
 - `TradePanel` must keep approvals and fills as separate user actions. Before a mainnet fill it must refetch the order, require the reviewed maker/option/expiry/collateral/size/cost to match, and preflight the exact calldata.
 
 ## Conventions
