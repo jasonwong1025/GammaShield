@@ -9,6 +9,7 @@ import { shortAddr } from "@/lib/format";
 import { wagmiConfig } from "@/lib/wagmi";
 import { MandateSigningPanel } from "./MandateSigningPanel";
 import { AgentMonitoringPanel } from "./AgentMonitoringPanel";
+import { StepHeader } from "./StepHeader";
 import { ExplorerLink } from "./ExplorerLink";
 import { useExecutionNetwork } from "./ExecutionNetworkProvider";
 import { policyNetwork } from "@/lib/policyNetwork";
@@ -72,16 +73,19 @@ export function PolicyAccountPanel({ spot }: { spot: number }) {
 
   return (
     <section className="card p-5 flex flex-col gap-4" aria-label="Policy account setup">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-blue">{network === "mainnet" ? "Base mainnet" : "Base Sepolia"} · ERC-4337</p>
-          <h2 className="mt-1 text-[16px] font-bold text-fg">Policy account</h2>
-          <p className="mt-1 text-[12px] leading-relaxed text-muted">A dedicated smart account holds policy funds. An agent cannot use it until you register a bounded mandate.</p>
-        </div>
-        <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${deployed ? "bg-calm/15 text-calm" : "bg-panel2 text-muted"}`}>
-          {deployed ? "Account deployed" : "Not deployed"}
-        </span>
-      </div>
+      <StepHeader
+        step={1}
+        state={deployed ? "done" : "current"}
+        title="Policy account"
+        aside={
+          <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${deployed ? "bg-calm/15 text-calm" : "bg-panel2 text-muted"}`}>
+            {deployed ? "Deployed" : "Not deployed"}
+          </span>
+        }
+      >
+        A dedicated smart account on {network === "mainnet" ? "Base mainnet" : "Base Sepolia"} holds the funds the agent may spend. It
+        cannot act until you register a bounded mandate.
+      </StepHeader>
 
       {!policy.factory || !policy.agent ? (
         <p className="rounded-lg border border-crit/30 bg-crit/10 p-3 text-[12px] text-crit">The {network === "mainnet" ? "Base-mainnet" : "Base Sepolia"} policy-account factory or agent is not configured.</p>
@@ -89,7 +93,7 @@ export function PolicyAccountPanel({ spot }: { spot: number }) {
         <p className="rounded-lg border border-edge bg-panel2 p-3 text-[12px] text-muted">Connect the wallet that will own this policy account.</p>
       ) : (
         <>
-          <div className="grid gap-2 rounded-lg border border-edge bg-panel2 p-3 text-[12px] sm:grid-cols-[130px_1fr]">
+          <div className="readout grid gap-2 p-3 text-[12px] sm:grid-cols-[130px_1fr]">
             <span className="text-faint">Owner wallet</span>
             <ExplorerLink network={network} resource="address" value={address} className="font-mono text-fg hover:text-blue">{shortAddr(address)}</ExplorerLink>
             <span className="text-faint">Derived account</span>
@@ -188,11 +192,18 @@ function PolicyFundingPanel({ account, network, collateral, collateralLabel, cha
   const busy = status.kind === "pending";
   return (
     <section className="mt-4 border-t border-edge pt-4" aria-label="Fund policy account">
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-blue">Step 3 · Funding</p>
-      <h3 className="mt-1 text-[14px] font-bold text-fg">Fund policy account</h3>
-      <p className="mt-1 text-[12px] text-muted">Transfers go directly from your connected wallet to this fixed policy account. ETH pays UserOperation gas; {collateralLabel} is the bounded trade collateral.</p>
+      <StepHeader
+        step={3}
+        // Funded means both: ETH pays for the UserOperation, collateral pays
+        // for the fill, and the agent is stuck without either.
+        state={ethBalance?.value && usdcBalance ? "done" : "current"}
+        title="Fund the account"
+      >
+        Transfers go straight from your connected wallet to this fixed policy account. ETH pays UserOperation gas; {collateralLabel} is
+        the bounded trade collateral.
+      </StepHeader>
 
-      <div className="mt-3 grid gap-2 rounded-lg border border-edge bg-panel2 p-3 text-[11px] sm:grid-cols-[110px_1fr]">
+      <div className="readout mt-3 grid gap-2 p-3 text-[11px] sm:grid-cols-[110px_1fr]">
         <span className="text-faint">Recipient</span><ExplorerLink network={network} resource="address" value={account} className="font-mono text-fg hover:text-blue">{shortAddr(account)}</ExplorerLink>
         <span className="text-faint">Current balance</span><span className="text-fg">{ethBalance ? `${displayAmount(formatEther(ethBalance.value))} ETH` : "… ETH"} · {usdcBalance != null ? `${displayAmount(formatUnits(usdcBalance, 6))} ${collateralLabel}` : `… ${collateralLabel}`}</span>
       </div>

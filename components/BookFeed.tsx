@@ -74,7 +74,7 @@ export function BookCard({
               key={key}
               onClick={() => setTab(key)}
               aria-pressed={tab === key}
-              className={`px-3 h-7 rounded-md text-[12px] font-medium transition ${
+              className={`h-7 whitespace-nowrap rounded-md px-2.5 text-[12px] font-medium transition ${
                 tab === key ? "bg-panel3 text-fg" : "text-muted hover:text-fg"
               }`}
             >
@@ -82,7 +82,7 @@ export function BookCard({
             </button>
           ))}
         </div>
-        <span className="flex items-center gap-1.5 text-[11px] text-muted">
+        <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[11px] text-muted">
           {live && <span className="live-dot inline-block size-1.5 rounded-full bg-calm" />}
           {tab === "book" ? `${filtered.length} orders` : tab === "expiries" ? `${snap.expiries.length} dates` : EXECUTION_NETWORK[network].label}
         </span>

@@ -60,6 +60,7 @@ import {
 import { thesisMessage } from "@/lib/autonomous/thesisRules";
 import type { OptionsAsset } from "@/lib/assets";
 import { ExplorerLink } from "./ExplorerLink";
+import { StepHeader } from "./StepHeader";
 import { policyNetwork } from "@/lib/policyNetwork";
 import type { ExecutionNetwork } from "@/lib/explorer";
 import { ensureWalletChain, walletActionError } from "@/lib/walletChain";
@@ -408,14 +409,15 @@ export function MandateSigningPanel({
 
   return (
     <section className="mt-4 border-t border-edge pt-4" aria-label="Set agent limits">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-blue">Step 2 · EIP-712</p>
-          <h3 className="mt-1 text-[14px] font-bold text-fg">Set the agent&apos;s limits</h3>
-          <p className="mt-1 text-[12px] text-muted">The AI agent may only take the actions you switch on, only within these limits, and only from this account. Your wallet signs them; the agent cannot change them.</p>
-        </div>
-        <span className="rounded-full bg-panel2 px-2.5 py-1 text-[10px] font-semibold text-muted">Revocable before every action</span>
-      </div>
+      <StepHeader
+        step={2}
+        state={active ? "done" : "current"}
+        title="Set the agent's limits"
+        aside={<span className="rounded-full bg-panel2 px-2.5 py-1 text-[10px] font-semibold text-muted">Revocable before every action</span>}
+      >
+        The agent may only take the actions you switch on, only within these limits, and only from this account. Your wallet signs
+        them; the agent cannot change them.
+      </StepHeader>
 
       {!configured ? (
         <p className="mt-3 rounded-lg border border-crit/30 bg-crit/10 p-3 text-[12px] text-crit">The {network === "mainnet" ? "Base-mainnet" : "Base Sepolia"} policy configuration is incomplete.</p>
@@ -437,19 +439,19 @@ export function MandateSigningPanel({
             />
           </div>
 
-          <div className="mt-3 rounded-lg border border-edge bg-panel2 p-3">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-faint">Objective and standing view</p>
-            <p className="mt-1 text-[11px] leading-relaxed text-faint">
+          <div className="mt-4">
+            <h4 className="text-[12px] font-semibold text-fg">Objective and standing view</h4>
+            <p className="mt-1 max-w-[68ch] text-[11px] leading-relaxed text-faint">
               Nothing on-chain records why a position was opened, and whether to close, roll or hold turns on exactly that. This
               is the view the agent assumes for anything it opens itself; a position opened at the trade desk can carry its own.
             </p>
             <div className="mt-2 grid gap-2 sm:grid-cols-2">
-              <label className="rounded-lg border border-edge bg-panel p-2.5 text-[11px] text-faint">
+              <label className="field block p-2.5 text-[11px] text-faint">
                 <span className="block">Objective</span>
                 <select
                   value={objective}
                   onChange={(event) => setObjective(event.target.value as TradingObjective)}
-                  className="mt-1 h-8 w-full rounded-md border border-edge bg-panel2 px-2 text-[12px] font-semibold text-fg"
+                  className="mt-1 h-8 w-full bg-transparent text-[13px] font-semibold text-fg outline-none"
                 >
                   {TRADING_OBJECTIVES.map((value) => (
                     <option key={value} value={value}>{OBJECTIVE_LABEL[value]}</option>
@@ -457,12 +459,12 @@ export function MandateSigningPanel({
                 </select>
                 <span className="mt-1 block leading-relaxed">{OBJECTIVE_DESCRIPTION[objective]}</span>
               </label>
-              <label className="rounded-lg border border-edge bg-panel p-2.5 text-[11px] text-faint">
+              <label className="field block p-2.5 text-[11px] text-faint">
                 <span className="block">Direction</span>
                 <select
                   value={direction}
                   onChange={(event) => setDirection(event.target.value as ThesisDirection)}
-                  className="mt-1 h-8 w-full rounded-md border border-edge bg-panel2 px-2 text-[12px] font-semibold text-fg"
+                  className="mt-1 h-8 w-full bg-transparent text-[13px] font-semibold text-fg outline-none"
                 >
                   <option value="BULLISH">Bullish</option>
                   <option value="BEARISH">Bearish</option>
@@ -487,7 +489,7 @@ export function MandateSigningPanel({
             </div>
             {managedPositions.length > 0 && (
               <div className="mt-2 rounded-lg border border-edge bg-panel p-2.5">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-faint">Per-position overrides</p>
+                <p className="text-[12px] font-semibold text-fg">Per-position overrides</p>
                 <p className="mt-1 text-[11px] leading-relaxed text-faint">
                   A position with its own view ignores the standing one. Because a broken view can trigger an exit, these are keyed
                   to the position id the agent actually acts on — never inferred from a recent trade.
@@ -598,7 +600,7 @@ export function MandateSigningPanel({
       {signed && active && signedHash === active && <p className="mt-3 rounded-lg border border-calm/30 bg-calm/10 p-3 text-[12px] text-calm">These limits are active on-chain. Funding status appears in Step 3. {transactionHash && <ExplorerLink network={network} resource="tx" value={transactionHash} className="underline">View registration</ExplorerLink>}</p>}
       {isReadingMandate && <p className="mt-3 text-[12px] text-muted">Checking the current on-chain policy…</p>}
       {activeMandateError && <p className="mt-3 rounded-lg border border-crit/30 bg-crit/10 p-3 text-[12px] text-crit">Could not verify the current on-chain policy. Signing and registration are disabled until the Base RPC read recovers.</p>}
-      {active && <div className="mt-3 rounded-lg border border-edge bg-panel2 p-3 text-[12px] text-muted"><p>Active policy <span className="font-mono text-fg">{shortAddr(active)}</span>{control?.[0] ? " · paused" : " · executable only within its limits"}</p>{isReadingControl ? <p className="mt-2">Checking pause/revocation state…</p> : controlError ? <p className="mt-2 text-crit">Could not verify pause/revocation state. Controls are disabled until the Base RPC read recovers.</p> : <div className="mt-2 flex flex-wrap gap-2"><button type="button" onClick={() => void changeControl(control?.[0] ? "resumeMandate" : "pauseMandate")} disabled={busy} className="h-8 rounded-lg bg-panel3 px-3 text-[11px] font-semibold text-fg disabled:cursor-wait disabled:opacity-60">{control?.[0] ? "Resume" : "Pause"}</button><button type="button" onClick={() => void changeControl("revokeMandate")} disabled={busy} className="h-8 rounded-lg border border-crit/40 px-3 text-[11px] font-semibold text-crit disabled:cursor-wait disabled:opacity-60">Revoke</button></div>}</div>}
+      {active && <div className="mt-3 rounded-lg border border-edge bg-panel2 p-3 text-[12px] text-muted"><p>Active policy <span className="font-mono text-fg">{shortAddr(active)}</span>{control?.[0] ? ", paused" : ", executable only within its limits"}</p>{isReadingControl ? <p className="mt-2">Checking pause/revocation state…</p> : controlError ? <p className="mt-2 text-crit">Could not verify pause/revocation state. Controls are disabled until the Base RPC read recovers.</p> : <div className="mt-2 flex flex-wrap gap-2"><button type="button" onClick={() => void changeControl(control?.[0] ? "resumeMandate" : "pauseMandate")} disabled={busy} className="h-8 rounded-lg bg-panel3 px-3 text-[11px] font-semibold text-fg disabled:cursor-wait disabled:opacity-60">{control?.[0] ? "Resume" : "Pause"}</button><button type="button" onClick={() => void changeControl("revokeMandate")} disabled={busy} className="h-8 rounded-lg border border-crit/40 px-3 text-[11px] font-semibold text-crit disabled:cursor-wait disabled:opacity-60">Revoke</button></div>}</div>}
       {(transactionFailed || error) && <p className="mt-3 rounded-lg border border-crit/30 bg-crit/10 p-3 text-[12px] text-crit">{transactionFailed ? `Policy transaction did not succeed on-chain: ${walletActionError(transactionError, "check the linked transaction before retrying.")} The active policy is unchanged; network gas may have been charged.` : error}</p>}
     </section>
   );
@@ -619,8 +621,8 @@ function SignedTerms({
   collateralLabel: string;
 }) {
   return (
-    <div className="mt-3 rounded-lg border border-edge bg-panel2 p-3 text-[11px]">
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-faint">What gets signed</p>
+    <div className="readout mt-3 p-3 text-[11px]">
+      <p className="text-[12px] font-semibold text-fg">What gets signed</p>
       <div className="mt-2 grid gap-x-4 gap-y-1 sm:grid-cols-2">
         <Term label="Max premium, total" value={`${toUnitString(caps.maxPremiumTotal)} ${collateralLabel}`} />
         <Term label="Max premium, per fill" value={`${toUnitString(caps.maxPremiumPerFill)} ${collateralLabel}`} />
@@ -740,7 +742,7 @@ function whole(value: string, label: string, min: number, max: number): number {
 
 function MoneyField({ label, hint, value, onChange }: { label: string; hint: string; value: string; onChange: (value: string) => void }) {
   return (
-    <label className="rounded-lg border border-edge bg-panel2 p-2.5 text-[11px] text-faint">
+    <label className="field block p-2.5 text-[11px] text-faint">
       <span className="block">{label}</span>
       <span className="mt-1 flex items-center gap-1">
         <span className="text-[13px] font-semibold text-fg">$</span>
@@ -757,5 +759,5 @@ function MoneyField({ label, hint, value, onChange }: { label: string; hint: str
 }
 
 function Select({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) {
-  return <label className="rounded-lg border border-edge bg-panel2 p-2.5 text-[11px] text-faint"><span className="block">{label}</span><select value={value} onChange={(event) => onChange(event.target.value)} className="mt-1 w-full bg-transparent text-[13px] font-semibold text-fg outline-none">{options.map((option) => <option key={option} value={option}>{option.toUpperCase()}</option>)}</select></label>;
+  return <label className="field block p-2.5 text-[11px] text-faint"><span className="block">{label}</span><select value={value} onChange={(event) => onChange(event.target.value)} className="mt-1 w-full bg-transparent text-[13px] font-semibold text-fg outline-none">{options.map((option) => <option key={option} value={option}>{option.toUpperCase()}</option>)}</select></label>;
 }

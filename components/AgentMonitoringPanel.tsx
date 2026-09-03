@@ -5,6 +5,7 @@ import { useReadContract } from "wagmi";
 import { mandateAccountAbi } from "@/lib/generated/contracts";
 import type { ExecutionNetwork } from "@/lib/explorer";
 import { ExplorerLink } from "./ExplorerLink";
+import { StepHeader } from "./StepHeader";
 import type { Address, Hex } from "viem";
 
 type AgentStatus = {
@@ -77,10 +78,14 @@ export function AgentMonitoringPanel({ account, mandateHash, network }: { accoun
   const persistence = !observedAt || !eligibleSince ? "No qualifying on-chain risk observation yet." : now == null ? "Checking whether the risk observation is still valid…" : validUntil <= now ? "The last risk observation expired; the worker must refresh it." : now < persistenceEndsAt ? `Risk evidence is eligible; ${duration(persistenceEndsAt - now)} remains before a fill can be considered.` : "Risk persistence requirement is satisfied; a fresh eligible quote is still required.";
 
   return <section className="mt-4 border-t border-edge pt-4" aria-label="Agent monitoring">
-    <p className="text-[10px] font-semibold uppercase tracking-wide text-blue">Step 4 · Agent monitoring</p>
-    <h3 className="mt-1 text-[14px] font-bold text-fg">{agent?.worker === "error" || agent?.worker === "stale" || agentError ? "Agent needs attention" : "Policy is active"}</h3>
-    <p className="mt-1 text-[12px] text-muted">The external {network === "mainnet" ? "Thetanuts" : "shadow"} worker checks the live book and risk every 10–15 seconds. It can only act after funding, the signed threshold and persistence period, and a fresh eligible quote — and only through the actions you switched on. {network === "mainnet" ? "On Base mainnet that is Auto-Hedge alone." : "On Base Sepolia all three actions are available."}</p>
-    <div className="mt-3 grid gap-2 rounded-lg border border-edge bg-panel2 p-3 text-[11px] sm:grid-cols-[150px_1fr]">
+    <StepHeader
+      step={4}
+      state={agent?.worker === "error" || agent?.worker === "stale" || agentError ? "current" : "done"}
+      title={agent?.worker === "error" || agent?.worker === "stale" || agentError ? "Agent needs attention" : "Policy is active"}
+    >
+      The external {network === "mainnet" ? "Thetanuts" : "shadow"} worker checks the live book and risk every 10–15 seconds. It can only act after funding, the signed threshold and persistence period, and a fresh eligible quote — and only through the actions you switched on. {network === "mainnet" ? "On Base mainnet that is Auto-Hedge alone." : "On Base Sepolia all three actions are available."}
+    </StepHeader>
+    <div className="readout mt-3 grid gap-2 p-3 text-[11px] sm:grid-cols-[150px_1fr]">
       <span className="text-faint">Worker</span><span className="text-fg">{workerText(agent, agentError, now)}</span>
       <span className="text-faint">Execution mode</span><span className="text-fg">{!agent ? "Checking worker mode…" : agent.dryRun ? "Dry run — validates only; it cannot spend funds." : network === "mainnet" ? "Broadcast enabled — a qualifying fill may use policy funds." : "Shadow execution — Base Sepolia test funds only."}</span>
       <span className="text-faint">Latest decision</span><span className="text-fg">{agent?.latest ? decisionText(agent.latest) : "Waiting for the first worker check."}</span>
