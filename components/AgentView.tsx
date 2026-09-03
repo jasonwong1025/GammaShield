@@ -4,7 +4,6 @@ import type { AssetSnapshot } from "@/lib/engine";
 import type { FeedRow } from "@/lib/snapshot";
 import type { Asset } from "@/lib/assets";
 import { PolicyAccountPanel } from "./PolicyAccountPanel";
-import { ScorePanel } from "./ScorePanel";
 import { BookCard } from "./BookFeed";
 
 type Props = {
@@ -24,9 +23,8 @@ export function AgentView({ snap, feed, asset, live, spot }: Props) {
         <div className="grow bg-panel" />
       </div>
 
-      {/* Side Rail: Risk Score & Live Options Book */}
+      {/* Side Rail: Live Options Book */}
       <div className="flex flex-col gap-px min-w-0">
-        <ScorePanel snap={snap} />
         <BookCard rows={feed} snap={snap} asset={asset} live={live} spot={spot} />
         <div className="grow bg-panel" />
       </div>
