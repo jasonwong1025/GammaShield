@@ -506,7 +506,7 @@ export function PriceChart({
     <section className="card p-5 pb-3" aria-label="Price chart">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h2 className="text-[14px] font-semibold">{asset}/USD</h2>
+          <h2 className="panel-title">{asset}/USD</h2>
           <p className="text-[12px] text-muted mt-0.5">
             {flip !== null
               ? "Live market data with the engine's gamma flip level overlaid."
