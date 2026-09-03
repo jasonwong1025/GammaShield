@@ -815,6 +815,25 @@ export const mandateAccountAbi = [
     ],
     name: 'RiskObserved',
   },
+  { type: 'error', inputs: [], name: 'EntryPointOnly' },
+  { type: 'error', inputs: [], name: 'InvalidClose' },
+  { type: 'error', inputs: [], name: 'InvalidMandate' },
+  { type: 'error', inputs: [], name: 'InvalidRiskAttestation' },
+  { type: 'error', inputs: [], name: 'InvalidRiskObservation' },
+  { type: 'error', inputs: [], name: 'InvalidRoll' },
+  { type: 'error', inputs: [], name: 'MandateAlreadyRegistered' },
+  { type: 'error', inputs: [], name: 'MandateInactive' },
+  { type: 'error', inputs: [], name: 'MandateIsRevoked' },
+  { type: 'error', inputs: [], name: 'MandateUnavailable' },
+  { type: 'error', inputs: [], name: 'OwnerOnly' },
+  { type: 'error', inputs: [], name: 'QuoteViolatesMandate' },
+  { type: 'error', inputs: [], name: 'RiskNotPersistent' },
+  { type: 'error', inputs: [], name: 'RiskObservationStale' },
+  { type: 'error', inputs: [], name: 'ThetanutsQuoteViolatesMandate' },
+  { type: 'error', inputs: [], name: 'TokenCallFailed' },
+  { type: 'error', inputs: [], name: 'TotalCapExceeded' },
+  { type: 'error', inputs: [], name: 'ZeroAddress' },
+  { type: 'error', inputs: [], name: 'ZeroTarget' },
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -890,6 +909,8 @@ export const mandateAccountFactoryAbi = [
     ],
     name: 'AccountCreated',
   },
+  { type: 'error', inputs: [], name: 'ZeroAddress' },
+  { type: 'error', inputs: [], name: 'ZeroOwner' },
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

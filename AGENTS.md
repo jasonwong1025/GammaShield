@@ -24,11 +24,12 @@ npm run wagmi:generate # regenerate typed ABIs after changing generated-contract
 npm run check:risk     # contract risk model self-check (pure math, no network)
 npm run check:impact   # market impact model self-check (pure math, no network)
 npm run check:agent    # autonomous engine self-check: action model, decision engine, trend, thesis (pure)
+npm run check:sizes    # EIP-170 contract size guard — MUST pass before any deploy
 npm run deploy:sepolia:shadow # redeploy the Base Sepolia shadow book + policy factory
 cd contracts && forge test # ShadowOptionBook + MandateAccount tests
 ```
 
-Verification = `npm run lint`, `npm run build`, `npm run check:risk` when you touch the risk model, `npm run check:impact` when you touch the impact model, `npm run check:agent` when you touch anything under `lib/autonomous/`, `cd contracts && forge test` when contracts change, and eyeballing the dashboard against live data.
+Verification = `npm run lint`, `npm run build`, `npm run check:risk` when you touch the risk model, `npm run check:impact` when you touch the impact model, `npm run check:agent` when you touch anything under `lib/autonomous/`, `cd contracts && forge test` **and `npm run check:sizes`** when contracts change, and eyeballing the dashboard against live data.
 
 ## Architecture — read this before editing
 
@@ -69,6 +70,17 @@ Everything the agent decides lives here. The flow is **monitor → trigger → d
 **Two risk scores, two triggers, and they are not interchangeable.** The **book** score (`engine.ts`) arms a hedge, because opening cover is a bet on the market regime. The **per-contract** score (`positionRisk.ts`) arms a close or a roll, because exiting or replacing is a judgement about one position. The mandate signs `riskThresholdBps` and `positionRiskThresholdBps` separately, and `MandateAccount` gates each action on the right one — a roll is armed by the position's own risk, so a calm book no longer blocks replacing a genuinely risky expiring leg.
 
 **What the Thetanuts SDK cannot do, so the engine does not pretend to.** `BaseOption.close()` is **bilateral** (both sides must agree off-chain), the OptionBook exposes **no maker-order creation** to end users — `fillOrder` and nothing else — and RFQ mints a *new* option rather than buying back one you hold. So there is no unilateral exit on Base mainnet at any price. `mmPricing.getPositionPricing` *will* quote a live bid on a held position, which is why a mainnet exit is surfaced as a **priced recommendation** (`outcome: "recommendation"`) and never as a fill. Autonomous close and roll exist only against GammaShield's own Base Sepolia `ShadowOptionBook`.
+
+#### Contract size is the binding constraint on `MandateAccount`
+
+`MandateAccountFactory` embeds `type(MandateAccount).creationCode` in its own runtime so it can CREATE2 accounts at predictable addresses. That means **every byte added to `MandateAccount` is a byte added to the factory**, and the factory is what hits EIP-170's 24,576-byte runtime limit first.
+
+This is a real trap: `forge build` and `forge test` both pass happily over the limit, and the failure surfaces only as `EVM error: CreateContractSizeLimit` at deploy time. Run **`npm run check:sizes`** — it exits non-zero on a breach — before pushing any contract change.
+
+Two things hold the current margin (~1.1KB on the factory), and neither is optional:
+
+- **`via_ir = true` with `optimizer_runs = 1`** in `contracts/foundry.toml`. Low runs optimizes for size over runtime gas; measured at ~0.7% more gas per op, which is the right trade when size is what blocks deployment. Putting `optimizer_runs` back to 200 costs ~700 bytes and leaves the factory within 400 bytes of the limit.
+- **Custom errors, never `require` strings.** A revert string costs roughly 70 bytes against a custom error's ~10, doubled by the factory embedding. `MandateAccount` declares its errors at the top of the contract; extend that list rather than reintroducing a string. Tests assert on `.selector`, not on reason text.
 
 ### API routes (`app/api/`)
 

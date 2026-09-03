@@ -325,8 +325,10 @@ contract MandateAccountTest {
         bytes memory staleSignature = _sign(RISK_KEY, _typed(account.riskDomainSeparator(), _riskHash(stale)));
         try account.recordRisk(mandateHash, stale, staleSignature) {
             revert("a backdated observation was accepted");
-        } catch Error(string memory reason) {
-            require(keccak256(bytes(reason)) == keccak256("risk observation stale"), "wrong revert reason");
+        } catch (bytes memory reason) {
+            // Custom error, so the selector is the assertion. Revert strings
+            // were removed to keep the factory inside EIP-170.
+            require(bytes4(reason) == MandateAccount.RiskObservationStale.selector, "wrong revert reason");
         }
         require(account.riskObservationCount(mandateHash) == 35, "a rejected observation still grew the ring");
     }

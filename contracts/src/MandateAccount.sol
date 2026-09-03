@@ -168,6 +168,30 @@ contract MandateAccount {
         uint64 validUntil;
     }
 
+    // Custom errors rather than require strings. The factory embeds this
+    // contract's full creation code in its own runtime, so every byte here
+    // counts twice against EIP-170 — revert strings cost roughly 70 bytes each
+    // where a custom error costs about 10.
+    error EntryPointOnly();
+    error InvalidClose();
+    error InvalidMandate();
+    error InvalidRiskAttestation();
+    error InvalidRiskObservation();
+    error InvalidRoll();
+    error MandateInactive();
+    error MandateAlreadyRegistered();
+    error MandateIsRevoked();
+    error MandateUnavailable();
+    error OwnerOnly();
+    error QuoteViolatesMandate();
+    error RiskNotPersistent();
+    error RiskObservationStale();
+    error ThetanutsQuoteViolatesMandate();
+    error TokenCallFailed();
+    error TotalCapExceeded();
+    error ZeroAddress();
+    error ZeroTarget();
+
     uint256 private constant SIG_VALIDATION_FAILED = 1;
     uint64 private constant MAX_RISK_OBSERVATION_AGE = 3 minutes;
     uint64 private constant MAX_THETANUTS_QUOTE_AGE = 3 minutes;
@@ -226,17 +250,17 @@ contract MandateAccount {
     event MandateRolled(bytes32 indexed mandateHash, uint256 closedPositionId, uint256 openedPositionId);
 
     modifier onlyEntryPoint() {
-        require(msg.sender == entryPoint, "entry point only");
+        if (!(msg.sender == entryPoint)) revert EntryPointOnly();
         _;
     }
 
     modifier onlyOwner() {
-        require(msg.sender == owner, "owner only");
+        if (!(msg.sender == owner)) revert OwnerOnly();
         _;
     }
 
     constructor(address entryPoint_, address owner_, address riskAttester_) {
-        require(entryPoint_ != address(0) && owner_ != address(0) && riskAttester_ != address(0), "zero address");
+        if (!(entryPoint_ != address(0) && owner_ != address(0) && riskAttester_ != address(0))) revert ZeroAddress();
         entryPoint = entryPoint_;
         owner = owner_;
         riskAttester = riskAttester_;
@@ -393,14 +417,14 @@ contract MandateAccount {
     }
 
     function executeOwner(address to, uint256 value, bytes calldata data) external onlyEntryPoint {
-        require(to != address(0), "zero target");
+        if (!(to != address(0))) revert ZeroTarget();
         (bool success, bytes memory result) = to.call{value: value}(data);
         if (!success) _revert(result);
     }
 
     function registerMandate(Mandate calldata mandate, bytes calldata signature) external onlyOwner returns (bytes32 hash) {
         hash = _requireMandate(mandate, signature);
-        require(!isMandateRegistered[hash], "mandate registered");
+        if (!(!isMandateRegistered[hash])) revert MandateAlreadyRegistered();
         if (activeMandateHash != bytes32(0)) {
             controls[activeMandateHash].revoked = true;
             emit MandateRevoked(activeMandateHash);
@@ -424,27 +448,27 @@ contract MandateAccount {
     }
 
     function getMandate(bytes32 hash) external view returns (Mandate memory) {
-        require(isMandateRegistered[hash], "mandate unavailable");
+        if (!(isMandateRegistered[hash])) revert MandateUnavailable();
         return mandates[hash];
     }
 
     function pauseMandate(bytes32 hash) external onlyOwner {
-        require(hash == activeMandateHash, "mandate inactive");
-        require(!controls[hash].revoked, "mandate revoked");
+        if (!(hash == activeMandateHash)) revert MandateInactive();
+        if (!(!controls[hash].revoked)) revert MandateIsRevoked();
         controls[hash].paused = true;
         emit MandatePaused(hash);
     }
 
     function resumeMandate(bytes32 hash) external onlyOwner {
-        require(hash == activeMandateHash, "mandate inactive");
+        if (!(hash == activeMandateHash)) revert MandateInactive();
         MandateControl storage control = controls[hash];
-        require(!control.revoked && block.timestamp < mandates[hash].expiresAt, "mandate inactive");
+        if (!(!control.revoked && block.timestamp < mandates[hash].expiresAt)) revert MandateInactive();
         control.paused = false;
         emit MandateResumed(hash);
     }
 
     function revokeMandate(bytes32 hash) external onlyOwner {
-        require(hash == activeMandateHash, "mandate inactive");
+        if (!(hash == activeMandateHash)) revert MandateInactive();
         controls[hash].revoked = true;
         activeMandateHash = bytes32(0);
         emit MandateRevoked(hash);
@@ -463,7 +487,7 @@ contract MandateAccount {
         state.eligibleSince = continuous ? state.eligibleSince : (eligible ? uint64(block.timestamp) : 0);
         // A stale observation may not rewrite newer state, and may not enter
         // the history: a trend is only meaningful over samples ordered in time.
-        require(risk.observedAt >= state.observedAt, "risk observation stale");
+        if (!(risk.observedAt >= state.observedAt)) revert RiskObservationStale();
         bool isNew = risk.observedAt > state.observedAt || riskObservationCount[hash] == 0;
         state.scoreBps = risk.riskScoreBps;
         state.positionScoreBps = risk.positionRiskScoreBps;
@@ -491,8 +515,8 @@ contract MandateAccount {
         _requireQuote(mandate, quote);
 
         MandateControl storage control = controls[hash];
-        require(!control.paused && !control.revoked, "mandate inactive");
-        require(control.spentPremium + quote.premiumUsdc <= mandate.maxPremiumTotal, "total cap exceeded");
+        if (!(!control.paused && !control.revoked)) revert MandateInactive();
+        if (!(control.spentPremium + quote.premiumUsdc <= mandate.maxPremiumTotal)) revert TotalCapExceeded();
         require(
             control.lastExecutionAt == 0 || block.timestamp >= uint256(control.lastExecutionAt) + mandate.minExecutionIntervalSeconds,
             "execution cooldown"
@@ -525,8 +549,8 @@ contract MandateAccount {
         _requireThetanutsQuote(hash, mandate, quote, quoteSignature, fillData);
 
         MandateControl storage control = controls[hash];
-        require(!control.paused && !control.revoked, "mandate inactive");
-        require(control.spentPremium + quote.premium <= mandate.maxPremiumTotal, "total cap exceeded");
+        if (!(!control.paused && !control.revoked)) revert MandateInactive();
+        if (!(control.spentPremium + quote.premium <= mandate.maxPremiumTotal)) revert TotalCapExceeded();
         require(
             control.lastExecutionAt == 0 || block.timestamp >= uint256(control.lastExecutionAt) + mandate.minExecutionIntervalSeconds,
             "execution cooldown"
@@ -551,10 +575,10 @@ contract MandateAccount {
         bytes calldata closeSignature
     ) external onlyEntryPoint returns (uint128 proceedsUsdc) {
         Mandate memory mandate = _requireActiveMandate(hash);
-        require(_isShadowCloseValid(hash, attestation, attestationSignature, close), "invalid close");
+        if (!(_isShadowCloseValid(hash, attestation, attestationSignature, close))) revert InvalidClose();
 
         MandateControl storage control = controls[hash];
-        require(!control.paused && !control.revoked, "mandate inactive");
+        if (!(!control.paused && !control.revoked)) revert MandateInactive();
 
         proceedsUsdc = abi.decode(
             _call(mandate.optionBook, abi.encodeCall(IShadowFill.closeShadow, (close, closeSignature)), false), (uint128)
@@ -574,7 +598,7 @@ contract MandateAccount {
         returns (uint256 positionId)
     {
         Mandate memory mandate = _requireActiveMandate(hash);
-        require(_isRollValid(hash, mandate, request), "invalid roll");
+        if (!(_isRollValid(hash, mandate, request))) revert InvalidRoll();
 
         MandateControl storage control = controls[hash];
         uint128 proceeds = abi.decode(
@@ -668,35 +692,35 @@ contract MandateAccount {
     }
 
     function _requireMandate(Mandate calldata mandate, bytes calldata signature) private view returns (bytes32 hash) {
-        require(_isMandateValid(mandate, signature), "invalid mandate");
+        if (!(_isMandateValid(mandate, signature))) revert InvalidMandate();
         return mandateHash(mandate);
     }
 
     function _requireActiveMandate(bytes32 hash) private view returns (Mandate memory mandate) {
-        require(hash != bytes32(0) && hash == activeMandateHash, "mandate inactive");
+        if (!(hash != bytes32(0) && hash == activeMandateHash)) revert MandateInactive();
         return mandates[hash];
     }
 
     function _requirePersistentRisk(bytes32 hash, Mandate memory mandate) private view {
-        require(_isPersistentRisk(riskStates[hash], mandate), "risk not persistent");
+        if (!(_isPersistentRisk(riskStates[hash], mandate))) revert RiskNotPersistent();
     }
 
     function _requireRisk(bytes32 mandateHash_, Mandate memory mandate, RiskAttestation calldata risk, bytes calldata signature) private view {
-        require(_isRiskValid(mandateHash_, mandate, risk, signature), "invalid risk attestation");
+        if (!(_isRiskValid(mandateHash_, mandate, risk, signature))) revert InvalidRiskAttestation();
     }
 
     function _requireRiskObservation(bytes32 mandateHash_, Mandate memory mandate, RiskAttestation calldata risk, bytes calldata signature) private view {
-        require(_isRiskObservationValid(mandateHash_, mandate, risk, signature), "invalid risk observation");
+        if (!(_isRiskObservationValid(mandateHash_, mandate, risk, signature))) revert InvalidRiskObservation();
     }
 
     function _requireQuote(Mandate memory mandate, IShadowFill.ShadowQuote calldata quote) private view {
-        require(_isQuoteValid(mandate, quote), "quote violates mandate");
+        if (!(_isQuoteValid(mandate, quote))) revert QuoteViolatesMandate();
     }
 
     function _requireThetanutsQuote(
         bytes32 mandateHash_, Mandate memory mandate, ThetanutsQuote calldata quote, bytes calldata signature, bytes calldata fillData
     ) private view {
-        require(_isThetanutsQuoteValid(mandateHash_, mandate, quote, signature, fillData), "Thetanuts quote violates mandate");
+        if (!(_isThetanutsQuoteValid(mandateHash_, mandate, quote, signature, fillData))) revert ThetanutsQuoteViolatesMandate();
     }
 
     function _isMandateValid(Mandate memory mandate, bytes memory signature) private view returns (bool) {
@@ -870,7 +894,7 @@ contract MandateAccount {
     function _call(address target, bytes memory data, bool requiresTrue) private returns (bytes memory result) {
         (bool success, bytes memory returnData) = target.call(data);
         if (!success) _revert(returnData);
-        if (requiresTrue && returnData.length > 0) require(abi.decode(returnData, (bool)), "token call failed");
+        if (requiresTrue && returnData.length > 0) if (!(abi.decode(returnData, (bool)))) revert TokenCallFailed();
         return returnData;
     }
 
@@ -887,19 +911,21 @@ contract MandateAccount {
 }
 
 contract MandateAccountFactory {
+    error ZeroAddress();
+    error ZeroOwner();
     address public immutable entryPoint;
     address public immutable riskAttester;
 
     event AccountCreated(address indexed account, address indexed owner, bytes32 indexed salt);
 
     constructor(address entryPoint_, address riskAttester_) {
-        require(entryPoint_ != address(0) && riskAttester_ != address(0), "zero address");
+        if (!(entryPoint_ != address(0) && riskAttester_ != address(0))) revert ZeroAddress();
         entryPoint = entryPoint_;
         riskAttester = riskAttester_;
     }
 
     function createAccount(address owner, bytes32 salt) external returns (MandateAccount account) {
-        require(owner != address(0), "zero owner");
+        if (!(owner != address(0))) revert ZeroOwner();
         account = new MandateAccount{salt: salt}(entryPoint, owner, riskAttester);
         emit AccountCreated(address(account), owner, salt);
     }

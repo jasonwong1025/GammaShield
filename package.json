@@ -18,7 +18,8 @@
     "deploy:base:policy": "node --env-file-if-exists=.env.local scripts/deploy-base-mandate-factory.mjs",
     "wagmi:generate": "wagmi generate",
     "check:agent": "node --experimental-strip-types --import ./scripts/ts-resolve.mjs scripts/agent-policy-self-check.mts",
-    "deploy:sepolia:shadow": "node --env-file-if-exists=.env.local scripts/deploy-shadow-sepolia.mjs"
+    "deploy:sepolia:shadow": "node --env-file-if-exists=.env.local scripts/deploy-shadow-sepolia.mjs",
+    "check:sizes": "cd contracts && forge build --sizes"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.102.8",
