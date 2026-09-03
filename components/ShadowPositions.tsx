@@ -14,7 +14,7 @@ const factoryFromEnv = process.env.NEXT_PUBLIC_BASE_SEPOLIA_MANDATE_FACTORY_ADDR
 const FACTORY_ADDRESS: Address | undefined = factoryFromEnv && isAddress(factoryFromEnv) ? factoryFromEnv : undefined;
 type DisplayPosition = ShadowPosition & { custody: "wallet" | "policy" };
 
-export function ShadowPositions({ asset }: { asset: Asset }) {
+export function ShadowPositions({ asset, fill = false }: { asset: Asset; fill?: boolean }) {
   const { address } = useAccount();
   const { data: policyAccount } = useReadContract({
     address: FACTORY_ADDRESS,
@@ -84,7 +84,7 @@ export function ShadowPositions({ asset }: { asset: Asset }) {
   if (!filtered.length) return <Empty action={() => void load(address, deployedPolicy ? policyAccount : undefined)} label={`No ${asset} shadow positions for ${deployedPolicy ? "this wallet or policy account" : "this wallet"}.`} />;
 
   return (
-    <div className="feed-scroll overflow-auto grow min-h-0 max-h-[430px]">
+    <div className={`feed-scroll overflow-auto grow min-h-0 ${fill ? "" : "max-h-[430px]"}`}>
       <div className="flex items-center justify-end gap-2 px-4 pt-2 text-[10px] text-faint">
         <span>{refreshing ? "Refreshing…" : deployedPolicy ? "Wallet + policy account · refreshes every 10s" : "Auto-refreshes every 10s"}</span>
         <button onClick={() => void load(address, deployedPolicy ? policyAccount : undefined)} disabled={refreshing} aria-label="Refresh shadow positions" title="Refresh shadow positions" className="text-blue hover:text-fg disabled:opacity-50">↻</button>

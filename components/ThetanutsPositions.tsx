@@ -13,7 +13,7 @@ import { policyNetwork } from "@/lib/policyNetwork";
 const policy = policyNetwork("mainnet");
 type DisplayPosition = ThetanutsPosition & { custody: "wallet" | "policy" };
 
-export function ThetanutsPositions({ asset, refreshKey = 0 }: { asset: Asset; refreshKey?: number }) {
+export function ThetanutsPositions({ asset, refreshKey = 0, fill = false }: { asset: Asset; refreshKey?: number; fill?: boolean }) {
   const { address } = useAccount();
   const { data: policyAccount } = useReadContract({
     address: policy.factory,
@@ -75,7 +75,7 @@ export function ThetanutsPositions({ asset, refreshKey = 0 }: { asset: Asset; re
   if (!filtered.length) return <Empty action={() => void load(address, deployedPolicy ? policyAccount : undefined)} label={`No open ${asset} positions indexed for ${deployedPolicy ? "this wallet or policy account" : "this wallet"}.`} />;
 
   return (
-    <div className="feed-scroll overflow-auto grow min-h-0 max-h-[430px]">
+    <div className={`feed-scroll overflow-auto grow min-h-0 ${fill ? "" : "max-h-[430px]"}`}>
       <div className="flex items-center justify-end gap-2 px-4 pt-2 text-[10px] text-faint">
         <span>{refreshing ? "Refreshing…" : deployedPolicy ? "Wallet + policy account · Thetanuts indexer" : "Thetanuts indexer"}</span>
         <button onClick={() => void load(address, deployedPolicy ? policyAccount : undefined)} disabled={refreshing} aria-label="Refresh Thetanuts positions" title="Refresh Thetanuts positions" className="text-blue hover:text-fg disabled:opacity-50">↻</button>

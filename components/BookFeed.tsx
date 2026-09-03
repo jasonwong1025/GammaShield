@@ -27,6 +27,7 @@ export function BookCard({
   live,
   spot,
   volBaseline,
+  fill = false,
 }: {
   rows: FeedRow[];
   snap: AssetSnapshot;
@@ -37,6 +38,12 @@ export function BookCard({
   spot: number;
   /** Realized-vol reference behind the IV component of contract risk. */
   volBaseline?: { vol: number; windowDays: number; lookbackDays: number; source: string } | null;
+  /** True when this card is the only thing in its column and should grow to
+   *  fill it, instead of capping its list at a fixed height. On the
+   *  Dashboard, BookCard is one of three stacked cards, so the cap keeps
+   *  it from crowding out its siblings; on the AI Agent tab it is alone in
+   *  the side rail, and the cap used to leave the rest of the column blank. */
+  fill?: boolean;
 }) {
   const [tab, setTab] = useState<"book" | "expiries" | "positions">("book");
   const [positionsRefresh, setPositionsRefresh] = useState(0);
@@ -53,7 +60,7 @@ export function BookCard({
   const bookLabel = live ? "OptionBook (live)" : "Modeled book";
 
   return (
-    <section className="card flex flex-col min-h-0 overflow-hidden" aria-label={bookLabel}>
+    <section className={`card flex flex-col min-h-0 overflow-hidden ${fill ? "flex-1" : ""}`} aria-label={bookLabel}>
       <div className="flex items-center justify-between px-5 pt-4 pb-3">
         <div className="flex items-center gap-1 rounded-lg bg-panel2 p-0.5">
           {(
@@ -81,7 +88,15 @@ export function BookCard({
         </span>
       </div>
 
-      {tab === "book" ? <BookTable rows={filtered} asset={asset} spot={spot} volBaseline={volBaseline} gexByStrike={snap.gexByStrike} /> : tab === "expiries" ? <Expiries snap={snap} /> : network === "mainnet" ? <ThetanutsPositions asset={asset} refreshKey={positionsRefresh} /> : <ShadowPositions asset={asset} />}
+      {tab === "book" ? (
+        <BookTable rows={filtered} asset={asset} spot={spot} volBaseline={volBaseline} gexByStrike={snap.gexByStrike} fill={fill} />
+      ) : tab === "expiries" ? (
+        <Expiries snap={snap} fill={fill} />
+      ) : network === "mainnet" ? (
+        <ThetanutsPositions asset={asset} refreshKey={positionsRefresh} fill={fill} />
+      ) : (
+        <ShadowPositions asset={asset} fill={fill} />
+      )}
     </section>
   );
 }
@@ -109,6 +124,7 @@ function BookTable({
   spot,
   volBaseline,
   gexByStrike,
+  fill = false,
 }: {
   rows: FeedRow[];
   asset: string;
@@ -117,6 +133,7 @@ function BookTable({
   /** Strike ladder for this asset — one array shared by every row's market
    *  impact estimate, rather than repeated on all 200 of them. */
   gexByStrike: StrikeGex[];
+  fill?: boolean;
 }) {
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   useEffect(() => {
@@ -182,7 +199,7 @@ function BookTable({
   };
 
   return (
-    <div className="feed-scroll overflow-auto grow min-h-0 max-h-[430px]">
+    <div className={`feed-scroll overflow-auto grow min-h-0 ${fill ? "" : "max-h-[430px]"}`}>
       <table className="w-full min-w-[560px] text-[12px]">
         <thead className="sticky top-0 bg-panel z-10">
           <tr className="text-[10px] text-faint">
@@ -366,7 +383,7 @@ function RowRiskDetail({
   );
 }
 
-function Expiries({ snap }: { snap: AssetSnapshot }) {
+function Expiries({ snap, fill = false }: { snap: AssetSnapshot; fill?: boolean }) {
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   useEffect(() => {
     const id = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1_000);
@@ -377,7 +394,7 @@ function Expiries({ snap }: { snap: AssetSnapshot }) {
   const maxNotional = Math.max(...top.map((e) => e.notionalUsd), 1);
 
   return (
-    <div className="feed-scroll overflow-y-auto grow min-h-0 max-h-[430px] px-5 pb-4 flex flex-col gap-2.5">
+    <div className={`feed-scroll overflow-y-auto grow min-h-0 ${fill ? "" : "max-h-[430px]"} px-5 pb-4 flex flex-col gap-2.5`}>
       {top.map((e) => {
         const urgent = e.daysOut < 2;
         return (

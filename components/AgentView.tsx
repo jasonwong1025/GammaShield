@@ -23,10 +23,9 @@ export function AgentView({ snap, feed, asset, live, spot }: Props) {
         <div className="grow bg-panel" />
       </div>
 
-      {/* Side Rail: Live Options Book */}
+      {/* Side Rail: Live Options Book, filling the column now that it is alone */}
       <div className="flex flex-col gap-px min-w-0">
-        <BookCard rows={feed} snap={snap} asset={asset} live={live} spot={spot} />
-        <div className="grow bg-panel" />
+        <BookCard rows={feed} snap={snap} asset={asset} live={live} spot={spot} fill />
       </div>
     </div>
   );
