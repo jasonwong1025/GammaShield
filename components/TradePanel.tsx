@@ -928,7 +928,7 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
           className="note text-[12px] leading-relaxed text-muted"
           style={{ borderLeftColor: "var(--warn)", background: "color-mix(in srgb, var(--warn) 8%, transparent)" }}
         >
-          This expiry has no listed maker order. RFQ execution is paused by default because it escrows collateral and needs a separate review. Choose an instant-fill tenor instead.
+          No listed order for this expiry, and RFQ execution is paused. Choose an instant-fill tenor instead.
           {nearestFillable && (
             <button
               onClick={() => setPeriod(nearestFillable.period)}

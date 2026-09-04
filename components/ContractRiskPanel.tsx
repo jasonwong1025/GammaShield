@@ -36,9 +36,6 @@ function ComponentRow({ component }: { component: RiskComponent }) {
     <div className="flex flex-col gap-1">
       <div className="flex items-baseline gap-2">
         <span className="text-fg w-[112px] shrink-0">{component.label}</span>
-        <span className="text-faint num text-[10px] w-8 shrink-0">
-          {Math.round(component.weight * 100)}%
-        </span>
         <div className="grow h-1.5 rounded-full bg-panel3 overflow-hidden">
           <div
             className="h-full rounded-full"

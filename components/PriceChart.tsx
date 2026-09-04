@@ -612,7 +612,7 @@ export function PriceChart({
 
       <div ref={containerRef} className="mt-3 h-[320px] w-full" />
 
-      <div className="mt-1 flex items-center justify-between text-[10px] text-faint">
+      <div className="mt-1 flex items-center text-[10px] text-faint">
         <span>
           {interval.live
             ? `Building ${interval.label} candles live from the tick stream`
@@ -620,7 +620,6 @@ export function PriceChart({
               ? `Data: ${source === "binance" ? "Binance" : "Coinbase"} spot · ${interval.label}`
               : "Loading candles…"}
         </span>
-        <span>Chart: TradingView Lightweight Charts™</span>
       </div>
     </section>
   );
