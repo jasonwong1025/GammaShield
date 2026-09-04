@@ -1,17 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { MarketSnapshot } from "@/lib/snapshot";
+import type { MarketSnapshot, FeedRow } from "@/lib/snapshot";
+import type { AssetSnapshot } from "@/lib/engine";
 import { TopBar, type NavTab } from "./TopBar";
 import { AssetSwitcher } from "./AssetSwitcher";
-import { TradePanel } from "./TradePanel";
+import { TradePanel, type OrderIntent } from "./TradePanel";
 import { PriceChart } from "./PriceChart";
 import { RiskView } from "./RiskView";
 import { BookCard } from "./BookFeed";
 import { CopilotWidget } from "./CopilotWidget";
 import { AgentView } from "./AgentView";
-import { ExecutionNetworkProvider } from "./ExecutionNetworkProvider";
+import { ExecutionNetworkProvider, useExecutionNetwork } from "./ExecutionNetworkProvider";
 import { ALL_ASSETS, isOptionsAsset, type Asset } from "@/lib/assets";
+
+const TRADE_PANEL_ANCHOR_ID = "trade-panel-anchor";
 
 const POLL_MS = 10_000;
 const PRICE_POLL_MS = 4_000;
@@ -129,27 +132,7 @@ export function Dashboard() {
               <>
                 {/* TAB 1: Main Dashboard (Trading, OptionBook, RiskView from main) */}
                 {activeTab === "dashboard" && (
-                  <div className="grid grow grid-cols-1 xl:grid-cols-[1fr_380px] gap-px bg-edge">
-                    <div className="flex flex-col gap-px min-w-0">
-                      <PriceChart asset={asset} flip={a.flipStrike} livePrice={livePrice} />
-                      <BookCard
-                        rows={snap.feed}
-                        snap={a}
-                        asset={asset}
-                        live={live}
-                        spot={livePrice}
-                        volBaseline={snap.volBaseline?.[asset] ?? null}
-                        tabs={["book", "expiries"]}
-                      />
-                      <RiskView snap={a} />
-                      <div className="grow bg-panel" />
-                    </div>
-
-                    <div className="flex flex-col gap-px min-w-0">
-                      <TradePanel key={asset} asset={asset} live={live} hedgeIntent={null} />
-                      <div className="grow bg-panel" />
-                    </div>
-                  </div>
+                  <TradingArea snap={snap} a={a} asset={asset} live={live} livePrice={livePrice} />
                 )}
 
                 {/* TAB 2: AI agent workspace — limits, policy, monitoring */}
@@ -176,6 +159,88 @@ export function Dashboard() {
       />
     </div>
     </ExecutionNetworkProvider>
+  );
+}
+
+// Owns the "buy this exact row" flow: needs useExecutionNetwork, which only
+// works below <ExecutionNetworkProvider> — one level under Dashboard itself.
+function TradingArea({
+  snap,
+  a,
+  asset,
+  live,
+  livePrice,
+}: {
+  snap: MarketSnapshot;
+  a: AssetSnapshot;
+  asset: Asset;
+  live: boolean;
+  livePrice: number;
+}) {
+  const { setNetwork } = useExecutionNetwork();
+  const [orderIntent, setOrderIntent] = useState<OrderIntent | null>(null);
+
+  // TradePanel remounts per-asset (key={asset}) and drops its own state, but
+  // this component doesn't — clear a stale intent rather than have it
+  // silently re-lock the panel if the user switches back to that asset.
+  const [prevAsset, setPrevAsset] = useState(asset);
+  if (prevAsset !== asset) {
+    setPrevAsset(asset);
+    setOrderIntent(null);
+  }
+
+  const onBuyRow = useCallback(
+    (row: FeedRow) => {
+      // The OptionBook feed only ever exists on Base mainnet — force the
+      // execution toggle there regardless of what it was on, so the panel
+      // renders the real buy button rather than the Sepolia mirror.
+      setNetwork("mainnet");
+      setOrderIntent({
+        asset: row.asset,
+        side: row.isCall ? "call" : "put",
+        strike: row.strike,
+        expiryTs: row.expiryTs,
+        // Same formula the row's own risk score was sized against
+        // (lib/snapshot.ts) — starting the panel here keeps the quantity
+        // component of the two scores comparable.
+        contracts: row.collateralUsd / Math.max(row.strike, 1),
+        nonce: Date.now(),
+      });
+      document.getElementById(TRADE_PANEL_ANCHOR_ID)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    },
+    [setNetwork],
+  );
+
+  return (
+    <div className="grid grow grid-cols-1 xl:grid-cols-[1fr_380px] gap-px bg-edge">
+      <div className="flex flex-col gap-px min-w-0">
+        <PriceChart asset={asset} flip={a.flipStrike} livePrice={livePrice} />
+        <BookCard
+          rows={snap.feed}
+          snap={a}
+          asset={asset}
+          live={live}
+          spot={livePrice}
+          volBaseline={snap.volBaseline?.[asset] ?? null}
+          tabs={["book", "expiries"]}
+          onBuyRow={onBuyRow}
+        />
+        <RiskView snap={a} />
+        <div className="grow bg-panel" />
+      </div>
+
+      <div id={TRADE_PANEL_ANCHOR_ID} className="flex flex-col gap-px min-w-0">
+        <TradePanel
+          key={asset}
+          asset={asset}
+          live={live}
+          hedgeIntent={null}
+          orderIntent={orderIntent}
+          onClearOrderIntent={() => setOrderIntent(null)}
+        />
+        <div className="grow bg-panel" />
+      </div>
+    </div>
   );
 }
 

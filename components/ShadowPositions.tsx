@@ -10,12 +10,53 @@ import { mandateAccountFactoryAbi } from "@/lib/generated/contracts";
 import { fmtContracts, fmtCountdown, fmtExpiryDate, fmtStrike, fmtUsd } from "@/lib/format";
 import { ExplorerLink } from "./ExplorerLink";
 import { PositionStrategyPanel } from "./PositionStrategyPanel";
+import type { PositionChangeDetail } from "@/lib/positionEvents";
 
 const factoryFromEnv = process.env.NEXT_PUBLIC_BASE_SEPOLIA_MANDATE_FACTORY_ADDRESS;
 const FACTORY_ADDRESS: Address | undefined = factoryFromEnv && isAddress(factoryFromEnv) ? factoryFromEnv : undefined;
 type DisplayPosition = ShadowPosition & { custody: "wallet" | "policy" };
+const POLL_INTERVAL_MS = 4_000;
+const POLL_MAX_ATTEMPTS = 10;
 
-export function ShadowPositions({ asset, fill = false }: { asset: Asset; fill?: boolean }) {
+// buyShadow() always signs from the connected wallet, never a policy
+// account, same as the mainnet buy path — so a pending row is always
+// "wallet" custody. Negative ids can never collide with a real receipt id;
+// deriving it from the tx hash (rather than a counter) keeps this pure and
+// safe to compute during render.
+function pendingIdFromTxHash(txHash: string): number {
+  const n = parseInt(txHash.replace(/^0x/, "").slice(-8) || "0", 16);
+  return -(Number.isFinite(n) ? n : 0) - 1;
+}
+
+function pendingToDisplay(p: PositionChangeDetail, buyer: string): DisplayPosition | null {
+  if (p.isCall == null || p.strike == null || p.expiryTs == null || p.contracts == null || p.premiumUsd == null) return null;
+  return {
+    id: pendingIdFromTxHash(p.txHash),
+    closedAt: null,
+    buyer,
+    asset: p.asset,
+    isCall: p.isCall,
+    strike: p.strike,
+    expiryTs: p.expiryTs,
+    contracts: p.contracts,
+    premiumUsd: p.premiumUsd,
+    txHash: p.txHash,
+    mark: null,
+    custody: "wallet",
+  };
+}
+
+export function ShadowPositions({
+  asset,
+  refreshKey = 0,
+  fill = false,
+  pendingFill = null,
+}: {
+  asset: Asset;
+  refreshKey?: number;
+  fill?: boolean;
+  pendingFill?: PositionChangeDetail | null;
+}) {
   // One row expanded at a time, matching the OptionBook feed's drill-down.
   // A closed receipt is history, so it never opens.
   const [expandedKey, setExpandedKey] = useState<number | null>(null);
@@ -39,6 +80,7 @@ export function ShadowPositions({ asset, fill = false }: { asset: Asset; fill?: 
   const [loaded, setLoaded] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
+  const [optimistic, setOptimistic] = useState<DisplayPosition | null>(null);
 
   useEffect(() => {
     const id = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1_000);
@@ -79,7 +121,35 @@ export function ShadowPositions({ asset, fill = false }: { asset: Asset; fill?: 
     };
   }, [address, deployedPolicy, load, policyAccount]);
 
-  const filtered = positions.filter((position) => position.asset === asset);
+  // A fresh fill: show it immediately as a pending row, and catch up the
+  // steady 10s poll above with a faster one until it's found.
+  const [lastPendingTxHash, setLastPendingTxHash] = useState<string | null>(null);
+  if (pendingFill && pendingFill.txHash !== lastPendingTxHash) {
+    setLastPendingTxHash(pendingFill.txHash);
+    const display = pendingToDisplay(pendingFill, address ?? pendingFill.txHash);
+    if (display) setOptimistic(display);
+  }
+
+  useEffect(() => {
+    if (!address || !refreshKey) return;
+    const policy = deployedPolicy ? policyAccount : undefined;
+    let attempts = 0;
+    const poll = () => {
+      attempts += 1;
+      void load(address, policy);
+      if (attempts >= POLL_MAX_ATTEMPTS) clearInterval(interval);
+    };
+    const interval = setInterval(poll, POLL_INTERVAL_MS);
+    poll();
+    return () => clearInterval(interval);
+  }, [address, deployedPolicy, load, policyAccount, refreshKey]);
+
+  const confirmedTxHashes = new Set(
+    positions.flatMap((p) => (p.txHash ? [p.txHash.toLowerCase()] : [])),
+  );
+  const optimisticStillPending = optimistic && !confirmedTxHashes.has((optimistic.txHash ?? "").toLowerCase());
+  const displayPositions = optimisticStillPending ? [optimistic!, ...positions] : positions;
+  const filtered = displayPositions.filter((position) => position.asset === asset);
   if (!address) {
     return <Empty label="Connect wallet from the top bar to view Base Sepolia shadow positions." />;
   }
@@ -108,20 +178,21 @@ export function ShadowPositions({ asset, fill = false }: { asset: Asset; fill?: 
         <tbody className="font-mono text-[11px]">
           {filtered.map((position) => {
             const expanded = expandedKey === position.id;
-            const openable = !position.closedAt;
+            const pending = position.id < 0;
+            const openable = !position.closedAt && !pending;
             return (
             <Fragment key={position.id}>
             <tr
               onClick={() => openable && setExpandedKey((current) => (current === position.id ? null : position.id))}
               aria-expanded={openable ? expanded : undefined}
-              className={`border-t border-edge/50 transition-colors ${openable ? "cursor-pointer hover:bg-panel2/60" : ""} ${expanded ? "bg-panel2/60" : ""}`}
+              className={`border-t border-edge/50 transition-colors ${openable ? "cursor-pointer hover:bg-panel2/60" : ""} ${pending ? "opacity-60" : ""} ${expanded ? "bg-panel2/60" : ""}`}
             >
-              <td className="px-4 py-2 font-sans"><span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${position.isCall ? "text-calm bg-calm/10" : "text-crit bg-crit/10"}`}>{position.isCall ? "CALL" : "PUT"}</span>{position.custody === "policy" && <span className="ml-1 text-[9px] font-semibold text-blue">AGENT</span>}{position.closedAt && <span className="ml-1 text-[9px] font-semibold text-faint">CLOSED</span>}</td>
+              <td className="px-4 py-2 font-sans"><span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${position.isCall ? "text-calm bg-calm/10" : "text-crit bg-crit/10"}`}>{position.isCall ? "CALL" : "PUT"}</span>{position.custody === "policy" && <span className="ml-1 text-[9px] font-semibold text-blue">AGENT</span>}{pending && <span className="ml-1 text-[9px] font-semibold text-warn">PENDING · NOT YET INDEXED</span>}{position.closedAt && <span className="ml-1 text-[9px] font-semibold text-faint">CLOSED</span>}</td>
               <td className="px-2 py-2 text-right num text-fg">{fmtStrike(position.strike)}</td>
               <td className="px-2 py-2 text-right text-muted whitespace-nowrap">{fmtExpiryDate(position.expiryTs)} <span className="text-faint">· {fmtCountdown(position.expiryTs, now)}</span></td>
               <td className="px-2 py-2 text-right num text-fg">{fmtUsd(position.premiumUsd, false, 6)} USDC</td>
               <td className="px-2 py-2 text-right num" title={position.mark ? `Modeled from ${position.mark.source}; not a fillable Thetanuts price or settlement.` : "No live IV mark is available."}>
-                {position.mark ? <><span style={{ color: position.mark.pnlUsd >= 0 ? "var(--calm)" : "var(--crit)" }}>{position.mark.pnlUsd >= 0 ? "+" : "−"}{fmtUsd(Math.abs(position.mark.pnlUsd), false, 6)}</span><span className="block text-[10px] text-faint">{position.mark.source}</span></> : <span className="text-faint">{position.closedAt ? "Closed by the agent" : "No live mark"}</span>}
+                {position.mark ? <><span style={{ color: position.mark.pnlUsd >= 0 ? "var(--calm)" : "var(--crit)" }}>{position.mark.pnlUsd >= 0 ? "+" : "−"}{fmtUsd(Math.abs(position.mark.pnlUsd), false, 6)}</span><span className="block text-[10px] text-faint">{position.mark.source}</span></> : <span className="text-faint">{position.closedAt ? "Closed by the agent" : pending ? "Indexing…" : "No live mark"}</span>}
               </td>
               <td className="px-2 py-2 text-right num text-fg">{fmtContracts(position.contracts)}</td>
               <td className="px-4 py-2 text-right">{position.txHash ? <ExplorerLink network="sepolia" resource="tx" value={position.txHash} className="text-blue hover:underline">View receipt</ExplorerLink> : <span className="text-muted">#{position.id}</span>}</td>

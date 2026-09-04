@@ -19,6 +19,10 @@ export type NormalizedOrder = {
   greeks: { delta: number; gamma: number; iv: number; theta: number; vega: number; rho: number } | null;
   /** Ask premium per contract, USD. Null for modeled books — no pricing model backs them yet. */
   pricePerContractUsd: number | null;
+  /** The maker's actual settlement token for this order — often a wrapped
+   *  variant (aBasUSDC/aBasWETH/aBascbBTC), not the plain underlying RFQs
+   *  use. Null for modeled (non-live) books. */
+  collateralToken: { address: string; symbol: string; decimals: number } | null;
 };
 
 export type StrikeGex = { strike: number; gex: number; notionalUsd: number };

@@ -110,6 +110,7 @@ near(dailyVolPctOf(0), 0, 1e-12, "zero vol");
     maker: "0xmaker",
     greeks: { delta: 0.5, gamma: 1.9e-4, iv: 0.4, theta: -1, vega: 1, rho: 0 },
     pricePerContractUsd: 1_000,
+    collateralToken: null,
     ...over,
   });
   const empty = computeAssetSnapshot("BTC", SPOT, [], 1_000_000_000);

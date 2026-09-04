@@ -1,10 +1,14 @@
 "use client";
 
 import { Fragment, useEffect, useRef, useState } from "react";
+import { useAccount, useBalance, useReadContracts } from "wagmi";
+import { base } from "wagmi/chains";
+import { zeroAddress, type Address } from "viem";
 import type { FeedRow } from "@/lib/snapshot";
 import type { AssetSnapshot, StrikeGex } from "@/lib/engine";
 import type { Asset } from "@/lib/assets";
 import type { AiRiskAssessment } from "@/lib/aiRisk";
+import { erc20Abi } from "@/lib/generated/contracts";
 import {
   fmtCountdown,
   fmtExpiryDate,
@@ -19,6 +23,7 @@ import { ShadowPositions } from "./ShadowPositions";
 import { ThetanutsPositions } from "./ThetanutsPositions";
 import { EXECUTION_NETWORK } from "@/lib/explorer";
 import { useExecutionNetwork } from "./ExecutionNetworkProvider";
+import { POSITION_CHANGED_EVENT, type PositionChangeDetail } from "@/lib/positionEvents";
 
 type BookCardTab = "book" | "expiries" | "positions";
 
@@ -33,6 +38,7 @@ export function BookCard({
   volBaseline,
   fill = false,
   tabs = ALL_TABS,
+  onBuyRow,
 }: {
   rows: FeedRow[];
   snap: AssetSnapshot;
@@ -52,18 +58,84 @@ export function BookCard({
   /** Which tabs this instance offers. Defaults to all three; the Dashboard
    *  and AI Agent tab each surface a different subset of this same card. */
   tabs?: readonly BookCardTab[];
+  /** Targets a specific book row for purchase (opens it in the trade panel).
+   *  Omitted where there's no trade panel to target, e.g. the AI Agent tab. */
+  onBuyRow?: (row: FeedRow) => void;
 }) {
   const [tab, setTab] = useState<BookCardTab>(tabs[0]);
   const [positionsRefresh, setPositionsRefresh] = useState(0);
+  const [pendingFill, setPendingFill] = useState<PositionChangeDetail | null>(null);
   const { network } = useExecutionNetwork();
   useEffect(() => {
-    const showPosition = () => {
+    const showPosition = (e: Event) => {
+      const detail = (e as CustomEvent<PositionChangeDetail>).detail;
       setPositionsRefresh((value) => value + 1);
+      if (detail) setPendingFill(detail);
       if (tabs.includes("positions")) setTab("positions");
     };
-    window.addEventListener("thetanuts-position-changed", showPosition);
-    return () => window.removeEventListener("thetanuts-position-changed", showPosition);
+    window.addEventListener(POSITION_CHANGED_EVENT, showPosition);
+    return () => window.removeEventListener(POSITION_CHANGED_EVENT, showPosition);
   }, [tabs]);
+
+  // A per-row Buy button (see BookTable) only targets an order for the
+  // trade panel — the real approve/preflight/fill still happens there. But
+  // greying it out for insufficient balance needs real numbers, checked
+  // against each row's own settlement token — book orders often settle in a
+  // wrapped variant (aBasUSDC/aBasWETH/aBascbBTC), not the plain
+  // USDC/WETH/cbBTC RFQs use, so guessing a fixed token gets it wrong. Batch
+  // one multicall for the small set of distinct tokens actually resting in
+  // this asset's book, rather than a read per row. Always against Base
+  // mainnet: the OptionBook feed itself only ever exists there, regardless
+  // of which network the wallet-execution toggle is on.
+  const { address: walletAddress } = useAccount();
+  const distinctTokens = onBuyRow
+    ? [
+        ...new Map(
+          rows
+            .filter((r) => r.collateralToken)
+            .map((r) => [r.collateralToken!.address.toLowerCase(), r.collateralToken!] as const),
+        ).values(),
+      ]
+    : [];
+  const { data: tokenBalanceResults } = useReadContracts({
+    contracts: distinctTokens.map((t) => ({
+      address: t.address as Address,
+      abi: erc20Abi,
+      functionName: "balanceOf" as const,
+      args: [walletAddress ?? zeroAddress] as const,
+      chainId: base.id,
+    })),
+    query: { enabled: Boolean(onBuyRow && walletAddress && distinctTokens.length) },
+  });
+  const { data: ethBalanceData } = useBalance({
+    address: walletAddress,
+    chainId: base.id,
+    query: { enabled: Boolean(onBuyRow && walletAddress) },
+  });
+  const tokenBalances = new Map<string, number>(
+    distinctTokens.map((t, i) => {
+      const raw = tokenBalanceResults?.[i];
+      const value = raw?.status === "success" ? Number(raw.result as bigint) / 10 ** t.decimals : NaN;
+      return [t.address.toLowerCase(), value];
+    }),
+  );
+  const ethBalance = ethBalanceData ? Number(ethBalanceData.value) / 1e18 : null;
+
+  // The same 1-contract-or-less size TradePanel defaults to for a fresh
+  // quote; the real fill amount and its exact required collateral are only
+  // known once the panel fetches an authoritative quote for this order.
+  // Returns why it's unaffordable (gas vs. the specific settlement token),
+  // not just whether — a bare "insufficient balance" reads as a bug when the
+  // one token the user checked (often not the one actually short) is fine.
+  const rowInsufficientReason = (row: FeedRow): string | null => {
+    if (!walletAddress) return null;
+    if (ethBalance != null && ethBalance < 0.0003) return "Insufficient ETH for gas";
+    if (row.pricePerContractUsd == null || !row.collateralToken) return null;
+    const requiredToken = row.isCall ? row.pricePerContractUsd / Math.max(spot, 1) : row.pricePerContractUsd;
+    const balance = tokenBalances.get(row.collateralToken.address.toLowerCase());
+    if (balance == null || Number.isNaN(balance) || balance >= requiredToken) return null;
+    return `Insufficient ${row.collateralToken.symbol} balance — need ~${requiredToken.toPrecision(3)}, have ${balance.toPrecision(3)}`;
+  };
   const filtered = rows.filter((r) => r.asset === asset);
   const bookLabel = live ? "OptionBook (live)" : "Modeled book";
   const labelOf: Record<BookCardTab, string> = {
@@ -100,13 +172,32 @@ export function BookCard({
       </div>
 
       {tab === "book" ? (
-        <BookTable rows={filtered} asset={asset} spot={spot} volBaseline={volBaseline} gexByStrike={snap.gexByStrike} fill={fill} />
+        <BookTable
+          rows={filtered}
+          asset={asset}
+          spot={spot}
+          volBaseline={volBaseline}
+          gexByStrike={snap.gexByStrike}
+          fill={fill}
+          onBuyRow={onBuyRow}
+          rowInsufficientReason={rowInsufficientReason}
+        />
       ) : tab === "expiries" ? (
         <Expiries snap={snap} fill={fill} />
       ) : network === "mainnet" ? (
-        <ThetanutsPositions asset={asset} refreshKey={positionsRefresh} fill={fill} />
+        <ThetanutsPositions
+          asset={asset}
+          refreshKey={positionsRefresh}
+          fill={fill}
+          pendingFill={pendingFill?.network === "mainnet" && pendingFill.asset === asset ? pendingFill : null}
+        />
       ) : (
-        <ShadowPositions asset={asset} fill={fill} />
+        <ShadowPositions
+          asset={asset}
+          refreshKey={positionsRefresh}
+          fill={fill}
+          pendingFill={pendingFill?.network === "shadow" && pendingFill.asset === asset ? pendingFill : null}
+        />
       )}
     </section>
   );
@@ -136,6 +227,8 @@ function BookTable({
   volBaseline,
   gexByStrike,
   fill = false,
+  onBuyRow,
+  rowInsufficientReason,
 }: {
   rows: FeedRow[];
   asset: string;
@@ -145,6 +238,8 @@ function BookTable({
    *  impact estimate, rather than repeated on all 200 of them. */
   gexByStrike: StrikeGex[];
   fill?: boolean;
+  onBuyRow?: (row: FeedRow) => void;
+  rowInsufficientReason?: (row: FeedRow) => string | null;
 }) {
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   useEffect(() => {
@@ -224,6 +319,7 @@ function BookTable({
             <th className="text-right font-medium px-4 py-1.5" title="Per-contract risk, 0-100">
               Risk
             </th>
+            {onBuyRow && <th className="text-right font-medium px-4 py-1.5">Trade</th>}
           </tr>
         </thead>
         <tbody className="font-mono text-[11px]">
@@ -268,10 +364,40 @@ function BookTable({
                   <td className="px-4 py-1.5 text-right">
                     <RiskScoreChip risk={r.risk} />
                   </td>
+                  {onBuyRow && (
+                    <td className="px-4 py-1.5 text-right">
+                      {r.strikes.length === 1 && r.takerIsLong ? (
+                        (() => {
+                          const reason = rowInsufficientReason?.(r) ?? null;
+                          return (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onBuyRow(r);
+                              }}
+                              disabled={!!reason}
+                              title={reason ?? "Buy this exact listed order"}
+                              className="rounded-md bg-blue px-2.5 py-1 text-[11px] font-semibold text-white hover:brightness-110 transition disabled:opacity-40"
+                            >
+                              Buy
+                            </button>
+                          );
+                        })()
+                      ) : (
+                        <span
+                          className="text-faint"
+                          title="Multi-leg orders can't be filled directly — GammaShield doesn't submit atomic multi-leg fills."
+                        >
+                          —
+                        </span>
+                      )}
+                    </td>
+                  )}
                 </tr>
                 {expanded && (
                   <tr key={`${key}-detail`} className="border-t border-edge/50">
-                    <td colSpan={8} className="px-4 py-3 bg-panel2/40 font-sans">
+                    <td colSpan={onBuyRow ? 9 : 8} className="px-4 py-3 bg-panel2/40 font-sans">
                       <RowRiskDetail
                         row={r}
                         volBaseline={volBaseline}
@@ -289,7 +415,7 @@ function BookTable({
           })}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={8} className="px-5 py-10 text-center text-faint font-sans">
+              <td colSpan={onBuyRow ? 9 : 8} className="px-5 py-10 text-center text-faint font-sans">
                 No live {asset} orders on the book right now.
               </td>
             </tr>
