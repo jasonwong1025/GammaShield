@@ -7,6 +7,7 @@ import { getTradeQuote, type TradeQuote, type TradeSide } from "@/lib/trade";
 import { TRADE_PERIODS, type TradePeriod } from "@/lib/tradePeriods";
 import { bsOptionPrice } from "@/lib/modelBook";
 import { getMarketSnapshot, type MarketSnapshot } from "@/lib/snapshot";
+import { withRpcRetry } from "@/lib/rpcRetry";
 
 const QUOTE_LIFETIME_SECONDS = 60;
 const MAX_CONTRACTS = 5;
@@ -256,12 +257,12 @@ async function readShadowReceiptBookUncached(): Promise<UnmarkedShadowPosition[]
   const latest = await provider.getBlockNumber();
   const txHashes = new Map<number, string>();
   for (let fromBlock = deploymentBlock(); fromBlock <= latest; fromBlock += 10_000) {
-    const logs = await provider.getLogs({
+    const logs = await withRpcRetry(() => provider.getLogs({
       address: config.optionBook,
       topics: [event.topicHash],
       fromBlock,
       toBlock: Math.min(fromBlock + 9_999, latest),
-    });
+    }));
     for (const log of logs) txHashes.set(Number(BigInt(log.topics[1])), log.transactionHash);
   }
   const positions = entries.flatMap((entry, id) => {
