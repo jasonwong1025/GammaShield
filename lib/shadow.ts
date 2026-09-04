@@ -255,15 +255,23 @@ async function readShadowReceiptBookUncached(): Promise<UnmarkedShadowPosition[]
   const event = book.interface.getEvent("ShadowOrderFilled");
   if (!event) throw new Error("Shadow fill event is unavailable");
   const latest = await provider.getBlockNumber();
+  // Best-effort: this only resolves the fill tx hash for a block-explorer link.
+  // Some RPC plans cap eth_getLogs at a far smaller range than the 10,000-block
+  // chunk below (or rate-limit it outright) — a scan failure must not 502 the
+  // whole receipt book, so bail out with whatever hashes were already found.
   const txHashes = new Map<number, string>();
-  for (let fromBlock = deploymentBlock(); fromBlock <= latest; fromBlock += 10_000) {
-    const logs = await withRpcRetry(() => provider.getLogs({
-      address: config.optionBook,
-      topics: [event.topicHash],
-      fromBlock,
-      toBlock: Math.min(fromBlock + 9_999, latest),
-    }));
-    for (const log of logs) txHashes.set(Number(BigInt(log.topics[1])), log.transactionHash);
+  try {
+    for (let fromBlock = deploymentBlock(); fromBlock <= latest; fromBlock += 10_000) {
+      const logs = await withRpcRetry(() => provider.getLogs({
+        address: config.optionBook,
+        topics: [event.topicHash],
+        fromBlock,
+        toBlock: Math.min(fromBlock + 9_999, latest),
+      }));
+      for (const log of logs) txHashes.set(Number(BigInt(log.topics[1])), log.transactionHash);
+    }
+  } catch (error) {
+    console.error("shadow receipt tx-hash scan failed, continuing without them:", error);
   }
   const positions = entries.flatMap((entry, id) => {
     const asset = ethers.decodeBytes32String(entry.asset) as OptionsAsset;
