@@ -148,7 +148,7 @@ export function WhatIfChat({ snap, onNavigateToHedge }: Props) {
             <p className="whitespace-pre-line">{m.text}</p>
 
             {/* Quantitative Breakdown Card for AI responses */}
-            {m.data && (
+            {m.data && m.data.impactAvailable && (
               <div className="mt-2 pt-2 border-t border-edge flex flex-col gap-2">
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11.5px] bg-panel p-2.5 rounded-lg border border-edge">
                   <div>
@@ -200,6 +200,17 @@ export function WhatIfChat({ snap, onNavigateToHedge }: Props) {
                     </button>
                   )}
                 </div>
+
+                {/* Provenance for the impact math — measured volume and vol,
+                    named so the numbers above are not mistaken for a model's
+                    guess or a hardcoded market size. */}
+                <p className="text-[10px] text-faint leading-snug">
+                  Impact vs {fmtUsd(m.data.advUsd ?? 0)} measured 24h spot volume
+                  {m.data.advSources.length > 0 ? ` (${m.data.advSources.join(" + ")})` : ""} at{" "}
+                  {(m.data.dailyVolPct ?? 0).toFixed(2)}% daily realized vol
+                  {m.data.volSource ? ` (${m.data.volSource})` : ""} — two venues, not global volume,
+                  so the move is an over-estimate.
+                </p>
 
                 <div className="text-[10px] font-mono text-faint flex items-center justify-between pt-0.5">
                   {m.data.source === "gonka" ? <><span>Gonka Trace ID: {m.data.gonkaRequestId}</span><span>Model: {m.data.modelUsed}</span></> : <span>Deterministic market-impact calculation · no model call</span>}

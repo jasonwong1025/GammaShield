@@ -8,7 +8,7 @@
 
 ## 📌 High-Level System Overview
 
-GammaShield is a **Real-Time Crypto Options Market Fragility Engine & Autonomous Hedging Agent** that protects retail users and DAOs against cascading dealer-hedging crashes (Gamma Squeezes).
+GammaShield is a **Real-Time Crypto Options Market Fragility Engine & Autonomous AI Agent** that protects retail users and DAOs against cascading dealer-hedging crashes (Gamma Squeezes).
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -188,6 +188,6 @@ AI can recommend a hedge, but the trade panel refreshes the listed order, valida
 - [x] **Build "What-If" Conversational Scenario Copilot** (`components/WhatIfChat.tsx` & `/api/whatif/route.ts`)
 - [x] **Build user-signed live hedge flow** (`components/TradePanel.tsx` & `/api/quote/route.ts`)
 - [x] **Build Autonomous Execution Terminal Component** (`components/ExecutionTerminal.tsx`)
-- [x] **Build Multi-View Tab Navigation** (`components/TopBar.tsx`, `components/CopilotView.tsx`, `components/HedgeView.tsx`, `components/Dashboard.tsx`)
+- [x] **Build Multi-View Tab Navigation** (`components/TopBar.tsx`, `components/CopilotWidget.tsx`, `components/AgentView.tsx`, `components/Dashboard.tsx`)
 - [x] **Create Gonka Smoke Test Script** (`scripts/smoke-test.mjs`)
 - [x] **Verify End-to-End Type Safety & Live API Routes**

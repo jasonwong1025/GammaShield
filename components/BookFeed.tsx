@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useRef, useState } from "react";
 import type { FeedRow } from "@/lib/snapshot";
-import type { AssetSnapshot } from "@/lib/engine";
+import type { AssetSnapshot, StrikeGex } from "@/lib/engine";
 import type { Asset } from "@/lib/assets";
 import type { AiRiskAssessment } from "@/lib/aiRisk";
 import {
@@ -13,10 +13,16 @@ import {
   fmtUsd,
   riskColor,
 } from "@/lib/format";
+import { ContractRiskPanel, RiskScoreChip } from "./ContractRiskPanel";
+import { MarketImpactPanel } from "./MarketImpactPanel";
 import { ShadowPositions } from "./ShadowPositions";
 import { ThetanutsPositions } from "./ThetanutsPositions";
 import { EXECUTION_NETWORK } from "@/lib/explorer";
 import { useExecutionNetwork } from "./ExecutionNetworkProvider";
+
+type BookCardTab = "book" | "expiries" | "positions";
+
+const ALL_TABS: readonly BookCardTab[] = ["book", "expiries", "positions"];
 
 export function BookCard({
   rows,
@@ -24,6 +30,9 @@ export function BookCard({
   asset,
   live,
   spot,
+  volBaseline,
+  fill = false,
+  tabs = ALL_TABS,
 }: {
   rows: FeedRow[];
   snap: AssetSnapshot;
@@ -32,51 +41,73 @@ export function BookCard({
   live: boolean;
   /** Live spot price — informational context for the AI risk read. */
   spot: number;
+  /** Realized-vol reference behind the IV component of contract risk. */
+  volBaseline?: { vol: number; windowDays: number; lookbackDays: number; source: string } | null;
+  /** True when this card is the only thing in its column and should grow to
+   *  fill it, instead of capping its list at a fixed height. On the
+   *  Dashboard, BookCard is one of three stacked cards, so the cap keeps
+   *  it from crowding out its siblings; on the AI Agent tab it is alone in
+   *  the side rail, and the cap used to leave the rest of the column blank. */
+  fill?: boolean;
+  /** Which tabs this instance offers. Defaults to all three; the Dashboard
+   *  and AI Agent tab each surface a different subset of this same card. */
+  tabs?: readonly BookCardTab[];
 }) {
-  const [tab, setTab] = useState<"book" | "expiries" | "positions">("book");
+  const [tab, setTab] = useState<BookCardTab>(tabs[0]);
   const [positionsRefresh, setPositionsRefresh] = useState(0);
   const { network } = useExecutionNetwork();
   useEffect(() => {
     const showPosition = () => {
       setPositionsRefresh((value) => value + 1);
-      setTab("positions");
+      if (tabs.includes("positions")) setTab("positions");
     };
     window.addEventListener("thetanuts-position-changed", showPosition);
     return () => window.removeEventListener("thetanuts-position-changed", showPosition);
-  }, []);
+  }, [tabs]);
   const filtered = rows.filter((r) => r.asset === asset);
   const bookLabel = live ? "OptionBook (live)" : "Modeled book";
+  const labelOf: Record<BookCardTab, string> = {
+    book: bookLabel,
+    expiries: "Expiries",
+    positions: "My positions",
+  };
 
   return (
-    <section className="card flex flex-col min-h-0 overflow-hidden" aria-label={bookLabel}>
+    <section className={`card flex flex-col min-h-0 overflow-hidden ${fill ? "flex-1" : ""}`} aria-label={bookLabel}>
       <div className="flex items-center justify-between px-5 pt-4 pb-3">
-        <div className="flex items-center gap-1 rounded-lg bg-panel2 p-0.5">
-          {(
-            [
-              ["book", bookLabel],
-              ["expiries", "Expiries"],
-              ["positions", "My positions"],
-            ] as const
-          ).map(([key, label]) => (
-            <button
-              key={key}
-              onClick={() => setTab(key)}
-              aria-pressed={tab === key}
-              className={`px-3 h-7 rounded-md text-[12px] font-medium transition ${
-                tab === key ? "bg-panel3 text-fg" : "text-muted hover:text-fg"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        <span className="flex items-center gap-1.5 text-[11px] text-muted">
+        {tabs.length > 1 ? (
+          <div className="flex items-center gap-1 rounded-lg bg-panel2 p-0.5">
+            {tabs.map((key) => (
+              <button
+                key={key}
+                onClick={() => setTab(key)}
+                aria-pressed={tab === key}
+                className={`h-7 whitespace-nowrap rounded-md px-2.5 text-[12px] font-medium transition ${
+                  tab === key ? "bg-panel3 text-fg" : "text-muted hover:text-fg"
+                }`}
+              >
+                {labelOf[key]}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <span className="text-[12px] font-medium text-fg">{labelOf[tab]}</span>
+        )}
+        <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[11px] text-muted">
           {live && <span className="live-dot inline-block size-1.5 rounded-full bg-calm" />}
           {tab === "book" ? `${filtered.length} orders` : tab === "expiries" ? `${snap.expiries.length} dates` : EXECUTION_NETWORK[network].label}
         </span>
       </div>
 
-      {tab === "book" ? <BookTable rows={filtered} asset={asset} spot={spot} /> : tab === "expiries" ? <Expiries snap={snap} /> : network === "mainnet" ? <ThetanutsPositions asset={asset} refreshKey={positionsRefresh} /> : <ShadowPositions asset={asset} />}
+      {tab === "book" ? (
+        <BookTable rows={filtered} asset={asset} spot={spot} volBaseline={volBaseline} gexByStrike={snap.gexByStrike} fill={fill} />
+      ) : tab === "expiries" ? (
+        <Expiries snap={snap} fill={fill} />
+      ) : network === "mainnet" ? (
+        <ThetanutsPositions asset={asset} refreshKey={positionsRefresh} fill={fill} />
+      ) : (
+        <ShadowPositions asset={asset} fill={fill} />
+      )}
     </section>
   );
 }
@@ -98,7 +129,23 @@ function rowKey(r: FeedRow) {
   return `${r.maker}-${r.strike}-${r.expiryTs}-${r.structure}`;
 }
 
-function BookTable({ rows, asset, spot }: { rows: FeedRow[]; asset: string; spot: number }) {
+function BookTable({
+  rows,
+  asset,
+  spot,
+  volBaseline,
+  gexByStrike,
+  fill = false,
+}: {
+  rows: FeedRow[];
+  asset: string;
+  spot: number;
+  volBaseline?: { vol: number; windowDays: number; lookbackDays: number; source: string } | null;
+  /** Strike ladder for this asset — one array shared by every row's market
+   *  impact estimate, rather than repeated on all 200 of them. */
+  gexByStrike: StrikeGex[];
+  fill?: boolean;
+}) {
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   useEffect(() => {
     const id = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 30_000);
@@ -163,7 +210,7 @@ function BookTable({ rows, asset, spot }: { rows: FeedRow[]; asset: string; spot
   };
 
   return (
-    <div className="feed-scroll overflow-auto grow min-h-0 max-h-[430px]">
+    <div className={`feed-scroll overflow-auto grow min-h-0 ${fill ? "" : "max-h-[430px]"}`}>
       <table className="w-full min-w-[560px] text-[12px]">
         <thead className="sticky top-0 bg-panel z-10">
           <tr className="text-[10px] text-faint">
@@ -173,7 +220,10 @@ function BookTable({ rows, asset, spot }: { rows: FeedRow[]; asset: string; spot
             <th className="text-right font-medium px-2 py-1.5">Premium</th>
             <th className="text-right font-medium px-2 py-1.5">Delta</th>
             <th className="text-right font-medium px-2 py-1.5">IV</th>
-            <th className="text-right font-medium px-4 py-1.5">Size</th>
+            <th className="text-right font-medium px-2 py-1.5">Size</th>
+            <th className="text-right font-medium px-4 py-1.5" title="Per-contract risk, 0-100">
+              Risk
+            </th>
           </tr>
         </thead>
         <tbody className="font-mono text-[11px]">
@@ -214,13 +264,18 @@ function BookTable({ rows, asset, spot }: { rows: FeedRow[]; asset: string; spot
                   </td>
                   <td className="px-2 py-1.5 text-right num text-muted">{fmtDelta(r.delta)}</td>
                   <td className="px-2 py-1.5 text-right num text-muted">{fmtIv(r.iv)}</td>
-                  <td className="px-4 py-1.5 text-right num text-fg">{fmtUsd(r.collateralUsd)}</td>
+                  <td className="px-2 py-1.5 text-right num text-fg">{fmtUsd(r.collateralUsd)}</td>
+                  <td className="px-4 py-1.5 text-right">
+                    <RiskScoreChip risk={r.risk} />
+                  </td>
                 </tr>
                 {expanded && (
                   <tr key={`${key}-detail`} className="border-t border-edge/50">
-                    <td colSpan={7} className="px-4 py-3 bg-panel2/40 font-sans">
+                    <td colSpan={8} className="px-4 py-3 bg-panel2/40 font-sans">
                       <RowRiskDetail
                         row={r}
+                        volBaseline={volBaseline}
+                        gexByStrike={gexByStrike}
                         aiRisk={aiRisk}
                         aiRiskLoading={aiRiskLoading}
                         aiRiskError={aiRiskError}
@@ -234,7 +289,7 @@ function BookTable({ rows, asset, spot }: { rows: FeedRow[]; asset: string; spot
           })}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={7} className="px-5 py-10 text-center text-faint font-sans">
+              <td colSpan={8} className="px-5 py-10 text-center text-faint font-sans">
                 No live {asset} orders on the book right now.
               </td>
             </tr>
@@ -255,18 +310,21 @@ function fmtGreek(v: number | null, digits: number) {
 // manual-only — /api/risk is only ever called from the button below).
 function RowRiskDetail({
   row,
+  volBaseline,
+  gexByStrike,
   aiRisk,
   aiRiskLoading,
   aiRiskError,
   onGetAiRead,
 }: {
   row: FeedRow;
+  volBaseline?: { vol: number; windowDays: number; lookbackDays: number; source: string } | null;
+  gexByStrike: StrikeGex[];
   aiRisk: AiRiskAssessment | null;
   aiRiskLoading: boolean;
   aiRiskError: string | null;
   onGetAiRead: () => void;
 }) {
-  const { impact } = row;
   return (
     <div className="flex flex-col gap-2.5 text-[12px]" onClick={(e) => e.stopPropagation()}>
       <div className="grid grid-cols-5 gap-x-3 gap-y-1 num text-muted">
@@ -277,26 +335,23 @@ function RowRiskDetail({
         <span>Rho <span className="text-fg">{fmtGreek(row.rho, 2)}</span></span>
       </div>
 
-      {impact ? (
-        <div className="rounded-lg border border-edge bg-panel p-2.5 flex flex-col gap-1.5">
-          <div className="flex items-center justify-between">
-            <span className="text-muted">Amplification risk impact</span>
-            <span className="num font-semibold">
-              <span style={{ color: riskColor(impact.scoreBefore) }}>{impact.scoreBefore}</span>
-              <span className="text-faint"> → </span>
-              <span style={{ color: riskColor(impact.scoreAfter) }}>{impact.scoreAfter}</span>
-            </span>
-          </div>
-          <p className="text-faint leading-relaxed">
-            Filling this order&apos;s full size pushes dealers shorter gamma: net GEX{" "}
-            {fmtUsd(impact.netGexBefore)} → {fmtUsd(impact.netGexAfter)} per 1% move
-            {impact.regimeAfter !== impact.regimeBefore
-              ? ` — regime flips to ${impact.regimeAfter}.`
-              : ` (${impact.regimeAfter} regime).`}
-          </p>
+      {row.risk ? (
+        <ContractRiskPanel risk={row.risk} volBaseline={volBaseline} />
+      ) : (
+        <p className="text-faint">
+          {row.strikes.length > 1
+            ? "Multi-leg order — the pricing API returns one blended premium and greeks block, so per-leg contract risk is not scored."
+            : "No greeks or premium on this order — contract risk unavailable."}
+        </p>
+      )}
 
-          <div className="border-t border-edge/60 my-0.5" />
-
+      {row.impactBasis ? (
+        <MarketImpactPanel
+          basis={{ ...row.impactBasis, gexByStrike }}
+          defaultContracts={row.collateralUsd / Math.max(row.strike, 1)}
+          asset={row.asset}
+        >
+          <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between">
             <span className="text-muted">
               AI second opinion <span className="text-faint">(GonkaRouter)</span>
@@ -330,15 +385,16 @@ function RowRiskDetail({
               )}
             </>
           )}
-        </div>
+          </div>
+        </MarketImpactPanel>
       ) : (
-        <p className="text-faint">No greeks on this order — risk impact unavailable.</p>
+        <p className="text-faint">No greeks on this order — market impact unavailable.</p>
       )}
     </div>
   );
 }
 
-function Expiries({ snap }: { snap: AssetSnapshot }) {
+function Expiries({ snap, fill = false }: { snap: AssetSnapshot; fill?: boolean }) {
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   useEffect(() => {
     const id = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1_000);
@@ -349,7 +405,7 @@ function Expiries({ snap }: { snap: AssetSnapshot }) {
   const maxNotional = Math.max(...top.map((e) => e.notionalUsd), 1);
 
   return (
-    <div className="feed-scroll overflow-y-auto grow min-h-0 max-h-[430px] px-5 pb-4 flex flex-col gap-2.5">
+    <div className={`feed-scroll overflow-y-auto grow min-h-0 ${fill ? "" : "max-h-[430px]"} px-5 pb-4 flex flex-col gap-2.5`}>
       {top.map((e) => {
         const urgent = e.daysOut < 2;
         return (

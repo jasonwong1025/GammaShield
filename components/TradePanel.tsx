@@ -24,6 +24,8 @@ import type { ShadowQuote } from "@/lib/shadow";
 import { wagmiConfig } from "@/lib/wagmi";
 import { erc20Abi, useReadErc20BalanceOf } from "@/lib/generated/contracts";
 import { fmtContracts, fmtExpiryDate, fmtIv, fmtStrike, fmtUsd, riskColor } from "@/lib/format";
+import { ContractRiskPanel } from "./ContractRiskPanel";
+import { MarketImpactPanel } from "./MarketImpactPanel";
 import { ExplorerLink } from "./ExplorerLink";
 import { useExecutionNetwork } from "./ExecutionNetworkProvider";
 import { ensureWalletChain } from "@/lib/walletChain";
@@ -544,7 +546,8 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
   );
   const quoteInSync = !!quote && quote.requestedPeriod === period;
   const configured = validAmount && !!quote && quote.contracts > 0;
-  const impact = configured && quoteInSync ? quote.impact : null;
+  const impactBasis = configured && quoteInSync ? quote.impactBasis : null;
+  const contractRisk = configured && quoteInSync ? quote.risk : null;
   const currentTradeKey = quote ? `${asset}:${side}:${quote.strike}:${quote.expiryTs}:${quote.contracts}` : null;
   const aiRiskCurrent = aiRisk && aiRiskKey === currentTradeKey ? aiRisk : null;
   const busy =
@@ -773,32 +776,20 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
         </p>
       )}
 
-      {/* Amplification impact — only once the trade is fully configured. One
-          card: the always-on heuristic (lib/engine.ts) up top, then an
-          optional AI second opinion (GonkaRouter, manual — see fetchAiRisk)
-          below a divider. Kept in one card, not two, so it reads as "one
-          risk readout, with an optional AI annotation" rather than two
-          competing scores. */}
-      {impact && (
-        <div className="rounded-md border border-edge p-3 text-[12px] flex flex-col gap-1.5">
-          <div className="flex items-center justify-between">
-            <span className="text-muted">Amplification risk impact</span>
-            <span className="num font-semibold">
-              <span style={{ color: riskColor(impact.scoreBefore) }}>{impact.scoreBefore}</span>
-              <span className="text-faint"> → </span>
-              <span style={{ color: riskColor(impact.scoreAfter) }}>{impact.scoreAfter}</span>
-            </span>
-          </div>
-          <p className="text-faint leading-relaxed">
-            Buying pushes dealers shorter gamma: net GEX{" "}
-            {fmtUsd(impact.netGexBefore)} → {fmtUsd(impact.netGexAfter)} per 1% move
-            {impact.regimeAfter !== impact.regimeBefore
-              ? ` — regime flips to ${impact.regimeAfter}.`
-              : ` (${impact.regimeAfter} regime).`}
-          </p>
+      {/* Per-contract risk for the option itself — a separate question from
+          the book-level amplification impact below, which is about what this
+          fill does to everyone else. */}
+      {contractRisk && <ContractRiskPanel risk={contractRisk} />}
 
-          <div className="border-t border-edge/60 my-0.5" />
-
+      {/* Market impact — the spot flow this fill forces dealers to trade, and
+          the size at which that would start to register (lib/marketImpact.ts).
+          Replaces the old score-before/after card. The AI second opinion
+          (GonkaRouter, manual — see fetchAiRisk) rides below a divider inside
+          the same card, so it still reads as "one risk readout, with an
+          optional AI annotation" rather than two competing scores. */}
+      {impactBasis && quote && (
+        <MarketImpactPanel basis={impactBasis} defaultContracts={quote.contracts} asset={asset}>
+          <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between">
             <span className="text-muted">
               AI second opinion <span className="text-faint">(GonkaRouter)</span>
@@ -832,7 +823,8 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
               )}
             </>
           )}
-        </div>
+          </div>
+        </MarketImpactPanel>
       )}
 
       {/* Insufficient-balance warning — checked against whichever wallet is

@@ -9,7 +9,7 @@ import { PriceChart } from "./PriceChart";
 import { RiskView } from "./RiskView";
 import { BookCard } from "./BookFeed";
 import { CopilotWidget } from "./CopilotWidget";
-import { HedgeView } from "./HedgeView";
+import { AgentView } from "./AgentView";
 import { ExecutionNetworkProvider } from "./ExecutionNetworkProvider";
 import { ALL_ASSETS, isOptionsAsset, type Asset } from "@/lib/assets";
 
@@ -132,7 +132,15 @@ export function Dashboard() {
                   <div className="grid grow grid-cols-1 xl:grid-cols-[1fr_380px] gap-px bg-edge">
                     <div className="flex flex-col gap-px min-w-0">
                       <PriceChart asset={asset} flip={a.flipStrike} livePrice={livePrice} />
-                      <BookCard rows={snap.feed} snap={a} asset={asset} live={live} spot={livePrice} />
+                      <BookCard
+                        rows={snap.feed}
+                        snap={a}
+                        asset={asset}
+                        live={live}
+                        spot={livePrice}
+                        volBaseline={snap.volBaseline?.[asset] ?? null}
+                        tabs={["book", "expiries"]}
+                      />
                       <RiskView snap={a} />
                       <div className="grow bg-panel" />
                     </div>
@@ -144,9 +152,9 @@ export function Dashboard() {
                   </div>
                 )}
 
-                {/* TAB 2: Autonomous Thetanuts Hedging Workspace */}
-                {activeTab === "hedge" && (
-                  <HedgeView
+                {/* TAB 2: AI agent workspace — limits, policy, monitoring */}
+                {activeTab === "agent" && (
+                  <AgentView
                     snap={a}
                     feed={snap.feed}
                     asset={asset}
@@ -162,8 +170,8 @@ export function Dashboard() {
 
       <CopilotWidget
         snap={a}
-        onNavigateToHedge={() => {
-          setActiveTab("hedge");
+        onNavigateToAgent={() => {
+          setActiveTab("agent");
         }}
       />
     </div>

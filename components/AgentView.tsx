@@ -4,7 +4,6 @@ import type { AssetSnapshot } from "@/lib/engine";
 import type { FeedRow } from "@/lib/snapshot";
 import type { Asset } from "@/lib/assets";
 import { PolicyAccountPanel } from "./PolicyAccountPanel";
-import { ScorePanel } from "./ScorePanel";
 import { BookCard } from "./BookFeed";
 
 type Props = {
@@ -15,20 +14,18 @@ type Props = {
   spot: number;
 };
 
-export function HedgeView({ snap, feed, asset, live, spot }: Props) {
+export function AgentView({ snap, feed, asset, live, spot }: Props) {
   return (
-    <div className="grid grow grid-cols-1 xl:grid-cols-[1fr_380px] gap-px bg-edge">
+    <div className="grid grow grid-cols-1 xl:grid-cols-[7fr_3fr] gap-px bg-edge">
       {/* Main Column: Policy account setup */}
       <div className="flex flex-col gap-px min-w-0">
-        <PolicyAccountPanel />
+        <PolicyAccountPanel spot={spot} />
         <div className="grow bg-panel" />
       </div>
 
-      {/* Side Rail: Risk Score & Live Options Book */}
+      {/* Side Rail: Live Options Book, filling the column now that it is alone */}
       <div className="flex flex-col gap-px min-w-0">
-        <ScorePanel snap={snap} />
-        <BookCard rows={feed} snap={snap} asset={asset} live={live} spot={spot} />
-        <div className="grow bg-panel" />
+        <BookCard rows={feed} snap={snap} asset={asset} live={live} spot={spot} fill tabs={["positions"]} />
       </div>
     </div>
   );

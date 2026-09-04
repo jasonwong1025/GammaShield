@@ -68,6 +68,11 @@ export const mandateAccountAbi = [
         components: [
           { name: 'mandateHash', internalType: 'bytes32', type: 'bytes32' },
           { name: 'riskScoreBps', internalType: 'uint16', type: 'uint16' },
+          {
+            name: 'positionRiskScoreBps',
+            internalType: 'uint16',
+            type: 'uint16',
+          },
           { name: 'observedAt', internalType: 'uint64', type: 'uint64' },
           { name: 'validUntil', internalType: 'uint64', type: 'uint64' },
           {
@@ -106,12 +111,154 @@ export const mandateAccountAbi = [
     inputs: [
       { name: 'hash', internalType: 'bytes32', type: 'bytes32' },
       {
+        name: 'attestation',
+        internalType: 'struct MandateAccount.ShadowCloseAttestation',
+        type: 'tuple',
+        components: [
+          { name: 'mandateHash', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'closeId', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'positionId', internalType: 'uint256', type: 'uint256' },
+          { name: 'contractsE6', internalType: 'uint128', type: 'uint128' },
+          { name: 'proceedsUsdc', internalType: 'uint128', type: 'uint128' },
+          { name: 'observedAt', internalType: 'uint64', type: 'uint64' },
+          { name: 'validUntil', internalType: 'uint64', type: 'uint64' },
+        ],
+      },
+      { name: 'attestationSignature', internalType: 'bytes', type: 'bytes' },
+      {
+        name: 'close',
+        internalType: 'struct IShadowFill.ShadowClose',
+        type: 'tuple',
+        components: [
+          { name: 'closeId', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'positionId', internalType: 'uint256', type: 'uint256' },
+          { name: 'seller', internalType: 'address', type: 'address' },
+          { name: 'validUntil', internalType: 'uint64', type: 'uint64' },
+          { name: 'contractsE6', internalType: 'uint128', type: 'uint128' },
+          { name: 'proceedsUsdc', internalType: 'uint128', type: 'uint128' },
+        ],
+      },
+      { name: 'closeSignature', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'executeShadowClose',
+    outputs: [
+      { name: 'proceedsUsdc', internalType: 'uint128', type: 'uint128' },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'hash', internalType: 'bytes32', type: 'bytes32' },
+      {
+        name: 'request',
+        internalType: 'struct MandateAccount.RollRequest',
+        type: 'tuple',
+        components: [
+          {
+            name: 'risk',
+            internalType: 'struct MandateAccount.RiskAttestation',
+            type: 'tuple',
+            components: [
+              { name: 'mandateHash', internalType: 'bytes32', type: 'bytes32' },
+              { name: 'riskScoreBps', internalType: 'uint16', type: 'uint16' },
+              {
+                name: 'positionRiskScoreBps',
+                internalType: 'uint16',
+                type: 'uint16',
+              },
+              { name: 'observedAt', internalType: 'uint64', type: 'uint64' },
+              { name: 'validUntil', internalType: 'uint64', type: 'uint64' },
+              {
+                name: 'persistenceSeconds',
+                internalType: 'uint64',
+                type: 'uint64',
+              },
+            ],
+          },
+          { name: 'riskSignature', internalType: 'bytes', type: 'bytes' },
+          {
+            name: 'attestation',
+            internalType: 'struct MandateAccount.ShadowCloseAttestation',
+            type: 'tuple',
+            components: [
+              { name: 'mandateHash', internalType: 'bytes32', type: 'bytes32' },
+              { name: 'closeId', internalType: 'bytes32', type: 'bytes32' },
+              { name: 'positionId', internalType: 'uint256', type: 'uint256' },
+              { name: 'contractsE6', internalType: 'uint128', type: 'uint128' },
+              {
+                name: 'proceedsUsdc',
+                internalType: 'uint128',
+                type: 'uint128',
+              },
+              { name: 'observedAt', internalType: 'uint64', type: 'uint64' },
+              { name: 'validUntil', internalType: 'uint64', type: 'uint64' },
+            ],
+          },
+          {
+            name: 'attestationSignature',
+            internalType: 'bytes',
+            type: 'bytes',
+          },
+          {
+            name: 'close',
+            internalType: 'struct IShadowFill.ShadowClose',
+            type: 'tuple',
+            components: [
+              { name: 'closeId', internalType: 'bytes32', type: 'bytes32' },
+              { name: 'positionId', internalType: 'uint256', type: 'uint256' },
+              { name: 'seller', internalType: 'address', type: 'address' },
+              { name: 'validUntil', internalType: 'uint64', type: 'uint64' },
+              { name: 'contractsE6', internalType: 'uint128', type: 'uint128' },
+              {
+                name: 'proceedsUsdc',
+                internalType: 'uint128',
+                type: 'uint128',
+              },
+            ],
+          },
+          { name: 'closeSignature', internalType: 'bytes', type: 'bytes' },
+          {
+            name: 'quote',
+            internalType: 'struct IShadowFill.ShadowQuote',
+            type: 'tuple',
+            components: [
+              { name: 'fillId', internalType: 'bytes32', type: 'bytes32' },
+              { name: 'sourceHash', internalType: 'bytes32', type: 'bytes32' },
+              { name: 'asset', internalType: 'bytes32', type: 'bytes32' },
+              { name: 'buyer', internalType: 'address', type: 'address' },
+              { name: 'isCall', internalType: 'bool', type: 'bool' },
+              { name: 'strikeE8', internalType: 'uint128', type: 'uint128' },
+              { name: 'expiry', internalType: 'uint64', type: 'uint64' },
+              { name: 'validUntil', internalType: 'uint64', type: 'uint64' },
+              { name: 'contractsE6', internalType: 'uint128', type: 'uint128' },
+              { name: 'premiumUsdc', internalType: 'uint128', type: 'uint128' },
+            ],
+          },
+          { name: 'quoteSignature', internalType: 'bytes', type: 'bytes' },
+        ],
+      },
+    ],
+    name: 'executeShadowRoll',
+    outputs: [{ name: 'positionId', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'hash', internalType: 'bytes32', type: 'bytes32' },
+      {
         name: 'risk',
         internalType: 'struct MandateAccount.RiskAttestation',
         type: 'tuple',
         components: [
           { name: 'mandateHash', internalType: 'bytes32', type: 'bytes32' },
           { name: 'riskScoreBps', internalType: 'uint16', type: 'uint16' },
+          {
+            name: 'positionRiskScoreBps',
+            internalType: 'uint16',
+            type: 'uint16',
+          },
           { name: 'observedAt', internalType: 'uint64', type: 'uint64' },
           { name: 'validUntil', internalType: 'uint64', type: 'uint64' },
           {
@@ -180,6 +327,11 @@ export const mandateAccountAbi = [
           { name: 'maxTenorSeconds', internalType: 'uint64', type: 'uint64' },
           { name: 'riskThresholdBps', internalType: 'uint16', type: 'uint16' },
           {
+            name: 'positionRiskThresholdBps',
+            internalType: 'uint16',
+            type: 'uint16',
+          },
+          {
             name: 'persistenceSeconds',
             internalType: 'uint64',
             type: 'uint64',
@@ -192,6 +344,24 @@ export const mandateAccountAbi = [
           { name: 'validAfter', internalType: 'uint64', type: 'uint64' },
           { name: 'expiresAt', internalType: 'uint64', type: 'uint64' },
           { name: 'nonce', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'hash', internalType: 'bytes32', type: 'bytes32' }],
+    name: 'getRiskHistory',
+    outputs: [
+      {
+        name: 'samples',
+        internalType: 'struct MandateAccount.RiskSample[]',
+        type: 'tuple[]',
+        components: [
+          { name: 'observedAt', internalType: 'uint64', type: 'uint64' },
+          { name: 'bookScoreBps', internalType: 'uint16', type: 'uint16' },
+          { name: 'positionScoreBps', internalType: 'uint16', type: 'uint16' },
         ],
       },
     ],
@@ -241,6 +411,11 @@ export const mandateAccountAbi = [
           { name: 'maxTenorSeconds', internalType: 'uint64', type: 'uint64' },
           { name: 'riskThresholdBps', internalType: 'uint16', type: 'uint16' },
           {
+            name: 'positionRiskThresholdBps',
+            internalType: 'uint16',
+            type: 'uint16',
+          },
+          {
             name: 'persistenceSeconds',
             internalType: 'uint64',
             type: 'uint64',
@@ -285,6 +460,11 @@ export const mandateAccountAbi = [
         components: [
           { name: 'mandateHash', internalType: 'bytes32', type: 'bytes32' },
           { name: 'riskScoreBps', internalType: 'uint16', type: 'uint16' },
+          {
+            name: 'positionRiskScoreBps',
+            internalType: 'uint16',
+            type: 'uint16',
+          },
           { name: 'observedAt', internalType: 'uint64', type: 'uint64' },
           { name: 'validUntil', internalType: 'uint64', type: 'uint64' },
           {
@@ -329,6 +509,11 @@ export const mandateAccountAbi = [
           { name: 'minTenorSeconds', internalType: 'uint64', type: 'uint64' },
           { name: 'maxTenorSeconds', internalType: 'uint64', type: 'uint64' },
           { name: 'riskThresholdBps', internalType: 'uint16', type: 'uint16' },
+          {
+            name: 'positionRiskThresholdBps',
+            internalType: 'uint16',
+            type: 'uint16',
+          },
           {
             name: 'persistenceSeconds',
             internalType: 'uint64',
@@ -381,13 +566,28 @@ export const mandateAccountAbi = [
   {
     type: 'function',
     inputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    name: 'riskObservationCount',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
     name: 'riskStates',
     outputs: [
       { name: 'scoreBps', internalType: 'uint16', type: 'uint16' },
+      { name: 'positionScoreBps', internalType: 'uint16', type: 'uint16' },
       { name: 'eligibleSince', internalType: 'uint64', type: 'uint64' },
       { name: 'observedAt', internalType: 'uint64', type: 'uint64' },
       { name: 'validUntil', internalType: 'uint64', type: 'uint64' },
     ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'shadowCloseDomainSeparator',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
     stateMutability: 'view',
   },
   {
@@ -432,6 +632,37 @@ export const mandateAccountAbi = [
       { name: 'validationData', internalType: 'uint256', type: 'uint256' },
     ],
     stateMutability: 'nonpayable',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'mandateHash',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: true,
+      },
+      {
+        name: 'closeId',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: true,
+      },
+      {
+        name: 'positionId',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'proceedsUsdc',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'MandateClosed',
   },
   {
     type: 'event',
@@ -533,7 +764,38 @@ export const mandateAccountAbi = [
         indexed: true,
       },
       {
+        name: 'closedPositionId',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'openedPositionId',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'MandateRolled',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'mandateHash',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: true,
+      },
+      {
         name: 'scoreBps',
+        internalType: 'uint16',
+        type: 'uint16',
+        indexed: false,
+      },
+      {
+        name: 'positionScoreBps',
         internalType: 'uint16',
         type: 'uint16',
         indexed: false,
@@ -553,6 +815,25 @@ export const mandateAccountAbi = [
     ],
     name: 'RiskObserved',
   },
+  { type: 'error', inputs: [], name: 'EntryPointOnly' },
+  { type: 'error', inputs: [], name: 'InvalidClose' },
+  { type: 'error', inputs: [], name: 'InvalidMandate' },
+  { type: 'error', inputs: [], name: 'InvalidRiskAttestation' },
+  { type: 'error', inputs: [], name: 'InvalidRiskObservation' },
+  { type: 'error', inputs: [], name: 'InvalidRoll' },
+  { type: 'error', inputs: [], name: 'MandateAlreadyRegistered' },
+  { type: 'error', inputs: [], name: 'MandateInactive' },
+  { type: 'error', inputs: [], name: 'MandateIsRevoked' },
+  { type: 'error', inputs: [], name: 'MandateUnavailable' },
+  { type: 'error', inputs: [], name: 'OwnerOnly' },
+  { type: 'error', inputs: [], name: 'QuoteViolatesMandate' },
+  { type: 'error', inputs: [], name: 'RiskNotPersistent' },
+  { type: 'error', inputs: [], name: 'RiskObservationStale' },
+  { type: 'error', inputs: [], name: 'ThetanutsQuoteViolatesMandate' },
+  { type: 'error', inputs: [], name: 'TokenCallFailed' },
+  { type: 'error', inputs: [], name: 'TotalCapExceeded' },
+  { type: 'error', inputs: [], name: 'ZeroAddress' },
+  { type: 'error', inputs: [], name: 'ZeroTarget' },
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -628,6 +909,8 @@ export const mandateAccountFactoryAbi = [
     ],
     name: 'AccountCreated',
   },
+  { type: 'error', inputs: [], name: 'ZeroAddress' },
+  { type: 'error', inputs: [], name: 'ZeroOwner' },
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -648,6 +931,37 @@ export const shadowOptionBookAbi = [
     inputs: [],
     name: 'attester',
     outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: 'close',
+        internalType: 'struct ShadowOptionBook.ShadowClose',
+        type: 'tuple',
+        components: [
+          { name: 'closeId', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'positionId', internalType: 'uint256', type: 'uint256' },
+          { name: 'seller', internalType: 'address', type: 'address' },
+          { name: 'validUntil', internalType: 'uint64', type: 'uint64' },
+          { name: 'contractsE6', internalType: 'uint128', type: 'uint128' },
+          { name: 'proceedsUsdc', internalType: 'uint128', type: 'uint128' },
+        ],
+      },
+      { name: 'signature', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'closeShadow',
+    outputs: [
+      { name: 'proceedsUsdc', internalType: 'uint128', type: 'uint128' },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    name: 'closedAt',
+    outputs: [{ name: '', internalType: 'uint64', type: 'uint64' }],
     stateMutability: 'view',
   },
   {
@@ -716,9 +1030,23 @@ export const shadowOptionBookAbi = [
   {
     type: 'function',
     inputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    name: 'usedCloseIds',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
     name: 'usedFillIds',
     outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
     stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'version',
+    outputs: [{ name: '', internalType: 'uint16', type: 'uint16' }],
+    stateMutability: 'pure',
   },
   {
     type: 'event',
@@ -781,6 +1109,43 @@ export const shadowOptionBookAbi = [
       },
     ],
     name: 'ShadowOrderFilled',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'positionId',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: true,
+      },
+      {
+        name: 'closeId',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: true,
+      },
+      {
+        name: 'seller',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      {
+        name: 'contractsE6',
+        internalType: 'uint128',
+        type: 'uint128',
+        indexed: false,
+      },
+      {
+        name: 'proceedsUsdc',
+        internalType: 'uint128',
+        type: 'uint128',
+        indexed: false,
+      },
+    ],
+    name: 'ShadowPositionClosed',
   },
 ] as const
 
@@ -933,6 +1298,15 @@ export const useReadMandateAccountGetMandate =
   })
 
 /**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"getRiskHistory"`
+ */
+export const useReadMandateAccountGetRiskHistory =
+  /*#__PURE__*/ createUseReadContract({
+    abi: mandateAccountAbi,
+    functionName: 'getRiskHistory',
+  })
+
+/**
  * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"isMandateRegistered"`
  */
 export const useReadMandateAccountIsMandateRegistered =
@@ -986,12 +1360,30 @@ export const useReadMandateAccountRiskDomainSeparator =
   })
 
 /**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"riskObservationCount"`
+ */
+export const useReadMandateAccountRiskObservationCount =
+  /*#__PURE__*/ createUseReadContract({
+    abi: mandateAccountAbi,
+    functionName: 'riskObservationCount',
+  })
+
+/**
  * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"riskStates"`
  */
 export const useReadMandateAccountRiskStates =
   /*#__PURE__*/ createUseReadContract({
     abi: mandateAccountAbi,
     functionName: 'riskStates',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"shadowCloseDomainSeparator"`
+ */
+export const useReadMandateAccountShadowCloseDomainSeparator =
+  /*#__PURE__*/ createUseReadContract({
+    abi: mandateAccountAbi,
+    functionName: 'shadowCloseDomainSeparator',
   })
 
 /**
@@ -1026,6 +1418,24 @@ export const useWriteMandateAccountExecuteShadow =
   /*#__PURE__*/ createUseWriteContract({
     abi: mandateAccountAbi,
     functionName: 'executeShadow',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"executeShadowClose"`
+ */
+export const useWriteMandateAccountExecuteShadowClose =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: mandateAccountAbi,
+    functionName: 'executeShadowClose',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"executeShadowRoll"`
+ */
+export const useWriteMandateAccountExecuteShadowRoll =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: mandateAccountAbi,
+    functionName: 'executeShadowRoll',
   })
 
 /**
@@ -1116,6 +1526,24 @@ export const useSimulateMandateAccountExecuteShadow =
   })
 
 /**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"executeShadowClose"`
+ */
+export const useSimulateMandateAccountExecuteShadowClose =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: mandateAccountAbi,
+    functionName: 'executeShadowClose',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"executeShadowRoll"`
+ */
+export const useSimulateMandateAccountExecuteShadowRoll =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: mandateAccountAbi,
+    functionName: 'executeShadowRoll',
+  })
+
+/**
  * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link mandateAccountAbi}__ and `functionName` set to `"executeThetanuts"`
  */
 export const useSimulateMandateAccountExecuteThetanuts =
@@ -1185,6 +1613,15 @@ export const useWatchMandateAccountEvent =
   /*#__PURE__*/ createUseWatchContractEvent({ abi: mandateAccountAbi })
 
 /**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link mandateAccountAbi}__ and `eventName` set to `"MandateClosed"`
+ */
+export const useWatchMandateAccountMandateClosedEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: mandateAccountAbi,
+    eventName: 'MandateClosed',
+  })
+
+/**
  * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link mandateAccountAbi}__ and `eventName` set to `"MandateExecuted"`
  */
 export const useWatchMandateAccountMandateExecutedEvent =
@@ -1227,6 +1664,15 @@ export const useWatchMandateAccountMandateRevokedEvent =
   /*#__PURE__*/ createUseWatchContractEvent({
     abi: mandateAccountAbi,
     eventName: 'MandateRevoked',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link mandateAccountAbi}__ and `eventName` set to `"MandateRolled"`
+ */
+export const useWatchMandateAccountMandateRolledEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: mandateAccountAbi,
+    eventName: 'MandateRolled',
   })
 
 /**
@@ -1334,6 +1780,15 @@ export const useReadShadowOptionBookAttester =
   })
 
 /**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link shadowOptionBookAbi}__ and `functionName` set to `"closedAt"`
+ */
+export const useReadShadowOptionBookClosedAt =
+  /*#__PURE__*/ createUseReadContract({
+    abi: shadowOptionBookAbi,
+    functionName: 'closedAt',
+  })
+
+/**
  * Wraps __{@link useReadContract}__ with `abi` set to __{@link shadowOptionBookAbi}__ and `functionName` set to `"collateral"`
  */
 export const useReadShadowOptionBookCollateral =
@@ -1370,6 +1825,15 @@ export const useReadShadowOptionBookPositions =
   })
 
 /**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link shadowOptionBookAbi}__ and `functionName` set to `"usedCloseIds"`
+ */
+export const useReadShadowOptionBookUsedCloseIds =
+  /*#__PURE__*/ createUseReadContract({
+    abi: shadowOptionBookAbi,
+    functionName: 'usedCloseIds',
+  })
+
+/**
  * Wraps __{@link useReadContract}__ with `abi` set to __{@link shadowOptionBookAbi}__ and `functionName` set to `"usedFillIds"`
  */
 export const useReadShadowOptionBookUsedFillIds =
@@ -1379,11 +1843,29 @@ export const useReadShadowOptionBookUsedFillIds =
   })
 
 /**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link shadowOptionBookAbi}__ and `functionName` set to `"version"`
+ */
+export const useReadShadowOptionBookVersion =
+  /*#__PURE__*/ createUseReadContract({
+    abi: shadowOptionBookAbi,
+    functionName: 'version',
+  })
+
+/**
  * Wraps __{@link useWriteContract}__ with `abi` set to __{@link shadowOptionBookAbi}__
  */
 export const useWriteShadowOptionBook = /*#__PURE__*/ createUseWriteContract({
   abi: shadowOptionBookAbi,
 })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link shadowOptionBookAbi}__ and `functionName` set to `"closeShadow"`
+ */
+export const useWriteShadowOptionBookCloseShadow =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: shadowOptionBookAbi,
+    functionName: 'closeShadow',
+  })
 
 /**
  * Wraps __{@link useWriteContract}__ with `abi` set to __{@link shadowOptionBookAbi}__ and `functionName` set to `"fillShadow"`
@@ -1399,6 +1881,15 @@ export const useWriteShadowOptionBookFillShadow =
  */
 export const useSimulateShadowOptionBook =
   /*#__PURE__*/ createUseSimulateContract({ abi: shadowOptionBookAbi })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link shadowOptionBookAbi}__ and `functionName` set to `"closeShadow"`
+ */
+export const useSimulateShadowOptionBookCloseShadow =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: shadowOptionBookAbi,
+    functionName: 'closeShadow',
+  })
 
 /**
  * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link shadowOptionBookAbi}__ and `functionName` set to `"fillShadow"`
@@ -1422,6 +1913,15 @@ export const useWatchShadowOptionBookShadowOrderFilledEvent =
   /*#__PURE__*/ createUseWatchContractEvent({
     abi: shadowOptionBookAbi,
     eventName: 'ShadowOrderFilled',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link shadowOptionBookAbi}__ and `eventName` set to `"ShadowPositionClosed"`
+ */
+export const useWatchShadowOptionBookShadowPositionClosedEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: shadowOptionBookAbi,
+    eventName: 'ShadowPositionClosed',
   })
 
 /**

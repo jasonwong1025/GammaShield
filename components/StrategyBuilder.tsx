@@ -74,7 +74,7 @@ export function StrategyBuilder({ asset }: { asset: Asset }) {
     setStrategyId(nextStrategies[0].id);
   };
 
-  const askGonka = async () => {
+  const askAgent = async () => {
     setAdviceLoading(true);
     setAdviceError(null);
     try {
@@ -128,8 +128,8 @@ export function StrategyBuilder({ asset }: { asset: Asset }) {
       </div>
 
       <div className="flex items-center justify-between gap-3">
-        <button onClick={askGonka} disabled={adviceLoading} className="h-9 rounded-lg border border-blue/40 px-3 text-[12px] font-semibold text-blue disabled:opacity-60">{adviceLoading ? "Reading market structure…" : "Ask Gonka"}</button>
-        {advice && <span className="text-right text-[11px] text-muted">{advice.source === "gonka" ? `Gonka advisory · ${Math.round(advice.confidence * 100)}% confidence` : "Deterministic fallback · Gonka unavailable"}</span>}
+        <button onClick={askAgent} disabled={adviceLoading} className="h-9 rounded-lg border border-blue/40 px-3 text-[12px] font-semibold text-blue disabled:opacity-60">{adviceLoading ? "Reading market structure…" : "Ask the agent"}</button>
+        {advice && <span className="text-right text-[11px] text-muted" title={advice.source === "gonka" && advice.model ? `Reasoned by ${advice.model} via GonkaRouter` : "Produced by the deterministic fallback, with no model involved"}>{advice.source === "gonka" ? `Agent suggestion · ${Math.round(advice.confidence * 100)}% confidence` : "Deterministic fallback · the model was unavailable"}</span>}
       </div>
       {advice && <p className="rounded-lg bg-panel2 p-3 text-[12px] text-muted">{advice.rationale}</p>}
       {adviceError && <p className="text-[12px] text-crit">{adviceError}</p>}

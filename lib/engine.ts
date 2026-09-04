@@ -70,6 +70,22 @@ function orderGex(o: NormalizedOrder, spot: number): number {
   return dealerSign * o.greeks.gamma * contracts * spot * spot * 0.01;
 }
 
+// Flip level: strike where the cumulative GEX profile crosses zero. Exported
+// so a what-if fill (lib/marketImpact.ts) can re-run the exact same walk over
+// a modified ladder instead of reimplementing it and drifting.
+export function flipStrikeOf(gexByStrike: { strike: number; gex: number }[]): number | null {
+  let running = 0;
+  let prevRunning = 0;
+  for (const row of [...gexByStrike].sort((a, b) => a.strike - b.strike)) {
+    prevRunning = running;
+    running += row.gex;
+    if (prevRunning !== 0 && Math.sign(prevRunning) !== Math.sign(running) && running !== 0) {
+      return row.strike;
+    }
+  }
+  return null;
+}
+
 export function computeAssetSnapshot(
   asset: Asset,
   spot: number,
@@ -89,19 +105,7 @@ export function computeAssetSnapshot(
   }
   const gexByStrike = [...byStrike.values()].sort((a, b) => a.strike - b.strike);
   const netGexUsd = gexByStrike.reduce((s, r) => s + r.gex, 0);
-
-  // Flip level: strike where the cumulative GEX profile crosses zero.
-  let flipStrike: number | null = null;
-  let running = 0;
-  let prevRunning = 0;
-  for (const row of gexByStrike) {
-    prevRunning = running;
-    running += row.gex;
-    if (prevRunning !== 0 && Math.sign(prevRunning) !== Math.sign(running) && running !== 0) {
-      flipStrike = row.strike;
-      break;
-    }
-  }
+  const flipStrike = flipStrikeOf(gexByStrike);
 
   // --- Expiry buckets ---
   const byExpiry = new Map<number, ExpiryBucket>();

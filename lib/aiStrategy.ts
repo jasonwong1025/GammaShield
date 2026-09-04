@@ -7,7 +7,7 @@ export type AiStrategySuggestion = {
   strategyId: string;
   rationale: string;
   confidence: number;
-  /** A deterministic result is clearly labeled in the UI; it never claims Gonka produced it. */
+  /** A deterministic result is clearly labeled in the UI; it never claims a model produced it. */
   source: "gonka" | "deterministic";
   model: string | null;
 };
@@ -57,7 +57,7 @@ function deterministicSuggestion(input: MarketInput): AiStrategySuggestion {
   return {
     sentiment,
     strategyId: STRATEGY_FOR_SENTIMENT[sentiment],
-    rationale: "Deterministic market-structure mapping only; Gonka did not return before the advisory timeout.",
+    rationale: "Deterministic market-structure mapping only; the reasoning model did not return before the advisory timeout.",
     confidence: 0,
     source: "deterministic",
     model: null,

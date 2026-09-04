@@ -23,6 +23,7 @@ const mandate: Mandate = {
   minTenorSeconds: 86_400,
   maxTenorSeconds: 2_419_200,
   riskThresholdBps: 7_500,
+  positionRiskThresholdBps: 7_000,
   persistenceSeconds: 300,
   minExecutionIntervalSeconds: 3_600,
   validAfter: 1_700_000_000,

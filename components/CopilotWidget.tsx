@@ -6,10 +6,10 @@ import { UnifiedCopilotChat } from "./UnifiedCopilotChat";
 
 type Props = {
   snap: AssetSnapshot | null;
-  onNavigateToHedge: (strike?: number) => void;
+  onNavigateToAgent: (strike?: number) => void;
 };
 
-export function CopilotWidget({ snap, onNavigateToHedge }: Props) {
+export function CopilotWidget({ snap, onNavigateToAgent }: Props) {
   const [open, setOpen] = useState(false);
 
   // Escape closes the panel, matching standard chat-widget behavior.
@@ -33,7 +33,7 @@ export function CopilotWidget({ snap, onNavigateToHedge }: Props) {
           <UnifiedCopilotChat
             snap={snap}
             onNavigateToHedge={(strike) => {
-              onNavigateToHedge(strike);
+              onNavigateToAgent(strike);
               setOpen(false);
             }}
             onClose={() => setOpen(false)}

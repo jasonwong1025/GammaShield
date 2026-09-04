@@ -19,7 +19,17 @@ interface IShadowFill {
         uint128 premiumUsdc;
     }
 
+    struct ShadowClose {
+        bytes32 closeId;
+        uint256 positionId;
+        address seller;
+        uint64 validUntil;
+        uint128 contractsE6;
+        uint128 proceedsUsdc;
+    }
+
     function fillShadow(ShadowQuote calldata quote, bytes calldata signature) external returns (uint256 positionId);
+    function closeShadow(ShadowClose calldata close, bytes calldata signature) external returns (uint128 proceedsUsdc);
 }
 
 interface IThetanutsOptionBook {
@@ -74,6 +84,11 @@ contract MandateAccount {
         uint64 minTenorSeconds;
         uint64 maxTenorSeconds;
         uint16 riskThresholdBps;
+        /// @notice Trigger for the PER-CONTRACT risk of a held position, which
+        /// arms close and roll. The book-level `riskThresholdBps` above arms a
+        /// hedge: a hedge is a bet on the market regime, an exit is a judgement
+        /// about one position, and they are not the same number.
+        uint16 positionRiskThresholdBps;
         uint64 persistenceSeconds;
         uint64 minExecutionIntervalSeconds;
         uint64 validAfter;
@@ -84,6 +99,11 @@ contract MandateAccount {
     struct RiskAttestation {
         bytes32 mandateHash;
         uint16 riskScoreBps;
+        /// @notice Per-contract risk of the position this observation is about,
+        /// or 0 when nothing is open. Deliberately not a trend: the account
+        /// keeps the samples and the trend is DERIVED from them, so the agent
+        /// never gets to assert a rate of change it could compute wrongly.
+        uint16 positionRiskScoreBps;
         uint64 observedAt;
         uint64 validUntil;
         uint64 persistenceSeconds;
@@ -98,6 +118,32 @@ contract MandateAccount {
         uint64 validUntil;
     }
 
+    /// @notice The agent's attestation that this exit mark is the one it
+    /// reviewed. Bound to a mandate so a close signed for one policy cannot be
+    /// replayed against another.
+    struct ShadowCloseAttestation {
+        bytes32 mandateHash;
+        bytes32 closeId;
+        uint256 positionId;
+        uint128 contractsE6;
+        uint128 proceedsUsdc;
+        uint64 observedAt;
+        uint64 validUntil;
+    }
+
+    /// @notice Everything one atomic roll needs, bundled so the call stays
+    /// within the legacy code generator's stack limit.
+    struct RollRequest {
+        RiskAttestation risk;
+        bytes riskSignature;
+        ShadowCloseAttestation attestation;
+        bytes attestationSignature;
+        IShadowFill.ShadowClose close;
+        bytes closeSignature;
+        IShadowFill.ShadowQuote quote;
+        bytes quoteSignature;
+    }
+
     struct MandateControl {
         bool paused;
         bool revoked;
@@ -105,12 +151,46 @@ contract MandateAccount {
         uint64 lastExecutionAt;
     }
 
+    /// @notice One observation, as recorded. Kept on-chain because no
+    /// off-chain store outlives a worker restart, and a trend computed from
+    /// samples the agent could have replaced at will is not evidence.
+    struct RiskSample {
+        uint64 observedAt;
+        uint16 bookScoreBps;
+        uint16 positionScoreBps;
+    }
+
     struct RiskState {
         uint16 scoreBps;
+        uint16 positionScoreBps;
         uint64 eligibleSince;
         uint64 observedAt;
         uint64 validUntil;
     }
+
+    // Custom errors rather than require strings. The factory embeds this
+    // contract's full creation code in its own runtime, so every byte here
+    // counts twice against EIP-170 — revert strings cost roughly 70 bytes each
+    // where a custom error costs about 10.
+    error EntryPointOnly();
+    error InvalidClose();
+    error InvalidMandate();
+    error InvalidRiskAttestation();
+    error InvalidRiskObservation();
+    error InvalidRoll();
+    error MandateInactive();
+    error MandateAlreadyRegistered();
+    error MandateIsRevoked();
+    error MandateUnavailable();
+    error OwnerOnly();
+    error QuoteViolatesMandate();
+    error RiskNotPersistent();
+    error RiskObservationStale();
+    error ThetanutsQuoteViolatesMandate();
+    error TokenCallFailed();
+    error TotalCapExceeded();
+    error ZeroAddress();
+    error ZeroTarget();
 
     uint256 private constant SIG_VALIDATION_FAILED = 1;
     uint64 private constant MAX_RISK_OBSERVATION_AGE = 3 minutes;
@@ -126,17 +206,26 @@ contract MandateAccount {
         "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
     );
     bytes32 private constant MANDATE_TYPEHASH = keccak256(
-        "Mandate(address owner,address account,address agent,address optionBook,address collateral,bytes32 asset,uint8 side,uint256 maxPremiumPerFill,uint256 maxPremiumTotal,uint256 maxContractsPerFill,uint64 minTenorSeconds,uint64 maxTenorSeconds,uint16 riskThresholdBps,uint64 persistenceSeconds,uint64 minExecutionIntervalSeconds,uint64 validAfter,uint64 expiresAt,uint256 nonce)"
+        "Mandate(address owner,address account,address agent,address optionBook,address collateral,bytes32 asset,uint8 side,uint256 maxPremiumPerFill,uint256 maxPremiumTotal,uint256 maxContractsPerFill,uint64 minTenorSeconds,uint64 maxTenorSeconds,uint16 riskThresholdBps,uint16 positionRiskThresholdBps,uint64 persistenceSeconds,uint64 minExecutionIntervalSeconds,uint64 validAfter,uint64 expiresAt,uint256 nonce)"
     );
     bytes32 private constant RISK_TYPEHASH = keccak256(
-        "RiskAttestation(bytes32 mandateHash,uint16 riskScoreBps,uint64 observedAt,uint64 validUntil,uint64 persistenceSeconds)"
+        "RiskAttestation(bytes32 mandateHash,uint16 riskScoreBps,uint16 positionRiskScoreBps,uint64 observedAt,uint64 validUntil,uint64 persistenceSeconds)"
     );
     bytes32 private constant THETANUTS_QUOTE_TYPEHASH = keccak256(
         "ThetanutsQuote(bytes32 mandateHash,bytes32 fillCalldataHash,uint256 premium,uint256 contracts,uint64 observedAt,uint64 validUntil)"
     );
+    bytes32 private constant SHADOW_CLOSE_TYPEHASH = keccak256(
+        "ShadowClose(bytes32 mandateHash,bytes32 closeId,uint256 positionId,uint128 contractsE6,uint128 proceedsUsdc,uint64 observedAt,uint64 validUntil)"
+    );
     bytes32 private constant MANDATE_NAME_HASH = keccak256("GammaShield Mandate");
     bytes32 private constant RISK_NAME_HASH = keccak256("GammaShield Risk");
+    bytes32 private constant SHADOW_CLOSE_NAME_HASH = keccak256("GammaShield Shadow Close");
     bytes32 private constant VERSION_HASH = keccak256("1");
+
+    /// @notice Samples kept per mandate. The agent observes hourly, so 32
+    /// slots hold just over a day — enough for the 1h/6h/24h deltas the
+    /// decision layer reads, and no more.
+    uint256 private constant RISK_HISTORY_SLOTS = 32;
 
     address public immutable entryPoint;
     address public immutable owner;
@@ -145,6 +234,10 @@ contract MandateAccount {
     mapping(bytes32 => Mandate) private mandates;
     mapping(bytes32 => bool) public isMandateRegistered;
     mapping(bytes32 => RiskState) public riskStates;
+    mapping(bytes32 => RiskSample[RISK_HISTORY_SLOTS]) private riskHistory;
+    /// @notice Total observations ever recorded. Head and depth both derive
+    /// from it, so the ring needs no second counter.
+    mapping(bytes32 => uint256) public riskObservationCount;
     bytes32 public activeMandateHash;
 
     event MandateRegistered(bytes32 indexed mandateHash, uint64 expiresAt);
@@ -152,20 +245,22 @@ contract MandateAccount {
     event MandateResumed(bytes32 indexed mandateHash);
     event MandateRevoked(bytes32 indexed mandateHash);
     event MandateExecuted(bytes32 indexed mandateHash, bytes32 indexed fillId, uint256 premiumUsdc, uint256 positionId);
-    event RiskObserved(bytes32 indexed mandateHash, uint16 scoreBps, uint64 eligibleSince, uint64 validUntil);
+    event RiskObserved(bytes32 indexed mandateHash, uint16 scoreBps, uint16 positionScoreBps, uint64 eligibleSince, uint64 validUntil);
+    event MandateClosed(bytes32 indexed mandateHash, bytes32 indexed closeId, uint256 positionId, uint256 proceedsUsdc);
+    event MandateRolled(bytes32 indexed mandateHash, uint256 closedPositionId, uint256 openedPositionId);
 
     modifier onlyEntryPoint() {
-        require(msg.sender == entryPoint, "entry point only");
+        if (!(msg.sender == entryPoint)) revert EntryPointOnly();
         _;
     }
 
     modifier onlyOwner() {
-        require(msg.sender == owner, "owner only");
+        if (!(msg.sender == owner)) revert OwnerOnly();
         _;
     }
 
     constructor(address entryPoint_, address owner_, address riskAttester_) {
-        require(entryPoint_ != address(0) && owner_ != address(0) && riskAttester_ != address(0), "zero address");
+        if (!(entryPoint_ != address(0) && owner_ != address(0) && riskAttester_ != address(0))) revert ZeroAddress();
         entryPoint = entryPoint_;
         owner = owner_;
         riskAttester = riskAttester_;
@@ -174,18 +269,18 @@ contract MandateAccount {
     receive() external payable {}
 
     function mandateHash(Mandate memory mandate) public pure returns (bytes32 hash) {
-        // The mandate has 18 static ABI fields. Encoding its fixed-width words
+        // The mandate has 19 static ABI fields. Encoding its fixed-width words
         // directly avoids a stack-too-deep compiler limitation without changing
-        // the EIP-712 encoding.
+        // the EIP-712 encoding. 19 words is 608 bytes, plus the type hash: 640.
         bytes32 typeHash = MANDATE_TYPEHASH;
         assembly {
             let ptr := mload(0x40)
             mstore(ptr, typeHash)
-            for { let offset := 0 } lt(offset, 576) { offset := add(offset, 32) } {
+            for { let offset := 0 } lt(offset, 608) { offset := add(offset, 32) } {
                 mstore(add(ptr, add(32, offset)), mload(add(mandate, offset)))
             }
-            mstore(0x40, add(ptr, 608))
-            hash := keccak256(ptr, 608)
+            mstore(0x40, add(ptr, 640))
+            hash := keccak256(ptr, 640)
         }
     }
 
@@ -195,6 +290,10 @@ contract MandateAccount {
 
     function riskDomainSeparator() public view returns (bytes32) {
         return _domainSeparator(RISK_NAME_HASH);
+    }
+
+    function shadowCloseDomainSeparator() public view returns (bytes32) {
+        return _domainSeparator(SHADOW_CLOSE_NAME_HASH);
     }
 
     function thetanutsQuoteDomainSeparator() public view returns (bytes32) {
@@ -221,6 +320,10 @@ contract MandateAccount {
                 (valid, validUntil) = _validateAgentUserOp(userOp.callData[4:], userOpHash, userOp.signature);
             } else if (selector == this.executeThetanuts.selector) {
                 (valid, validUntil) = _validateThetanutsUserOp(userOp.callData[4:], userOpHash, userOp.signature);
+            } else if (selector == this.executeShadowClose.selector) {
+                (valid, validUntil) = _validateShadowCloseUserOp(userOp.callData[4:], userOpHash, userOp.signature);
+            } else if (selector == this.executeShadowRoll.selector) {
+                (valid, validUntil) = _validateShadowRollUserOp(userOp.callData[4:], userOpHash, userOp.signature);
             }
         }
 
@@ -264,6 +367,43 @@ contract MandateAccount {
         return _validAgentExecution(mandateHash_, risk, riskSignature, quote, userOpHash, agentSignature);
     }
 
+    function _validateShadowCloseUserOp(bytes calldata encodedCall, bytes32 userOpHash, bytes calldata agentSignature)
+        private
+        view
+        returns (bool valid, uint64 validUntil)
+    {
+        (bytes32 mandateHash_, ShadowCloseAttestation memory attestation, bytes memory attestationSignature, IShadowFill.ShadowClose memory close,) =
+            abi.decode(encodedCall, (bytes32, ShadowCloseAttestation, bytes, IShadowFill.ShadowClose, bytes));
+        if (mandateHash_ == bytes32(0) || mandateHash_ != activeMandateHash) return (false, 0);
+        Mandate memory mandate = mandates[mandateHash_];
+        MandateControl storage control = controls[mandateHash_];
+        if (
+            _recover(userOpHash, agentSignature) != mandate.agent || control.paused || control.revoked ||
+            !_isShadowCloseValid(mandateHash_, attestation, attestationSignature, close)
+        ) return (false, 0);
+        // Closing is a de-risking exit, so it is deliberately not gated on hot
+        // risk evidence or the spend cooldown; both of those rate-limit buying.
+        return (true, _minimum(mandate.expiresAt, _minimum(attestation.validUntil, close.validUntil)));
+    }
+
+    function _validateShadowRollUserOp(bytes calldata encodedCall, bytes32 userOpHash, bytes calldata agentSignature)
+        private
+        view
+        returns (bool valid, uint64 validUntil)
+    {
+        (bytes32 mandateHash_, RollRequest memory request) = abi.decode(encodedCall, (bytes32, RollRequest));
+        if (mandateHash_ == bytes32(0) || mandateHash_ != activeMandateHash) return (false, 0);
+        Mandate memory mandate = mandates[mandateHash_];
+        if (_recover(userOpHash, agentSignature) != mandate.agent || !_isRollValid(mandateHash_, mandate, request)) return (false, 0);
+        return (
+            true,
+            _minimum(
+                mandate.expiresAt,
+                _minimum(request.risk.validUntil, _minimum(request.close.validUntil, request.quote.validUntil))
+            )
+        );
+    }
+
     function _validateAgentRiskRecord(bytes calldata encodedCall, bytes32 userOpHash, bytes calldata agentSignature)
         private
         view
@@ -277,14 +417,14 @@ contract MandateAccount {
     }
 
     function executeOwner(address to, uint256 value, bytes calldata data) external onlyEntryPoint {
-        require(to != address(0), "zero target");
+        if (!(to != address(0))) revert ZeroTarget();
         (bool success, bytes memory result) = to.call{value: value}(data);
         if (!success) _revert(result);
     }
 
     function registerMandate(Mandate calldata mandate, bytes calldata signature) external onlyOwner returns (bytes32 hash) {
         hash = _requireMandate(mandate, signature);
-        require(!isMandateRegistered[hash], "mandate registered");
+        if (!(!isMandateRegistered[hash])) revert MandateAlreadyRegistered();
         if (activeMandateHash != bytes32(0)) {
             controls[activeMandateHash].revoked = true;
             emit MandateRevoked(activeMandateHash);
@@ -295,28 +435,40 @@ contract MandateAccount {
         emit MandateRegistered(hash, mandate.expiresAt);
     }
 
+    /// @notice Every retained observation for a mandate, oldest first.
+    /// Returns fewer than RISK_HISTORY_SLOTS entries until the ring fills, so
+    /// a reader can tell a genuinely flat trend from an absent one.
+    function getRiskHistory(bytes32 hash) external view returns (RiskSample[] memory samples) {
+        uint256 count = riskObservationCount[hash];
+        uint256 depth = count < RISK_HISTORY_SLOTS ? count : RISK_HISTORY_SLOTS;
+        samples = new RiskSample[](depth);
+        for (uint256 i = 0; i < depth; i++) {
+            samples[i] = riskHistory[hash][(count - depth + i) % RISK_HISTORY_SLOTS];
+        }
+    }
+
     function getMandate(bytes32 hash) external view returns (Mandate memory) {
-        require(isMandateRegistered[hash], "mandate unavailable");
+        if (!(isMandateRegistered[hash])) revert MandateUnavailable();
         return mandates[hash];
     }
 
     function pauseMandate(bytes32 hash) external onlyOwner {
-        require(hash == activeMandateHash, "mandate inactive");
-        require(!controls[hash].revoked, "mandate revoked");
+        if (!(hash == activeMandateHash)) revert MandateInactive();
+        if (!(!controls[hash].revoked)) revert MandateIsRevoked();
         controls[hash].paused = true;
         emit MandatePaused(hash);
     }
 
     function resumeMandate(bytes32 hash) external onlyOwner {
-        require(hash == activeMandateHash, "mandate inactive");
+        if (!(hash == activeMandateHash)) revert MandateInactive();
         MandateControl storage control = controls[hash];
-        require(!control.revoked && block.timestamp < mandates[hash].expiresAt, "mandate inactive");
+        if (!(!control.revoked && block.timestamp < mandates[hash].expiresAt)) revert MandateInactive();
         control.paused = false;
         emit MandateResumed(hash);
     }
 
     function revokeMandate(bytes32 hash) external onlyOwner {
-        require(hash == activeMandateHash, "mandate inactive");
+        if (!(hash == activeMandateHash)) revert MandateInactive();
         controls[hash].revoked = true;
         activeMandateHash = bytes32(0);
         emit MandateRevoked(hash);
@@ -333,10 +485,21 @@ contract MandateAccount {
         bool continuous = eligible && state.eligibleSince != 0 && state.scoreBps >= mandate.riskThresholdBps &&
             state.validUntil >= block.timestamp && risk.observedAt >= state.observedAt;
         state.eligibleSince = continuous ? state.eligibleSince : (eligible ? uint64(block.timestamp) : 0);
+        // A stale observation may not rewrite newer state, and may not enter
+        // the history: a trend is only meaningful over samples ordered in time.
+        if (!(risk.observedAt >= state.observedAt)) revert RiskObservationStale();
+        bool isNew = risk.observedAt > state.observedAt || riskObservationCount[hash] == 0;
         state.scoreBps = risk.riskScoreBps;
+        state.positionScoreBps = risk.positionRiskScoreBps;
         state.observedAt = risk.observedAt;
         state.validUntil = risk.validUntil;
-        emit RiskObserved(hash, risk.riskScoreBps, state.eligibleSince, risk.validUntil);
+        if (isNew) {
+            uint256 count = riskObservationCount[hash];
+            riskHistory[hash][count % RISK_HISTORY_SLOTS] =
+                RiskSample(risk.observedAt, risk.riskScoreBps, risk.positionRiskScoreBps);
+            riskObservationCount[hash] = count + 1;
+        }
+        emit RiskObserved(hash, risk.riskScoreBps, risk.positionRiskScoreBps, state.eligibleSince, risk.validUntil);
     }
 
     function executeShadow(
@@ -352,8 +515,8 @@ contract MandateAccount {
         _requireQuote(mandate, quote);
 
         MandateControl storage control = controls[hash];
-        require(!control.paused && !control.revoked, "mandate inactive");
-        require(control.spentPremium + quote.premiumUsdc <= mandate.maxPremiumTotal, "total cap exceeded");
+        if (!(!control.paused && !control.revoked)) revert MandateInactive();
+        if (!(control.spentPremium + quote.premiumUsdc <= mandate.maxPremiumTotal)) revert TotalCapExceeded();
         require(
             control.lastExecutionAt == 0 || block.timestamp >= uint256(control.lastExecutionAt) + mandate.minExecutionIntervalSeconds,
             "execution cooldown"
@@ -386,8 +549,8 @@ contract MandateAccount {
         _requireThetanutsQuote(hash, mandate, quote, quoteSignature, fillData);
 
         MandateControl storage control = controls[hash];
-        require(!control.paused && !control.revoked, "mandate inactive");
-        require(control.spentPremium + quote.premium <= mandate.maxPremiumTotal, "total cap exceeded");
+        if (!(!control.paused && !control.revoked)) revert MandateInactive();
+        if (!(control.spentPremium + quote.premium <= mandate.maxPremiumTotal)) revert TotalCapExceeded();
         require(
             control.lastExecutionAt == 0 || block.timestamp >= uint256(control.lastExecutionAt) + mandate.minExecutionIntervalSeconds,
             "execution cooldown"
@@ -400,6 +563,108 @@ contract MandateAccount {
         control.spentPremium += quote.premium;
         control.lastExecutionAt = uint64(block.timestamp);
         emit MandateExecuted(hash, quote.fillCalldataHash, quote.premium, uint256(uint160(optionAddress)));
+    }
+
+    /// @notice Sepolia-only exit. Closes one shadow position at an agent-attested
+    /// mark and credits the recovered premium back to this policy's loss meter.
+    function executeShadowClose(
+        bytes32 hash,
+        ShadowCloseAttestation calldata attestation,
+        bytes calldata attestationSignature,
+        IShadowFill.ShadowClose calldata close,
+        bytes calldata closeSignature
+    ) external onlyEntryPoint returns (uint128 proceedsUsdc) {
+        Mandate memory mandate = _requireActiveMandate(hash);
+        if (!(_isShadowCloseValid(hash, attestation, attestationSignature, close))) revert InvalidClose();
+
+        MandateControl storage control = controls[hash];
+        if (!(!control.paused && !control.revoked)) revert MandateInactive();
+
+        proceedsUsdc = abi.decode(
+            _call(mandate.optionBook, abi.encodeCall(IShadowFill.closeShadow, (close, closeSignature)), false), (uint128)
+        );
+        _creditClose(control, proceedsUsdc);
+        emit MandateClosed(hash, close.closeId, close.positionId, proceedsUsdc);
+    }
+
+    /// @notice Sepolia-only roll: close the near-dated leg and open the next one
+    /// in a single call, so the account is never briefly unhedged. Unlike a bare
+    /// close this requires hot, persistent risk evidence — a roll opens new
+    /// exposure, and an expiring hedge that is no longer needed should simply
+    /// be closed or left to expire.
+    function executeShadowRoll(bytes32 hash, RollRequest calldata request)
+        external
+        onlyEntryPoint
+        returns (uint256 positionId)
+    {
+        Mandate memory mandate = _requireActiveMandate(hash);
+        if (!(_isRollValid(hash, mandate, request))) revert InvalidRoll();
+
+        MandateControl storage control = controls[hash];
+        uint128 proceeds = abi.decode(
+            _call(
+                mandate.optionBook,
+                abi.encodeCall(IShadowFill.closeShadow, (request.close, request.closeSignature)),
+                false
+            ),
+            (uint128)
+        );
+        _creditClose(control, proceeds);
+        emit MandateClosed(hash, request.close.closeId, request.close.positionId, proceeds);
+
+        _call(
+            mandate.collateral,
+            abi.encodeCall(IERC20Approval.approve, (mandate.optionBook, request.quote.premiumUsdc)),
+            true
+        );
+        positionId = abi.decode(
+            _call(
+                mandate.optionBook,
+                abi.encodeCall(IShadowFill.fillShadow, (request.quote, request.quoteSignature)),
+                false
+            ),
+            (uint256)
+        );
+
+        control.spentPremium += request.quote.premiumUsdc;
+        control.lastExecutionAt = uint64(block.timestamp);
+        emit MandateExecuted(hash, request.quote.fillId, request.quote.premiumUsdc, positionId);
+        emit MandateRolled(hash, request.close.positionId, positionId);
+    }
+
+    /// @dev Every condition a roll must satisfy, shared by 4337 validation and
+    /// execution so the simulated call and the real one can never disagree.
+    /// @dev A roll replaces one position with another, so what matters is
+    /// whether THAT position is still risky — not whether the wider book is.
+    /// The book's persistence clock exists to stop a hedge being opened on a
+    /// blip; it is the wrong clock for deciding whether an expiring position
+    /// deserves replacing, so the position threshold gates this instead. The
+    /// spend cooldown still applies, inside `_isRollWithinCaps`, because a
+    /// roll does buy.
+    function _isRollValid(bytes32 hash, Mandate memory mandate, RollRequest memory request) private view returns (bool) {
+        MandateControl storage control = controls[hash];
+        return !control.paused && !control.revoked &&
+            _isPositionRiskValid(hash, mandate, request.risk, request.riskSignature) &&
+            _isShadowCloseValid(hash, request.attestation, request.attestationSignature, request.close) &&
+            _isQuoteValid(mandate, request.quote) &&
+            _isRollWithinCaps(control, request.attestation, request.quote, mandate);
+    }
+
+    function _isPositionRiskValid(bytes32 mandateHash_, Mandate memory mandate, RiskAttestation memory risk, bytes memory signature)
+        private
+        view
+        returns (bool)
+    {
+        if (risk.positionRiskScoreBps < mandate.positionRiskThresholdBps) return false;
+        return _isRiskObservationValid(mandateHash_, mandate, risk, signature);
+    }
+
+    /// @dev `spentPremium` is the loss meter the signed cap is measured against:
+    /// premium paid, less premium recovered. Crediting is capped at what this
+    /// policy actually spent, so an exit can restore budget but never create it.
+    function _creditClose(MandateControl storage control, uint128 proceeds) private {
+        uint256 credit = uint256(proceeds) > control.spentPremium ? control.spentPremium : uint256(proceeds);
+        control.spentPremium -= credit;
     }
 
     function _validAgentExecution(
@@ -427,35 +692,35 @@ contract MandateAccount {
     }
 
     function _requireMandate(Mandate calldata mandate, bytes calldata signature) private view returns (bytes32 hash) {
-        require(_isMandateValid(mandate, signature), "invalid mandate");
+        if (!(_isMandateValid(mandate, signature))) revert InvalidMandate();
         return mandateHash(mandate);
     }
 
     function _requireActiveMandate(bytes32 hash) private view returns (Mandate memory mandate) {
-        require(hash != bytes32(0) && hash == activeMandateHash, "mandate inactive");
+        if (!(hash != bytes32(0) && hash == activeMandateHash)) revert MandateInactive();
         return mandates[hash];
     }
 
     function _requirePersistentRisk(bytes32 hash, Mandate memory mandate) private view {
-        require(_isPersistentRisk(riskStates[hash], mandate), "risk not persistent");
+        if (!(_isPersistentRisk(riskStates[hash], mandate))) revert RiskNotPersistent();
     }
 
     function _requireRisk(bytes32 mandateHash_, Mandate memory mandate, RiskAttestation calldata risk, bytes calldata signature) private view {
-        require(_isRiskValid(mandateHash_, mandate, risk, signature), "invalid risk attestation");
+        if (!(_isRiskValid(mandateHash_, mandate, risk, signature))) revert InvalidRiskAttestation();
     }
 
     function _requireRiskObservation(bytes32 mandateHash_, Mandate memory mandate, RiskAttestation calldata risk, bytes calldata signature) private view {
-        require(_isRiskObservationValid(mandateHash_, mandate, risk, signature), "invalid risk observation");
+        if (!(_isRiskObservationValid(mandateHash_, mandate, risk, signature))) revert InvalidRiskObservation();
     }
 
     function _requireQuote(Mandate memory mandate, IShadowFill.ShadowQuote calldata quote) private view {
-        require(_isQuoteValid(mandate, quote), "quote violates mandate");
+        if (!(_isQuoteValid(mandate, quote))) revert QuoteViolatesMandate();
     }
 
     function _requireThetanutsQuote(
         bytes32 mandateHash_, Mandate memory mandate, ThetanutsQuote calldata quote, bytes calldata signature, bytes calldata fillData
     ) private view {
-        require(_isThetanutsQuoteValid(mandateHash_, mandate, quote, signature, fillData), "Thetanuts quote violates mandate");
+        if (!(_isThetanutsQuoteValid(mandateHash_, mandate, quote, signature, fillData))) revert ThetanutsQuoteViolatesMandate();
     }
 
     function _isMandateValid(Mandate memory mandate, bytes memory signature) private view returns (bool) {
@@ -464,6 +729,7 @@ contract MandateAccount {
             mandate.optionBook == address(0) || mandate.collateral == address(0) || mandate.side > 1 ||
             mandate.maxPremiumPerFill == 0 || mandate.maxPremiumTotal < mandate.maxPremiumPerFill || mandate.maxContractsPerFill == 0 ||
             mandate.minTenorSeconds == 0 || mandate.maxTenorSeconds < mandate.minTenorSeconds || mandate.riskThresholdBps > 10_000 ||
+            mandate.positionRiskThresholdBps == 0 || mandate.positionRiskThresholdBps > 10_000 ||
             mandate.expiresAt <= mandate.validAfter || mandate.persistenceSeconds > mandate.expiresAt - mandate.validAfter ||
             block.timestamp < mandate.validAfter || block.timestamp >= mandate.expiresAt
         ) return false;
@@ -480,13 +746,66 @@ contract MandateAccount {
 
     function _isRiskObservationValid(bytes32 mandateHash_, Mandate memory mandate, RiskAttestation memory risk, bytes memory signature) private view returns (bool) {
         if (
-            risk.mandateHash != mandateHash_ || risk.riskScoreBps > 10_000 || risk.observedAt > block.timestamp ||
+            risk.mandateHash != mandateHash_ || risk.riskScoreBps > 10_000 ||
+            risk.positionRiskScoreBps > 10_000 || risk.observedAt > block.timestamp ||
             block.timestamp - risk.observedAt > MAX_RISK_OBSERVATION_AGE || risk.validUntil < risk.observedAt ||
             risk.validUntil - risk.observedAt > MAX_RISK_OBSERVATION_AGE || risk.validUntil < block.timestamp ||
             risk.persistenceSeconds < mandate.persistenceSeconds
         ) return false;
-        bytes32 riskHash = keccak256(abi.encode(RISK_TYPEHASH, risk.mandateHash, risk.riskScoreBps, risk.observedAt, risk.validUntil, risk.persistenceSeconds));
+        bytes32 riskHash = keccak256(
+            abi.encode(
+                RISK_TYPEHASH,
+                risk.mandateHash,
+                risk.riskScoreBps,
+                risk.positionRiskScoreBps,
+                risk.observedAt,
+                risk.validUntil,
+                risk.persistenceSeconds
+            )
+        );
         return _recover(_typedDataHash(_domainSeparator(RISK_NAME_HASH), riskHash), signature) == riskAttester;
+    }
+
+    function _isShadowCloseValid(
+        bytes32 mandateHash_,
+        ShadowCloseAttestation memory attestation,
+        bytes memory signature,
+        IShadowFill.ShadowClose memory close
+    ) private view returns (bool) {
+        if (
+            attestation.mandateHash != mandateHash_ || attestation.closeId != close.closeId ||
+            attestation.positionId != close.positionId || attestation.contractsE6 != close.contractsE6 ||
+            attestation.proceedsUsdc != close.proceedsUsdc || close.seller != address(this) ||
+            close.contractsE6 == 0 || attestation.validUntil < block.timestamp || close.validUntil < block.timestamp ||
+            attestation.observedAt > block.timestamp ||
+            block.timestamp - attestation.observedAt > MAX_THETANUTS_QUOTE_AGE
+        ) return false;
+        bytes32 structHash = keccak256(
+            abi.encode(
+                SHADOW_CLOSE_TYPEHASH,
+                attestation.mandateHash,
+                attestation.closeId,
+                attestation.positionId,
+                attestation.contractsE6,
+                attestation.proceedsUsdc,
+                attestation.observedAt,
+                attestation.validUntil
+            )
+        );
+        return _recover(_typedDataHash(_domainSeparator(SHADOW_CLOSE_NAME_HASH), structHash), signature) == riskAttester;
+    }
+
+    /// @dev A roll must fit the signed total cap measured after the exit credit,
+    /// and still respect the spend cooldown that rate-limits opening exposure.
+    function _isRollWithinCaps(
+        MandateControl storage control,
+        ShadowCloseAttestation memory attestation,
+        IShadowFill.ShadowQuote memory quote,
+        Mandate memory mandate
+    ) private view returns (bool) {
+        uint256 credit = uint256(attestation.proceedsUsdc) > control.spentPremium ? control.spentPremium : uint256(attestation.proceedsUsdc);
+        if (control.spentPremium - credit + quote.premiumUsdc > mandate.maxPremiumTotal) return false;
+        return control.lastExecutionAt == 0 || block.timestamp >= uint256(control.lastExecutionAt) + mandate.minExecutionIntervalSeconds;
     }
 
     function _isPersistentRisk(RiskState memory risk, Mandate memory mandate) private view returns (bool) {
@@ -575,7 +894,7 @@ contract MandateAccount {
     function _call(address target, bytes memory data, bool requiresTrue) private returns (bytes memory result) {
         (bool success, bytes memory returnData) = target.call(data);
         if (!success) _revert(returnData);
-        if (requiresTrue && returnData.length > 0) require(abi.decode(returnData, (bool)), "token call failed");
+        if (requiresTrue && returnData.length > 0) if (!(abi.decode(returnData, (bool)))) revert TokenCallFailed();
         return returnData;
     }
 
@@ -592,19 +911,21 @@ contract MandateAccount {
 }
 
 contract MandateAccountFactory {
+    error ZeroAddress();
+    error ZeroOwner();
     address public immutable entryPoint;
     address public immutable riskAttester;
 
     event AccountCreated(address indexed account, address indexed owner, bytes32 indexed salt);
 
     constructor(address entryPoint_, address riskAttester_) {
-        require(entryPoint_ != address(0) && riskAttester_ != address(0), "zero address");
+        if (!(entryPoint_ != address(0) && riskAttester_ != address(0))) revert ZeroAddress();
         entryPoint = entryPoint_;
         riskAttester = riskAttester_;
     }
 
     function createAccount(address owner, bytes32 salt) external returns (MandateAccount account) {
-        require(owner != address(0), "zero owner");
+        if (!(owner != address(0))) revert ZeroOwner();
         account = new MandateAccount{salt: salt}(entryPoint, owner, riskAttester);
         emit AccountCreated(address(account), owner, salt);
     }

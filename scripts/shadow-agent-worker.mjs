@@ -65,6 +65,22 @@ async function tick() {
       userOpHash: typeof result.userOpHash === "string" ? result.userOpHash : null,
       score: typeof result.score === "number" ? result.score : null,
       threshold: typeof result.threshold === "number" ? result.threshold : null,
+      // The assessment behind the outcome, journaled so the dashboard can show
+      // what was rejected and why rather than only what happened.
+      health: typeof result.health === "string" ? result.health : null,
+      decision: result.decision && typeof result.decision === "object"
+        ? {
+            action: result.decision.action ?? null,
+            urgency: result.decision.urgency ?? null,
+            reasonCodes: Array.isArray(result.decision.reasonCodes) ? result.decision.reasonCodes : [],
+            explanation: typeof result.decision.explanation === "string" ? result.decision.explanation : null,
+            riskBefore: typeof result.decision.riskBefore === "number" ? result.decision.riskBefore : null,
+            estimatedCostUsd: typeof result.decision.estimatedCostUsd === "number" ? result.decision.estimatedCostUsd : null,
+            alternatives: Array.isArray(result.decision.alternatives) ? result.decision.alternatives : [],
+            aiInitiated: result.decision.aiInitiated === true,
+            recommendationOnly: result.decision.recommendationOnly === true,
+          }
+        : null,
       checkedAt: new Date().toISOString(),
     };
     changed = true;
