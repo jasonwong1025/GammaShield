@@ -1,5 +1,11 @@
 import { createAiMandateDraft } from "@/lib/mandateDraft";
 
+// GonkaRouter's advisory call can legitimately take up to ~45s (see
+// lib/mandateDraft.ts); the platform's default function timeout is shorter
+// than that, and would kill the request before the Gonka call ever gets a
+// chance to complete or fall back cleanly.
+export const maxDuration = 60;
+
 export async function POST(request: Request) {
   let body: { asset?: unknown };
   try {

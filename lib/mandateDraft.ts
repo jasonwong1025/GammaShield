@@ -6,6 +6,7 @@ import { getTradeQuote } from "@/lib/trade";
 import { TRADE_PERIODS, type TradePeriod } from "@/lib/tradePeriods";
 import type { OptionsAsset } from "@/lib/assets";
 import { gonkaApiKey, gonkaBaseUrl } from "@/lib/gonkaConfig";
+import { extractJson, fetchWithBackoff } from "@/lib/gonka";
 import { DEFAULT_POSITION_RISK_TRIGGER } from "@/lib/autonomous/policy";
 
 /** Signed terms the five user-facing limits do not cover. */
@@ -78,7 +79,11 @@ async function findAdvisoryPut(asset: OptionsAsset) {
   for (const period of TRADE_PERIODS) {
     const reference = await getTradeQuote(asset, "put", 1, period, { fresh: true });
     if (reference.premiumPerContractUsd <= 0) continue;
-    const target = Math.min(1, reference.maxContracts ?? 1, Math.max(0.001, Math.floor((2 / reference.premiumPerContractUsd) * 1e6) / 1e6));
+    // A full contract, capped only by what the book can actually fill — not an
+    // arbitrary premium target. The draft's caps should track a real position's
+    // real cost, which varies by asset/strike/expiry, rather than converge on
+    // whatever fraction of a contract happens to price near a fixed number.
+    const target = Math.min(1, reference.maxContracts ?? 1);
     if (target < 0.001) continue;
     const quote = target === 1 ? reference : await getTradeQuote(asset, "put", target, period);
     if (quote.contracts <= 0 || quote.totalCostUsd <= 0) continue;
@@ -91,30 +96,58 @@ async function findAdvisoryPut(asset: OptionsAsset) {
 
 async function getAiTiming(asset: OptionsAsset, quote: Awaited<ReturnType<typeof findAdvisoryPut>>, daysToExpiry: number): Promise<AiTiming> {
   const fallback: AiTiming = { riskScore: 75, persistenceMinutes: 10, cooldownMinutes: 60, validityHours: 24, rationale: "", source: "deterministic" };
-  if (!gonkaApiKey) return fallback;
+  if (!gonkaApiKey) {
+    console.warn("[mandateDraft] GONKAROUTER_API_KEY not set — using deterministic timing");
+    return fallback;
+  }
 
   try {
-    const response = await fetch(`${gonkaBaseUrl}/chat/completions`, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${gonkaApiKey}` },
-      body: JSON.stringify({
-        model: process.env.GONKAROUTER_MODEL ?? "deepseek-ai/DeepSeek-V4-Flash-0731",
-        temperature: 0.1,
-        // Gonka's reasoning models require room for their internal reasoning before JSON output.
-        max_tokens: 1024,
-        messages: [
-          { role: "system", content: "You draft advisory, user-signed crypto-options execution policies. Do not propose an execution, RFQ, approval, or transfer. Return only JSON: {riskScore:number 50-95,persistenceMinutes:number 1-60,cooldownMinutes:number 5-1440,validityHours:number 1-168,rationale:string <=220 chars}. A MM estimate is not executable; a later agent must use a fresh listed Thetanuts OptionBook order." },
-          { role: "user", content: JSON.stringify({ asset, liveQuote: { strike: quote.strike, expiryDays: daysToExpiry, contracts: quote.contracts, premiumUsd: quote.totalCostUsd, source: quote.source === "book" ? "listed OptionBook" : "Thetanuts MM estimate (RFQ-only)" }, marketImpact: quote.impact }) },
-        ],
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!response.ok) return fallback;
+    // GonkaRouter's advisory tier routes to a reasoning model regardless of the
+    // model id requested, and its <think> block before the JSON answer can push
+    // a real prompt past 30s (measured) — 15s aborted nearly every call. Reuse
+    // gonka.ts's fetchWithBackoff both for that longer budget and its 429 retry.
+    const response = await fetchWithBackoff(
+      `${gonkaBaseUrl}/chat/completions`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${gonkaApiKey}` },
+        body: JSON.stringify({
+          model: process.env.GONKAROUTER_MODEL ?? "deepseek-ai/DeepSeek-V4-Flash-0731",
+          temperature: 0.1,
+          // Gonka's reasoning models require room for their internal reasoning before JSON
+          // output; 1024 was measured to sometimes run out mid-<think>, before the model ever
+          // emits the JSON answer, which reads identically to a malformed response.
+          max_tokens: 2048,
+          messages: [
+            { role: "system", content: "You draft advisory, user-signed crypto-options execution policies. Do not propose an execution, RFQ, approval, or transfer. Return only JSON: {riskScore:number 50-95,persistenceMinutes:number 1-60,cooldownMinutes:number 5-1440,validityHours:number 1-168,rationale:string <=220 chars}. A MM estimate is not executable; a later agent must use a fresh listed Thetanuts OptionBook order." },
+            { role: "user", content: JSON.stringify({ asset, liveQuote: { strike: quote.strike, expiryDays: daysToExpiry, contracts: quote.contracts, premiumUsd: quote.totalCostUsd, source: quote.source === "book" ? "listed OptionBook" : "Thetanuts MM estimate (RFQ-only)" }, marketImpact: quote.impact }) },
+          ],
+        }),
+      },
+      2,
+      1500,
+      45_000,
+    );
+    if (!response.ok) {
+      console.warn(`[mandateDraft] GonkaRouter responded ${response.status}: ${(await response.text()).slice(0, 500)}`);
+      return fallback;
+    }
     const content: string | undefined = (await response.json())?.choices?.[0]?.message?.content;
-    const match = content?.match(/\{[\s\S]*\}/);
-    if (!match) return fallback;
-    const parsed = JSON.parse(match[0]) as Partial<AiTiming>;
-    if (![parsed.riskScore, parsed.persistenceMinutes, parsed.cooldownMinutes, parsed.validityHours].every(Number.isFinite)) return fallback;
+    if (!content) {
+      console.warn("[mandateDraft] GonkaRouter response had no message content");
+      return fallback;
+    }
+    let parsed: Partial<AiTiming>;
+    try {
+      parsed = extractJson<Partial<AiTiming>>(content);
+    } catch (parseError) {
+      console.warn("[mandateDraft] could not extract JSON from GonkaRouter content:", parseError instanceof Error ? parseError.message : parseError, "raw:", content.slice(0, 500));
+      return fallback;
+    }
+    if (![parsed.riskScore, parsed.persistenceMinutes, parsed.cooldownMinutes, parsed.validityHours].every(Number.isFinite)) {
+      console.warn("[mandateDraft] GonkaRouter JSON missing/non-finite required fields:", parsed);
+      return fallback;
+    }
     return {
       riskScore: clampInteger(parsed.riskScore!, 50, 95),
       persistenceMinutes: clampInteger(parsed.persistenceMinutes!, 1, 60),
@@ -123,7 +156,8 @@ async function getAiTiming(asset: OptionsAsset, quote: Awaited<ReturnType<typeof
       rationale: typeof parsed.rationale === "string" ? parsed.rationale.slice(0, 220) : "",
       source: "gonka",
     };
-  } catch {
+  } catch (error) {
+    console.warn("[mandateDraft] GonkaRouter call failed:", error instanceof Error ? error.message : error);
     return fallback;
   }
 }
