@@ -340,40 +340,65 @@ function RowRiskDetail({
           defaultContracts={row.collateralUsd / Math.max(row.strike, 1)}
           asset={row.asset}
         >
-          <div className="flex flex-col gap-1.5">
-          <div className="flex items-center justify-between">
-            <span className="text-muted">
-              AI second opinion <span className="text-faint">(GonkaRouter)</span>
-            </span>
-            {aiRisk && (
-              <span className="num font-semibold" style={{ color: riskColor(aiRisk.score) }}>
-                {aiRisk.score}
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <span className="text-muted text-[12px] font-medium">
+                AI desk explainer <span className="text-faint font-normal">(GonkaRouter)</span>
               </span>
-            )}
-          </div>
-          {aiRisk ? (
-            <>
-              <p className="text-faint leading-relaxed">{aiRisk.rationale}</p>
-              <p className="text-faint text-[11px]">
-                {aiRisk.label} · {Math.round(aiRisk.confidence * 100)}% confidence · read at{" "}
-                {new Date(aiRisk.generatedAt).toLocaleTimeString([], { hour12: false })}
-              </p>
-            </>
-          ) : (
-            <>
-              <button
-                type="button"
-                onClick={onGetAiRead}
-                disabled={aiRiskLoading}
-                className="self-start rounded-md border border-edge px-2.5 py-1 text-[12px] font-medium text-fg hover:bg-panel2 disabled:opacity-60"
-              >
-                {aiRiskLoading ? "Asking the model…" : "Get AI read"}
-              </button>
-              {aiRiskError && !aiRiskLoading && (
-                <p className="text-crit text-[11px]">Unavailable — {aiRiskError}</p>
+              {aiRisk && (
+                <span
+                  className="eyebrow rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider"
+                  style={{
+                    color: riskColor(aiRisk.score),
+                    backgroundColor: `color-mix(in srgb, ${riskColor(aiRisk.score)} 15%, transparent)`,
+                  }}
+                >
+                  {aiRisk.label}
+                </span>
               )}
-            </>
-          )}
+            </div>
+            {aiRisk ? (
+              <div className="flex flex-col gap-1.5 rounded-lg border border-edge bg-panel2 p-2.5 text-[12px]">
+                <p className="font-semibold text-fg leading-snug">
+                  {aiRisk.verdict || aiRisk.rationale}
+                </p>
+                {aiRisk.rationale && aiRisk.verdict && (
+                  <p className="text-muted text-[11px] leading-relaxed">
+                    {aiRisk.rationale}
+                  </p>
+                )}
+                {aiRisk.keyPoints && aiRisk.keyPoints.length > 0 && (
+                  <ul className="mt-1 flex flex-col gap-1 border-t border-edge/60 pt-1.5 text-[11px] text-faint">
+                    {aiRisk.keyPoints.map((pt, i) => (
+                      <li key={i} className="flex items-start gap-1.5">
+                        <span className="text-blue shrink-0">•</span>
+                        <span>{pt}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <div className="mt-0.5 flex items-center justify-between text-[10px] text-faint">
+                  <span>AI Risk Explainer ({aiRisk.model.split("/").pop()})</span>
+                  <span>
+                    Read at {new Date(aiRisk.generatedAt).toLocaleTimeString([], { hour12: false })}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={onGetAiRead}
+                  disabled={aiRiskLoading}
+                  className="self-start rounded-md border border-edge px-2.5 py-1 text-[12px] font-medium text-fg hover:bg-panel2 disabled:opacity-60 transition"
+                >
+                  {aiRiskLoading ? "Analyzing market structure…" : "Get AI read"}
+                </button>
+                {aiRiskError && !aiRiskLoading && (
+                  <p className="text-crit text-[11px]">Unavailable — {aiRiskError}</p>
+                )}
+              </>
+            )}
           </div>
         </MarketImpactPanel>
       ) : (

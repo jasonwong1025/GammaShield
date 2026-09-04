@@ -225,47 +225,6 @@ function generateFallbackAnalysis(
   };
 }
 
-/**
- * 30-Second Smoke Test against GonkaRouter API
- */
-export async function smokeTestGonka(apiKey?: string): Promise<{ ok: boolean; message: string; id?: string }> {
-  const key = apiKey || gonkaApiKey;
-  if (!key || key === "sk-your-gonkarouter-api-key-here") {
-    return { ok: false, message: "GONKAROUTER_API_KEY not configured" };
-  }
-
-  const baseUrl = gonkaBaseUrl;
-
-  try {
-    const res = await fetch(`${baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${key}`,
-      },
-      body: JSON.stringify({
-        model: GONKA_MODELS.FLASH,
-        max_tokens: 100,
-        messages: [{ role: "user", content: "Reply with just: pong" }],
-      }),
-    });
-
-    if (!res.ok) {
-      const err = await res.text();
-      return { ok: false, message: `HTTP ${res.status}: ${err}` };
-    }
-
-    const data = await res.json();
-    return {
-      ok: true,
-      message: data.choices?.[0]?.message?.content?.trim() || "pong",
-      id: data.id,
-    };
-  } catch (e) {
-    return { ok: false, message: e instanceof Error ? e.message : "Network error" };
-  }
-}
-
 export type WhatIfRequest = {
   question: string;
   asset: string;

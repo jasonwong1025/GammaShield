@@ -13,10 +13,17 @@ import { gonkaApiKey, gonkaBaseUrl } from "./gonkaConfig";
 export type AiRiskLabel = "low" | "moderate" | "elevated" | "severe";
 
 export type AiRiskAssessment = {
-  score: number; // 0-100, the model's own read of amplification risk after the fill
+  /** Qualitative risk tier: low | moderate | elevated | severe */
   label: AiRiskLabel;
+  /** Composite score 0-100 preserved for backwards compatibility */
+  score: number;
+  /** 1-sentence executive verdict summarizing the fill's risk profile */
+  verdict: string;
+  /** In-depth qualitative rationale detailing the trade-offs of the Greeks & market structure */
   rationale: string;
-  confidence: number; // 0-1
+  /** Specific structural risk drivers (decay, convexity, regime shift) */
+  keyPoints: string[];
+  /** Model used */
   model: string;
   generatedAt: number; // unix ms
 };
@@ -54,11 +61,18 @@ const BASE_URL = gonkaBaseUrl;
 const MODEL = process.env.GONKAROUTER_MODEL ?? "deepseek-ai/DeepSeek-V4-Flash-0731";
 
 const AI_CACHE_MS = 45_000;
-// GonkaRouter latency is inconsistent (observed ~0.5-8s+); this read is
+// GonkaRouter latency is inconsistent (observed ~0.5-15s+); this read is
 // background/supplementary (see TradePanel.tsx) so a generous timeout costs
 // nothing but reduces spurious "unavailable" reads.
-const AI_TIMEOUT_MS = 20_000;
+const AI_TIMEOUT_MS = 35_000;
 const LABELS: AiRiskLabel[] = ["low", "moderate", "elevated", "severe"];
+
+const LABEL_SCORES: Record<AiRiskLabel, number> = {
+  low: 25,
+  moderate: 45,
+  elevated: 70,
+  severe: 90,
+};
 
 const cache = new Map<string, { at: number; assessment: AiRiskAssessment }>();
 const inflight = new Map<string, Promise<AiRiskAssessment | null>>();
@@ -110,11 +124,6 @@ async function callGonkaRouter(input: AiRiskInput): Promise<AiRiskAssessment | n
     spot: input.spot,
     expiryDays: Number(Math.max(0, (input.expiryTs - nowSec) / 86400).toFixed(1)),
     contracts: input.contracts,
-    // Per-contract greeks for the position being bought. Delta/gamma/theta/
-    // vega come straight from the Thetanuts pricing API when the fill is
-    // against a listed maker order; rho isn't in that API and is always
-    // Black-Scholes-derived (see lib/modelBook.ts). Null when neither a live
-    // order nor a modeled IV was available.
     greeks: g && {
       delta: Number(g.delta.toFixed(4)),
       gamma: Number(g.gamma.toFixed(6)),
@@ -137,25 +146,28 @@ async function callGonkaRouter(input: AiRiskInput): Promise<AiRiskAssessment | n
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${API_KEY}` },
       body: JSON.stringify({
         model: MODEL,
-        temperature: 0.2,
-        max_tokens: 220,
+        temperature: 0.1,
+        max_tokens: 450,
         messages: [
           {
             role: "system",
             content:
-              "You are a derivatives market-structure risk analyst for a dealer-gamma dashboard. " +
-              "Given a proposed options trade — including its own delta/gamma/theta/vega/rho — and " +
-              "the dealer book's amplification-risk state before and after that fill, respond with " +
-              "ONLY a JSON object — no prose, no markdown fences — matching: " +
-              '{"score": number 0-100, "label": "low"|"moderate"|"elevated"|"severe", ' +
-              '"rationale": string (<=200 chars), "confidence": number 0-1}. score reflects how much ' +
-              "this trade pushes the market toward a feedback-loop-prone (dealer short-gamma) state. " +
-              "Weigh the position's own greeks as primary signal — gamma magnitude (convexity the " +
-              "dealer now must hedge), vega and theta (how fast that exposure decays or swings with " +
-              "IV, i.e. how transient vs. persistent the risk is), delta (directional hedge flow), and " +
-              "rho (rate sensitivity, usually minor for short-dated crypto options) — alongside net " +
-              "GEX direction/magnitude, regime, and strike/expiry proximity. Don't just restate the " +
-              "heuristic score/regime numbers; use them as context, not the answer.",
+              "You are a Senior Crypto Derivatives Desk Analyst and Options Risk Explainer for GammaShield on Base. " +
+              "Given a proposed options trade and dealer book GEX state before and after the fill, " +
+              "provide an institutional qualitative risk analysis. " +
+              "Do not merely parrot heuristic score numbers. Instead, explain the trade-offs of the Greeks: " +
+              "- Directional delta hedge and spot slippage obligation " +
+              "- Convexity (gamma) and dealer rehedging loops " +
+              "- Time decay (theta) urgency relative to days to expiry " +
+              "- Volatility exposure (vega) and IV sensitivity " +
+              "- How this fill interacts with current Net GEX and dealer regime (amplifying vs dampening). " +
+              "Respond with ONLY a valid JSON object matching this schema without markdown fences: " +
+              "{" +
+              '  "label": "low" | "moderate" | "elevated" | "severe",' +
+              '  "verdict": "1 concise sentence summarizing the risk profile (<=120 chars)",' +
+              '  "rationale": "2-3 concise sentences detailing greek trade-offs and dealer impact (<=320 chars)",' +
+              '  "keyPoints": ["point 1 on decay/convexity (<=80 chars)", "point 2 on dealer/market impact (<=80 chars)"]' +
+              "}",
           },
           { role: "user", content: JSON.stringify(prompt) },
         ],
@@ -169,25 +181,39 @@ async function callGonkaRouter(input: AiRiskInput): Promise<AiRiskAssessment | n
     }
 
     const data = await res.json();
-    const content: string | undefined = data?.choices?.[0]?.message?.content;
+    let content: string | undefined = data?.choices?.[0]?.message?.content;
     if (!content) return null;
+
+    content = content.replace(/<think[\s\S]*?<\/think>/gi, "");
+    const danglingThink = content.search(/<think\b/i);
+    if (danglingThink !== -1) content = content.slice(0, danglingThink);
+    content = content.trim();
 
     const match = content.match(/\{[\s\S]*\}/);
     if (!match) return null;
     const parsed = JSON.parse(match[0]);
 
-    const score = Number(parsed.score);
-    const confidence = Number(parsed.confidence);
-    const label = parsed.label;
-    if (!Number.isFinite(score) || !Number.isFinite(confidence) || !LABELS.includes(label)) {
-      return null;
-    }
+    const rawLabel = String(parsed.label ?? "").toLowerCase();
+    const label: AiRiskLabel = LABELS.includes(rawLabel as AiRiskLabel) ? (rawLabel as AiRiskLabel) : "moderate";
+    const score = Number.isFinite(Number(parsed.score))
+      ? Math.round(Math.min(100, Math.max(0, Number(parsed.score))))
+      : LABEL_SCORES[label];
+
+    const verdict = String(parsed.verdict ?? "").trim().slice(0, 150) || `${label.toUpperCase()} amplification risk`;
+    const rationale = String(parsed.rationale ?? "").trim().slice(0, 350);
+    const keyPoints = Array.isArray(parsed.keyPoints)
+      ? parsed.keyPoints
+          .filter((p: unknown) => typeof p === "string" && (p as string).trim().length > 0)
+          .map((p: unknown) => String(p).trim().slice(0, 100))
+          .slice(0, 3)
+      : [];
 
     return {
-      score: Math.round(Math.min(100, Math.max(0, score))),
       label,
-      rationale: String(parsed.rationale ?? "").slice(0, 220),
-      confidence: Math.min(1, Math.max(0, confidence)),
+      score,
+      verdict,
+      rationale,
+      keyPoints,
       model: MODEL,
       generatedAt: Date.now(),
     };
@@ -196,6 +222,7 @@ async function callGonkaRouter(input: AiRiskInput): Promise<AiRiskAssessment | n
     return null;
   }
 }
+
 
 export async function getAiAmplificationRisk(input: AiRiskInput): Promise<AiRiskAssessment | null> {
   const key = cacheKey(input);
