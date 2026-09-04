@@ -13,7 +13,7 @@ import { useEffect, useRef, useState } from "react";
 import { useAccount, useBalance, useSendTransaction, useSwitchChain } from "wagmi";
 import { getPublicClient, readContract, waitForTransactionReceipt } from "wagmi/actions";
 import { base, baseSepolia } from "wagmi/chains";
-import { decodeFunctionData, type Address, type Hex, zeroAddress } from "viem";
+import { decodeFunctionData, isAddress, type Address, type Hex, zeroAddress } from "viem";
 import { isOptionsAsset, type Asset } from "@/lib/assets";
 import type { TradeQuote, TradeSide } from "@/lib/trade";
 import { TRADE_PERIODS, type TradePeriod } from "@/lib/tradePeriods";
@@ -35,6 +35,9 @@ import { dispatchPositionChanged } from "@/lib/positionEvents";
 const QUOTE_DEBOUNCE_MS = 250;
 const QUOTE_REFRESH_MS = 15_000;
 const rfqExecutionEnabled = process.env.NEXT_PUBLIC_ENABLE_RFQ_EXECUTION === "true";
+const shadowUsdcFromEnv = process.env.NEXT_PUBLIC_BASE_SEPOLIA_SHADOW_USDC_ADDRESS;
+const SHADOW_USDC_ADDRESS: Address | undefined =
+  shadowUsdcFromEnv && isAddress(shadowUsdcFromEnv) ? shadowUsdcFromEnv : undefined;
 type GammaShieldChainId = typeof base.id | typeof baseSepolia.id;
 
 export type HedgeIntent = {
@@ -226,6 +229,8 @@ export function TradePanel({
 
   // Whichever collateral token this trade would actually pull from: the
   // exact maker's token for a book fill, else the standard RFQ collateral.
+  // The shadow book always collateralises in test USDC, one fixed token
+  // (lib/shadow.ts's prepareShadowFill), so no per-quote resolution needed.
   const collateralInfo =
     executionMode === "mainnet"
       ? quote?.source === "book" && quote.txs
@@ -241,7 +246,9 @@ export function TradePanel({
               symbol: collateralFor(asset, side),
             }
           : null
-      : null;
+      : SHADOW_USDC_ADDRESS
+        ? { address: SHADOW_USDC_ADDRESS, decimals: 6, symbol: "USDC" }
+        : null;
   const collateralAddress = collateralInfo?.address;
   const collateralDecimals = collateralInfo?.decimals;
   const executionChainId: GammaShieldChainId = executionMode === "mainnet" ? base.id : baseSepolia.id;
@@ -652,13 +659,17 @@ export function TradePanel({
   // Required collateral for this quote: the exact simulated book-fill amount,
   // or contracts × reservePrice (the RFQ escrow) otherwise — same math
   // as lib/trade.ts / lib/rfq.ts, just in plain floats for a UI-only check.
+  // Shadow mirrors this same quote's totalCostUsd exactly, 1:1 in test USDC —
+  // no reserve buffer, since it's a direct premium mirror, not an escrow.
   const requiredCollateral =
     quote && configured
-      ? quote.source === "book"
-        ? quote.totalCostToken
-        : quote.contracts *
-          (side === "put" ? quote.premiumPerContractUsd : quote.premiumPerContractUsd / quote.spot) *
-          RESERVE_BUFFER
+      ? executionMode === "shadow"
+        ? quote.totalCostUsd
+        : quote.source === "book"
+          ? quote.totalCostToken
+          : quote.contracts *
+            (side === "put" ? quote.premiumPerContractUsd : quote.premiumPerContractUsd / quote.spot) *
+            RESERVE_BUFFER
       : null;
   const insufficientToken =
     !!walletAddress &&
@@ -943,7 +954,7 @@ export function TradePanel({
       {executionMode === "shadow" ? (
         <button
           onClick={buyShadow}
-          disabled={!configured || !quoteInSync || shadowBusy}
+          disabled={!configured || !quoteInSync || shadowBusy || insufficientToken || insufficientGas}
           className="h-10 rounded-lg bg-blue text-white text-[13px] font-semibold hover:brightness-110 transition disabled:opacity-50"
         >
           {shadowBusy
