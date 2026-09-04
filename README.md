@@ -279,41 +279,43 @@ Variables prefixed with `NEXT_PUBLIC_` are compiled into the browser bundle. The
 ## System Architecture
 
 ```mermaid
-flowchart LR
-  subgraph Sources[Live sources]
-    T[Thetanuts SDK / OptionBook]
-    C[Coinbase + Binance]
-    G[GonkaRouter]
+flowchart TB
+  subgraph Sources[Live data and AI]
+    Thetanuts[Thetanuts SDK and OptionBook]
+    Spot[Coinbase and Binance]
+    Gonka[GonkaRouter]
   end
 
-  subgraph Server[GammaShield server]
-    S[Snapshot + risk engines]
-    Q[SDK-safe quote service]
-    A[Agent decision service]
+  subgraph App[GammaShield application]
+    Dashboard[Dashboard]
+    Server[Snapshots, risk engines, and API routes]
+    Quotes[SDK-safe quote service]
+    Worker[External agent worker]
   end
 
-  subgraph Client[Browser]
-    D[Dashboard]
-    W[Wallet via wagmi / viem]
+  subgraph Mainnet[Base mainnet]
+    Wallet[Connected wallet]
+    OptionBook[Thetanuts OptionBook]
+    MainPolicy[ERC-4337 policy account]
   end
 
-  subgraph Chain[Base]
-    O[Thetanuts OptionBook]
-    P[ERC-4337 policy account]
-    B[Base Sepolia ShadowOptionBook]
+  subgraph Sepolia[Base Sepolia]
+    ShadowPolicy[ERC-4337 policy account]
+    ShadowBook[GammaShield ShadowOptionBook]
   end
 
-  T --> S
-  C --> S
-  G --> D
-  S --> D
-  S --> Q
-  Q --> W
-  W --> O
-  S --> A
-  A --> P
-  P --> B
-  P --> O
+  Thetanuts --> Server
+  Spot --> Server
+  Gonka --> Server
+  Server --> Dashboard
+  Server --> Quotes
+  Quotes --> Wallet
+  Wallet --> OptionBook
+  Server --> Worker
+  Worker --> MainPolicy
+  MainPolicy --> OptionBook
+  Worker --> ShadowPolicy
+  ShadowPolicy --> ShadowBook
 ```
 
 ### Execution model
