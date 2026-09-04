@@ -11,10 +11,15 @@
     "lint": "eslint",
     "check:mandate": "node --experimental-strip-types scripts/mandate-self-check.mts",
     "check:strategy": "node --experimental-strip-types scripts/strategy-self-check.mts",
+    "check:risk": "node --experimental-strip-types --import ./scripts/ts-resolve.mjs scripts/contract-risk-self-check.mts",
+    "check:impact": "node --experimental-strip-types --import ./scripts/ts-resolve.mjs scripts/market-impact-self-check.mts",
     "agent:shadow": "node --env-file-if-exists=.env.local scripts/shadow-agent-worker.mjs",
     "agent:thetanuts": "POLICY_AGENT_MODE=thetanuts node --env-file-if-exists=.env.local scripts/shadow-agent-worker.mjs",
     "deploy:base:policy": "node --env-file-if-exists=.env.local scripts/deploy-base-mandate-factory.mjs",
-    "wagmi:generate": "wagmi generate"
+    "wagmi:generate": "wagmi generate",
+    "check:agent": "node --experimental-strip-types --import ./scripts/ts-resolve.mjs scripts/agent-policy-self-check.mts",
+    "deploy:sepolia:shadow": "node --env-file-if-exists=.env.local scripts/deploy-shadow-sepolia.mjs",
+    "check:sizes": "cd contracts && forge build --sizes"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.102.8",

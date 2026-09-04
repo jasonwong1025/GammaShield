@@ -9,7 +9,11 @@ import {
   type NormalizedOrder,
 } from "./engine";
 import { ALL_ASSETS, type Asset } from "./assets";
-import { bsRho } from "./modelBook";
+import { bsOptionPrice, bsRho } from "./modelBook";
+import { computeContractRisk, type ContractRisk } from "./contractRisk";
+import { getVolContext, percentileOf, type VolContext } from "./realizedVol";
+import { getSpotVolume, type SpotVolume } from "./spotVolume";
+import type { ImpactBasis } from "./marketImpact";
 
 export type MarketSnapshot = {
   ts: number;
@@ -18,6 +22,14 @@ export type MarketSnapshot = {
   assets: Record<Asset, AssetSnapshot>;
   feed: FeedRow[];
   book: { totalOrders: number; withGreeks: number };
+  /** What the contract risk model used as its realized-vol reference, per
+   * asset, so the UI can name the source instead of implying an IV history
+   * we do not keep. Null when the candle feeds were unreachable. */
+  volBaseline: Record<Asset, { vol: number; windowDays: number; lookbackDays: number; source: string } | null>;
+  /** Measured spot volume behind every market-impact estimate, per asset, so
+   * the UI can name the venues instead of implying global volume. Null when
+   * both feeds were unreachable. */
+  spotVolume: Record<Asset, SpotVolume | null>;
   source: "live" | "cache";
 };
 
@@ -39,6 +51,11 @@ export type FeedRow = {
   rho: number | null;
   pricePerContractUsd: number | null;
   maker: string;
+  /** Per-contract risk for this exact option (lib/contractRisk.ts) — a
+   * different question from the book-level `impact` below. Null for
+   * multi-leg orders, whose per-leg premiums and greeks the pricing API
+   * does not break out. */
+  risk: ContractRisk | null;
   /** What buying this order's full listed size would do to market-structure
    * risk (lib/engine.ts, deterministic). Null when the order carries no
    * greeks to price the hypothetical fill. Feeds the per-row risk drill-down
@@ -51,6 +68,11 @@ export type FeedRow = {
     regimeBefore: string;
     regimeAfter: string;
   } | null;
+  /** Everything lib/marketImpact.ts needs to price this fill's effect on SPOT
+   * at any what-if size, minus the strike ladder — that is one array per
+   * asset, already on the client for the GEX chart, so it is merged in there
+   * rather than repeated on 200 rows. Null without greeks. */
+  impactBasis: Omit<ImpactBasis, "gexByStrike"> | null;
 };
 
 const CACHE_MS = 8_000;
@@ -105,10 +127,23 @@ export async function getMarketSnapshot({ fresh = false }: { fresh?: boolean } =
 
   inflight = (async () => {
     const c = getClient();
-    const [orders, market] = await Promise.all([
+    // Realized-vol history feeds the IV component of contract risk. It is
+    // hourly-cached and independently fallible: a failure drops those
+    // sub-scores rather than failing the snapshot.
+    const [orders, market, volContexts, spotVolumes] = await Promise.all([
       c.api.fetchOrders(),
       c.api.getMarketData(),
+      Promise.all(ALL_ASSETS.map((a) => getVolContext(a).catch(() => null))),
+      // Denominator for market impact (lib/marketImpact.ts). Fails the same
+      // way: the estimate drops and says so, it is never back-filled.
+      Promise.all(ALL_ASSETS.map((a) => getSpotVolume(a).catch(() => null))),
     ]);
+    const volByAsset = Object.fromEntries(
+      ALL_ASSETS.map((a, i) => [a, volContexts[i]]),
+    ) as Record<Asset, VolContext | null>;
+    const spotVolByAsset = Object.fromEntries(
+      ALL_ASSETS.map((a, i) => [a, spotVolumes[i]]),
+    ) as Record<Asset, SpotVolume | null>;
 
     const prices = { BTC: market.prices.BTC, ETH: market.prices.ETH };
     const feeds = c.chainConfig.priceFeeds;
@@ -179,6 +214,26 @@ export async function getMarketSnapshot({ fresh = false }: { fresh?: boolean } =
 
     const nowSec = Math.floor(now / 1000);
 
+    // Best live bid/ask and resting depth per contract. A maker's side is the
+    // inverse of the taker's: an order the taker can lift is an ask, one the
+    // taker can hit is a bid. About a tenth of contracts are quoted both ways;
+    // the rest fall back to a modelled spread inside lib/contractRisk.ts.
+    type ContractQuote = { bidUsd: number | null; askUsd: number | null; depthUsd: number };
+    const contractKey = (o: NormalizedOrder) =>
+      `${o.asset}|${o.isCall ? "C" : "P"}|${o.strikes.join("_")}|${o.expiryTs}`;
+    const quotes = new Map<string, ContractQuote>();
+    for (const o of normalized) {
+      const key = contractKey(o);
+      const q = quotes.get(key) ?? { bidUsd: null, askUsd: null, depthUsd: 0 };
+      q.depthUsd += o.collateralUsd;
+      const px = o.pricePerContractUsd;
+      if (px !== null && px > 0) {
+        if (o.takerIsLong) q.askUsd = q.askUsd === null ? px : Math.min(q.askUsd, px);
+        else q.bidUsd = q.bidUsd === null ? px : Math.max(q.bidUsd, px);
+      }
+      quotes.set(key, q);
+    }
+
     const assetsBefore = Object.fromEntries(
       ALL_ASSETS.map((symbol) => [
         symbol,
@@ -203,6 +258,79 @@ export async function getMarketSnapshot({ fresh = false }: { fresh?: boolean } =
           // in the UI reveals it instantly with no round trip: "if this
           // order's full listed size gets bought, how does market-structure
           // risk move." Same what-if math as the trade-quote impact block.
+          // Per-contract risk. Single-leg only: the pricing API returns one
+          // premium and one greeks block for a multi-leg order, and splitting
+          // those across legs would be invention, not measurement.
+          const spotFor = market.prices[o.asset] ?? 0;
+          const vol = volByAsset[o.asset];
+          const quote = quotes.get(contractKey(o)) ?? {
+            bidUsd: null,
+            askUsd: null,
+            depthUsd: o.collateralUsd,
+          };
+          const risk =
+            o.strikes.length === 1 && o.greeks && o.pricePerContractUsd !== null && spotFor > 0
+              ? computeContractRisk({
+                  asset: o.asset,
+                  spot: spotFor,
+                  nowSec,
+                  expiryTs: o.expiryTs,
+                  legs: [
+                    {
+                      isCall: o.isCall,
+                      action: o.takerIsLong ? "buy" : "sell",
+                      strike: o.strike,
+                      qty: o.collateralUsd / Math.max(o.strike, 1),
+                      premiumUsd: o.pricePerContractUsd,
+                      iv: o.greeks.iv,
+                      thetaUsd: o.greeks.theta,
+                      vegaUsd: o.greeks.vega,
+                      deltaPerContract: o.greeks.delta,
+                    },
+                  ],
+                  marketScore: before.score,
+                  baselineVol: vol?.baselineVol ?? null,
+                  ivPercentile: vol ? percentileOf(vol, o.greeks.iv) : null,
+                  liquidity: {
+                    bidUsd: quote.bidUsd,
+                    askUsd: quote.askUsd,
+                    fairUsd: bsOptionPrice(
+                      spotFor,
+                      o.strike,
+                      o.greeks.iv,
+                      (o.expiryTs - nowSec) / (365 * 86400),
+                      o.isCall,
+                    ),
+                    contractDepthUsd: quote.depthUsd,
+                    // Browse view — no size chosen yet, so the participation
+                    // sub-score drops rather than assuming one.
+                    tradeSizeUsd: null,
+                  },
+                })
+              : null;
+
+          // Effect on SPOT if this order gets filled (lib/marketImpact.ts).
+          // Only the per-contract inputs travel: the browser re-runs the math
+          // for any what-if size without another round trip.
+          const sv = spotVolByAsset[o.asset];
+          const impactBasis: FeedRow["impactBasis"] =
+            o.greeks && spotFor > 0
+              ? {
+                  spot: spotFor,
+                  strike: o.strike,
+                  gammaPerContract: o.greeks.gamma,
+                  deltaPerContract: o.greeks.delta,
+                  // The taker lifts a resting order, so a maker-sold order is
+                  // one the taker buys.
+                  takerIsLong: o.takerIsLong,
+                  netGexUsd: before.netGexUsd,
+                  advUsd: sv?.advUsd ?? null,
+                  advSources: sv?.sources ?? [],
+                  baselineVol: vol?.baselineVol ?? null,
+                  volSource: vol?.source ?? null,
+                }
+              : null;
+
           let impact: FeedRow["impact"] = null;
           if (o.greeks && o.collateralUsd > 0) {
             const after = computeAssetSnapshot(
@@ -237,13 +365,27 @@ export async function getMarketSnapshot({ fresh = false }: { fresh?: boolean } =
             rho: o.greeks?.rho ?? null,
             pricePerContractUsd: o.pricePerContractUsd,
             maker: o.maker,
+            risk,
             impact,
+            impactBasis,
           };
         }),
       book: {
         totalOrders: orders.length,
         withGreeks: orders.filter((o) => o.rawApiData?.greeks).length,
       },
+      volBaseline: Object.fromEntries(
+        ALL_ASSETS.map((a) => {
+          const v = volByAsset[a];
+          return [
+            a,
+            v
+              ? { vol: v.baselineVol, windowDays: v.windowDays, lookbackDays: v.lookbackDays, source: v.source }
+              : null,
+          ];
+        }),
+      ) as MarketSnapshot["volBaseline"],
+      spotVolume: spotVolByAsset,
       source: "live",
     };
 

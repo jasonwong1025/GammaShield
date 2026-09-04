@@ -4,7 +4,7 @@ import { WalletConnect } from "./WalletConnect";
 import { EXECUTION_NETWORK } from "@/lib/explorer";
 import { useExecutionNetwork } from "./ExecutionNetworkProvider";
 
-export type NavTab = "dashboard" | "hedge";
+export type NavTab = "dashboard" | "agent";
 
 type Props = {
   activeTab?: NavTab;
@@ -48,17 +48,17 @@ export function TopBar({ activeTab = "dashboard", onTabChange, hasHighRiskAlert 
 
           <button
             type="button"
-            onClick={() => onTabChange?.("hedge")}
-            aria-current={activeTab === "hedge" ? "page" : undefined}
+            onClick={() => onTabChange?.("agent")}
+            aria-current={activeTab === "agent" ? "page" : undefined}
             className={`relative flex items-center gap-2 font-medium transition-colors ${
-              activeTab === "hedge" ? "text-fg" : "text-muted hover:text-fg"
+              activeTab === "agent" ? "text-fg" : "text-muted hover:text-fg"
             }`}
           >
             <ShieldIcon className="size-3.5 shrink-0" />
-            Autonomous Hedge
+            AI Agent
             <span className="eyebrow text-[9px] px-1.5 py-0.5 rounded bg-calm/10 text-calm">{EXECUTION_NETWORK[network].shortLabel}</span>
             {hasHighRiskAlert && <span className="flex size-2 rounded-full bg-crit animate-ping" title="Danger Zone: Risk > 75%" />}
-            {activeTab === "hedge" && <span className="absolute inset-x-0 -bottom-px h-[2px] bg-blue" />}
+            {activeTab === "agent" && <span className="absolute inset-x-0 -bottom-px h-[2px] bg-blue" />}
           </button>
         </nav>
 

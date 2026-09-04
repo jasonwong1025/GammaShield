@@ -50,3 +50,6 @@ yarn-error.log*
 next-env.d.ts
 
 *.pdf
+
+# local comparison clones (not part of this project)
+/.compare/

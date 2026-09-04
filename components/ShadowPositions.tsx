@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { useAccount, useBytecode, useReadContract } from "wagmi";
 import { baseSepolia } from "wagmi/chains";
 import { isAddress, zeroHash, type Address } from "viem";
@@ -9,12 +9,16 @@ import type { ShadowPosition } from "@/lib/shadow";
 import { mandateAccountFactoryAbi } from "@/lib/generated/contracts";
 import { fmtContracts, fmtCountdown, fmtExpiryDate, fmtStrike, fmtUsd } from "@/lib/format";
 import { ExplorerLink } from "./ExplorerLink";
+import { PositionStrategyPanel } from "./PositionStrategyPanel";
 
 const factoryFromEnv = process.env.NEXT_PUBLIC_BASE_SEPOLIA_MANDATE_FACTORY_ADDRESS;
 const FACTORY_ADDRESS: Address | undefined = factoryFromEnv && isAddress(factoryFromEnv) ? factoryFromEnv : undefined;
 type DisplayPosition = ShadowPosition & { custody: "wallet" | "policy" };
 
-export function ShadowPositions({ asset }: { asset: Asset }) {
+export function ShadowPositions({ asset, fill = false }: { asset: Asset; fill?: boolean }) {
+  // One row expanded at a time, matching the OptionBook feed's drill-down.
+  // A closed receipt is history, so it never opens.
+  const [expandedKey, setExpandedKey] = useState<number | null>(null);
   const { address } = useAccount();
   const { data: policyAccount } = useReadContract({
     address: FACTORY_ADDRESS,
@@ -84,7 +88,7 @@ export function ShadowPositions({ asset }: { asset: Asset }) {
   if (!filtered.length) return <Empty action={() => void load(address, deployedPolicy ? policyAccount : undefined)} label={`No ${asset} shadow positions for ${deployedPolicy ? "this wallet or policy account" : "this wallet"}.`} />;
 
   return (
-    <div className="feed-scroll overflow-auto grow min-h-0 max-h-[430px]">
+    <div className={`feed-scroll overflow-auto grow min-h-0 ${fill ? "" : "max-h-[430px]"}`}>
       <div className="flex items-center justify-end gap-2 px-4 pt-2 text-[10px] text-faint">
         <span>{refreshing ? "Refreshing…" : deployedPolicy ? "Wallet + policy account · refreshes every 10s" : "Auto-refreshes every 10s"}</span>
         <button onClick={() => void load(address, deployedPolicy ? policyAccount : undefined)} disabled={refreshing} aria-label="Refresh shadow positions" title="Refresh shadow positions" className="text-blue hover:text-fg disabled:opacity-50">↻</button>
@@ -102,19 +106,40 @@ export function ShadowPositions({ asset }: { asset: Asset }) {
           </tr>
         </thead>
         <tbody className="font-mono text-[11px]">
-          {filtered.map((position) => (
-            <tr key={position.id} className="border-t border-edge/50">
-              <td className="px-4 py-2 font-sans"><span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${position.isCall ? "text-calm bg-calm/10" : "text-crit bg-crit/10"}`}>{position.isCall ? "CALL" : "PUT"}</span>{position.custody === "policy" && <span className="ml-1 text-[9px] font-semibold text-blue">AGENT</span>}</td>
+          {filtered.map((position) => {
+            const expanded = expandedKey === position.id;
+            const openable = !position.closedAt;
+            return (
+            <Fragment key={position.id}>
+            <tr
+              onClick={() => openable && setExpandedKey((current) => (current === position.id ? null : position.id))}
+              aria-expanded={openable ? expanded : undefined}
+              className={`border-t border-edge/50 transition-colors ${openable ? "cursor-pointer hover:bg-panel2/60" : ""} ${expanded ? "bg-panel2/60" : ""}`}
+            >
+              <td className="px-4 py-2 font-sans"><span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${position.isCall ? "text-calm bg-calm/10" : "text-crit bg-crit/10"}`}>{position.isCall ? "CALL" : "PUT"}</span>{position.custody === "policy" && <span className="ml-1 text-[9px] font-semibold text-blue">AGENT</span>}{position.closedAt && <span className="ml-1 text-[9px] font-semibold text-faint">CLOSED</span>}</td>
               <td className="px-2 py-2 text-right num text-fg">{fmtStrike(position.strike)}</td>
               <td className="px-2 py-2 text-right text-muted whitespace-nowrap">{fmtExpiryDate(position.expiryTs)} <span className="text-faint">· {fmtCountdown(position.expiryTs, now)}</span></td>
               <td className="px-2 py-2 text-right num text-fg">{fmtUsd(position.premiumUsd, false, 6)} USDC</td>
               <td className="px-2 py-2 text-right num" title={position.mark ? `Modeled from ${position.mark.source}; not a fillable Thetanuts price or settlement.` : "No live IV mark is available."}>
-                {position.mark ? <><span style={{ color: position.mark.pnlUsd >= 0 ? "var(--calm)" : "var(--crit)" }}>{position.mark.pnlUsd >= 0 ? "+" : "−"}{fmtUsd(Math.abs(position.mark.pnlUsd), false, 6)}</span><span className="block text-[10px] text-faint">{position.mark.source}</span></> : <span className="text-faint">No live mark</span>}
+                {position.mark ? <><span style={{ color: position.mark.pnlUsd >= 0 ? "var(--calm)" : "var(--crit)" }}>{position.mark.pnlUsd >= 0 ? "+" : "−"}{fmtUsd(Math.abs(position.mark.pnlUsd), false, 6)}</span><span className="block text-[10px] text-faint">{position.mark.source}</span></> : <span className="text-faint">{position.closedAt ? "Closed by the agent" : "No live mark"}</span>}
               </td>
               <td className="px-2 py-2 text-right num text-fg">{fmtContracts(position.contracts)}</td>
               <td className="px-4 py-2 text-right">{position.txHash ? <ExplorerLink network="sepolia" resource="tx" value={position.txHash} className="text-blue hover:underline">View receipt</ExplorerLink> : <span className="text-muted">#{position.id}</span>}</td>
             </tr>
-          ))}
+            {expanded && (
+              <tr className="bg-panel2/40">
+                <td colSpan={7} className="px-4 py-3">
+                  <PositionStrategyPanel
+                    position={{ id: String(position.id), asset: position.asset, isCall: position.isCall, strike: position.strike, expiryTs: position.expiryTs, contracts: position.contracts, custody: position.custody }}
+                    network="sepolia"
+                    policyAccount={deployedPolicy ? policyAccount : null}
+                  />
+                </td>
+              </tr>
+            )}
+            </Fragment>
+            );
+          })}
         </tbody>
       </table>
       <p className="px-4 py-2 text-[10px] text-faint">Estimated PnL uses live spot and current Thetanuts IV; it is not a fillable price or settlement.</p>

@@ -9,7 +9,7 @@ import { PriceChart } from "./PriceChart";
 import { RiskView } from "./RiskView";
 import { BookCard } from "./BookFeed";
 import { CopilotWidget } from "./CopilotWidget";
-import { HedgeView } from "./HedgeView";
+import { AgentView } from "./AgentView";
 import { ExecutionNetworkProvider } from "./ExecutionNetworkProvider";
 import { ALL_ASSETS, isOptionsAsset, type Asset } from "@/lib/assets";
 
@@ -34,6 +34,7 @@ export function Dashboard() {
       setSnap(data);
       setTicker((t) => t ?? data.ticker);
       setError(null);
+
     } catch (e) {
       setError(e instanceof Error ? e.message : "network error");
     }
@@ -98,74 +99,81 @@ export function Dashboard() {
 
   return (
     <ExecutionNetworkProvider>
-      <div className="flex flex-col min-h-dvh">
-        <TopBar
-          activeTab={activeTab}
-          onTabChange={setActiveTab}
-          hasHighRiskAlert={hasHighRisk}
-        />
+    <div className="flex flex-col min-h-dvh">
+      <TopBar
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        hasHighRiskAlert={hasHighRisk}
+      />
 
-        <div className="flex grow min-h-0 flex-col">
-          {!snap && !error && <Booting />}
-          {error && !snap && <Failed message={error} retry={load} />}
+      <div className="flex grow min-h-0 flex-col">
+        {!snap && !error && <Booting />}
+        {error && !snap && <Failed message={error} retry={load} />}
 
-          {snap && (
-            <>
-              <div className="flex items-center gap-3 px-5 py-3 border-b border-edge bg-panel">
-                <AssetSwitcher
-                  asset={asset}
-                  onAsset={setAsset}
-                  ticker={ticker}
-                  scores={
-                    Object.fromEntries(
-                      Object.entries(snap.assets).map(([k, v]) => [k, v.score]),
-                    ) as Record<Asset, number>
-                  }
-                />
-              </div>
+        {snap && (
+          <>
+            <div className="flex items-center gap-3 px-5 py-3 border-b border-edge bg-panel">
+              <AssetSwitcher
+                asset={asset}
+                onAsset={setAsset}
+                ticker={ticker}
+                scores={
+                  Object.fromEntries(
+                    Object.entries(snap.assets).map(([k, v]) => [k, v.score]),
+                  ) as Record<Asset, number>
+                }
+              />
+            </div>
 
-              {a && (
-                <>
-                  {/* TAB 1: Main Dashboard (Trading, OptionBook, RiskView from main) */}
-                  {activeTab === "dashboard" && (
-                    <div className="grid grow grid-cols-1 xl:grid-cols-[1fr_380px] gap-px bg-edge">
-                      <div className="flex flex-col gap-px min-w-0">
-                        <PriceChart asset={asset} flip={a.flipStrike} livePrice={livePrice} />
-                        <BookCard rows={snap.feed} snap={a} asset={asset} live={live} spot={livePrice} />
-                        <RiskView snap={a} />
-                        <div className="grow bg-panel" />
-                      </div>
-
-                      <div className="flex flex-col gap-px min-w-0">
-                        <TradePanel key={asset} asset={asset} live={live} hedgeIntent={null} />
-                        <div className="grow bg-panel" />
-                      </div>
+            {a && (
+              <>
+                {/* TAB 1: Main Dashboard (Trading, OptionBook, RiskView from main) */}
+                {activeTab === "dashboard" && (
+                  <div className="grid grow grid-cols-1 xl:grid-cols-[1fr_380px] gap-px bg-edge">
+                    <div className="flex flex-col gap-px min-w-0">
+                      <PriceChart asset={asset} flip={a.flipStrike} livePrice={livePrice} />
+                      <BookCard
+                        rows={snap.feed}
+                        snap={a}
+                        asset={asset}
+                        live={live}
+                        spot={livePrice}
+                        volBaseline={snap.volBaseline?.[asset] ?? null}
+                      />
+                      <RiskView snap={a} />
+                      <div className="grow bg-panel" />
                     </div>
-                  )}
 
-                  {/* TAB 2: Autonomous Thetanuts Hedging Workspace */}
-                  {activeTab === "hedge" && (
-                    <HedgeView
-                      snap={a}
-                      feed={snap.feed}
-                      asset={asset}
-                      live={live}
-                      spot={livePrice}
-                    />
-                  )}
-                </>
-              )}
-            </>
-          )}
-        </div>
+                    <div className="flex flex-col gap-px min-w-0">
+                      <TradePanel key={asset} asset={asset} live={live} hedgeIntent={null} />
+                      <div className="grow bg-panel" />
+                    </div>
+                  </div>
+                )}
 
-        <CopilotWidget
-          snap={a}
-          onNavigateToHedge={() => {
-            setActiveTab("hedge");
-          }}
-        />
+                {/* TAB 2: AI agent workspace — limits, policy, monitoring */}
+                {activeTab === "agent" && (
+                  <AgentView
+                    snap={a}
+                    feed={snap.feed}
+                    asset={asset}
+                    live={live}
+                    spot={livePrice}
+                  />
+                )}
+              </>
+            )}
+          </>
+        )}
       </div>
+
+      <CopilotWidget
+        snap={a}
+        onNavigateToAgent={() => {
+          setActiveTab("agent");
+        }}
+      />
+    </div>
     </ExecutionNetworkProvider>
   );
 }

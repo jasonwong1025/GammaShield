@@ -4,6 +4,10 @@
 
 import { gonkaApiKey, gonkaBaseUrl } from "./gonkaConfig";
 import type { PutCandidate } from "./optimizerTypes";
+import type { Asset } from "./assets";
+import { getSpotVolume } from "./spotVolume";
+import { getVolContext } from "./realizedVol";
+import { dailyVolPctOf, oneRoundImpact, IMPACT_COEFFICIENT } from "./marketImpact";
 
 export const GONKA_MODELS = {
   PRIMARY: "MiniMaxAI/MiniMax-M2.7", // Recommended agent & reasoning model (200k context)
@@ -286,6 +290,15 @@ export type WhatIfResult = {
   gonkaRequestId: string | null;
   modelUsed: string | null;
   optimalContract?: PutCandidate;
+  /** False when spot volume or realized vol could not be read — the numeric
+   * fields are then zeroed and must not be shown as an estimate. */
+  impactAvailable: boolean;
+  /** Measured 24h spot volume behind the estimate, and the venues summed. */
+  advUsd: number | null;
+  advSources: string[];
+  /** Daily move used by the impact law, percent, from realized vol. */
+  dailyVolPct: number | null;
+  volSource: string | null;
 };
 
 /**
@@ -296,35 +309,80 @@ export async function simulateWhatIfQuery(params: WhatIfRequest): Promise<WhatIf
   const baseUrl = gonkaBaseUrl;
   const selectedModel = params.model || GONKA_MODELS.FLASH;
 
-  // 1. Coarse heuristic extraction as fallback
+  // 1. Coarse heuristic extraction as fallback.
+  //    The unit suffix has to come off the SAME match as the number: scanning
+  //    the whole question for a "b" made every "buy $50M in BTC" a billion.
   const parsedAction: "BUY" | "SELL" = params.question.toLowerCase().includes("buy") ? "BUY" : "SELL";
   let parsedSizeM = 10;
-  const numMatch = params.question.match(/\$?(\d+(?:\.\d+)?)\s*(?:m|million|k|thousand|b|billion)?/i);
+  const numMatch = params.question.match(
+    /\$?\s*(\d+(?:\.\d+)?)\s*(bn|billion|b|mm|million|m|thousand|k)?\b/i,
+  );
   if (numMatch) {
     let rawNum = parseFloat(numMatch[1]);
-    if (params.question.toLowerCase().includes("k") || params.question.toLowerCase().includes("thousand")) {
-      rawNum /= 1000;
-    } else if (params.question.toLowerCase().includes("b") || params.question.toLowerCase().includes("billion")) {
-      rawNum *= 1000;
-    }
+    const unit = (numMatch[2] ?? "").toLowerCase();
+    if (unit === "k" || unit === "thousand") rawNum /= 1000;
+    else if (unit === "b" || unit === "bn" || unit === "billion") rawNum *= 1000;
+    // No suffix means millions, the unit the readout is denominated in.
     parsedSizeM = Math.max(1, Math.min(1000, Math.round(rawNum)));
   }
 
-  // 2. Compute first-order deterministic market impact
-  const MARKET_ADV: Record<string, number> = {
-    BTC: 25_000_000_000,
-    ETH: 12_000_000_000,
-  };
-  const adv = MARKET_ADV[params.asset] || 5_000_000_000;
+  // 2. First-order market impact, on the same square-root law and the same
+  //    measured inputs the trade panel uses (lib/marketImpact.ts). Daily
+  //    volume and volatility are fetched, never assumed — an earlier version
+  //    hardcoded $25B/$12B of volume, roughly fifty times what the venues
+  //    actually report. Without both readings there is no estimate to give.
   const sizeUsd = parsedSizeM * 1_000_000;
-  const dailyVolPct = 3.5;
-  const impactPct = dailyVolPct * Math.sqrt(sizeUsd / adv);
-  const initialMovePct = impactPct * (parsedAction === "BUY" ? 1 : -1);
-  const hedgeFlowUsd = -params.netGexUsd * initialMovePct;
+  const [spotVolume, volContext] = await Promise.all([
+    getSpotVolume(params.asset as Asset).catch(() => null),
+    getVolContext(params.asset as Asset).catch(() => null),
+  ]);
+  const advUsd = spotVolume?.advUsd ?? null;
+  const dailyVolPct = volContext ? dailyVolPctOf(volContext.baselineVol) : null;
+  const flow =
+    advUsd !== null && dailyVolPct !== null
+      ? oneRoundImpact({
+          orderUsd: sizeUsd * (parsedAction === "BUY" ? 1 : -1),
+          netGexUsd: params.netGexUsd,
+          advUsd,
+          dailyVolPct,
+          coefficient: IMPACT_COEFFICIENT,
+        })
+      : null;
+  const impactAvailable = flow !== null;
+  const initialMovePct = flow?.initialPct ?? 0;
+  const hedgeFlowUsd = flow?.hedgeFlowUsd ?? 0;
+  const totalMovePct = flow?.totalPct ?? 0;
+  const amplification = flow?.amplification ?? 1;
   const sameDirection = Math.sign(hedgeFlowUsd) === Math.sign(initialMovePct);
-  const feedbackMovePct = Math.sign(hedgeFlowUsd || 0) * (dailyVolPct * Math.sqrt(Math.abs(hedgeFlowUsd) / adv));
-  const totalMovePct = initialMovePct + feedbackMovePct;
-  const amplification = initialMovePct !== 0 ? totalMovePct / initialMovePct : 1;
+  const basis = {
+    impactAvailable,
+    advUsd,
+    advSources: spotVolume?.sources ?? [],
+    dailyVolPct,
+    volSource: volContext?.source ?? null,
+  };
+
+  if (advUsd === null || dailyVolPct === null || !flow) {
+    // Say what is missing rather than narrating numbers we could not measure.
+    const missing = [
+      advUsd === null ? "spot volume (Coinbase and Binance both unreachable)" : null,
+      dailyVolPct === null ? "realized-vol history" : null,
+    ].filter(Boolean).join(" and ");
+    return {
+      parsedAction,
+      parsedSizeM,
+      initialMovePct: 0,
+      hedgeFlowUsd: 0,
+      totalMovePct: 0,
+      amplification: 1,
+      source: "deterministic",
+      conversationalAnswer: `No market-impact estimate right now — ${missing} could not be read, and the impact law needs both. Dealer positioning is still live: net GEX is $${params.netGexUsd.toLocaleString()} in a ${params.regime} regime.`,
+      strategicAdvice: "Retry once the price feeds recover; nothing here is being estimated from defaults.",
+      gonkaRequestId: null,
+      modelUsed: null,
+      ...basis,
+    };
+  }
 
   // 3. If API Key is configured, generate rich conversational AI explanation via GonkaRouter
   if (apiKey && apiKey !== "sk-your-gonkarouter-api-key-here") {
@@ -338,6 +396,7 @@ Context:
 - Direct Impact: ${initialMovePct > 0 ? "+" : ""}${initialMovePct.toFixed(2)}%
 - Dealer Net GEX: $${params.netGexUsd.toLocaleString()} (Regime: ${params.regime.toUpperCase()}, Fragility Score: ${params.score}/100)
 - Estimated Total Move: ${totalMovePct > 0 ? "+" : ""}${totalMovePct.toFixed(2)}% (Amplification: ${amplification.toFixed(2)}x)
+- Impact basis: $${Math.round(advUsd).toLocaleString()} measured 24h spot volume (${basis.advSources.join(" + ")}), ${dailyVolPct.toFixed(2)}% daily realized vol
 
 JSON schema:
 {
@@ -379,6 +438,7 @@ JSON schema:
           gonkaRequestId: typeof json.id === "string" ? json.id : null,
           modelUsed: selectedModel,
           optimalContract: params.optimalContract || undefined,
+          ...basis,
         };
       }
     } catch (e) {
@@ -401,5 +461,6 @@ JSON schema:
       : `Market depth is currently stable. Direct market execution has low secondary feedback.`,
     gonkaRequestId: null,
     modelUsed: null,
+    ...basis,
   };
 }
