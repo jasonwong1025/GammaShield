@@ -8,14 +8,14 @@ import { erc20Abi, mandateAccountAbi, mandateAccountFactoryAbi, useReadErc20Bala
 import { shortAddr } from "@/lib/format";
 import { wagmiConfig } from "@/lib/wagmi";
 import { MandateSigningPanel } from "./MandateSigningPanel";
-import { AgentMonitoringPanel } from "./AgentMonitoringPanel";
 import { StepHeader } from "./StepHeader";
 import { ExplorerLink } from "./ExplorerLink";
 import { useExecutionNetwork } from "./ExecutionNetworkProvider";
 import { policyNetwork } from "@/lib/policyNetwork";
 import { ensureWalletChain, walletActionError } from "@/lib/walletChain";
+import type { ExecutionNetwork } from "@/lib/explorer";
 
-export function PolicyAccountPanel({ spot }: { spot: number }) {
+export function PolicyAccountPanel({ spot, onAgentActive }: { spot: number; onAgentActive?: (agent: { account: Address; mandateHash: Hex; network: ExecutionNetwork } | null) => void }) {
   const { network } = useExecutionNetwork();
   const policy = policyNetwork(network);
   const { address, connector, isConnected } = useAccount();
@@ -49,6 +49,14 @@ export function PolicyAccountPanel({ spot }: { spot: number }) {
   });
   const activeMandate = activeMandateHash && activeMandateHash !== zeroHash ? activeMandateHash : null;
   const accountStateUnknown = Boolean(bytecodeError);
+  const [accountDetailsOpen, setAccountDetailsOpen] = useState(false);
+
+  useEffect(() => {
+    if (!onAgentActive) return;
+    if (deployed && accountAddress && activeMandate) onAgentActive({ account: accountAddress, mandateHash: activeMandate, network });
+    else onAgentActive(null);
+    return () => onAgentActive(null);
+  }, [onAgentActive, deployed, accountAddress, activeMandate, network]);
   const deploymentMessage = deploymentFailed
     ? `The deployment transaction did not succeed on-chain: ${walletActionError(deploymentError, "check the linked transaction before retrying.")} No policy account was created; network gas may have been charged.`
     : message;
@@ -93,33 +101,44 @@ export function PolicyAccountPanel({ spot }: { spot: number }) {
         <p className="rounded-lg border border-edge bg-panel2 p-3 text-[12px] text-muted">Connect the wallet that will own this policy account.</p>
       ) : (
         <>
-          <div className="readout grid gap-2 p-3 text-[12px] sm:grid-cols-[130px_1fr]">
-            <span className="text-faint">Owner wallet</span>
-            <ExplorerLink network={network} resource="address" value={address} className="font-mono text-fg hover:text-blue">{shortAddr(address)}</ExplorerLink>
-            <span className="text-faint">Derived account</span>
-            {accountAddress ? <ExplorerLink network={network} resource="address" value={accountAddress} className="font-mono text-fg hover:text-blue">{shortAddr(accountAddress)}</ExplorerLink> : <span className="font-mono text-fg">{isDeriving ? "Deriving…" : "Unavailable"}</span>}
-          </div>
+          {deployed && accountAddress && !accountDetailsOpen ? (
+            <div className="flex flex-wrap items-center gap-2 text-[12px]">
+              <ExplorerLink network={network} resource="address" value={accountAddress} className="font-mono text-fg hover:text-blue">{shortAddr(accountAddress)}</ExplorerLink>
+              <button type="button" onClick={() => setAccountDetailsOpen(true)} className="text-[11px] font-semibold text-blue hover:underline">Show details</button>
+            </div>
+          ) : (
+            <>
+              <div className="readout grid gap-2 p-3 text-[12px] sm:grid-cols-[130px_1fr]">
+                <span className="text-faint">Owner wallet</span>
+                <ExplorerLink network={network} resource="address" value={address} className="font-mono text-fg hover:text-blue">{shortAddr(address)}</ExplorerLink>
+                <span className="text-faint">Derived account</span>
+                {accountAddress ? <ExplorerLink network={network} resource="address" value={accountAddress} className="font-mono text-fg hover:text-blue">{shortAddr(accountAddress)}</ExplorerLink> : <span className="font-mono text-fg">{isDeriving ? "Deriving…" : "Unavailable"}</span>}
+              </div>
 
-          {deriveError && <p className="text-[12px] text-crit">Could not derive the policy account on {network === "mainnet" ? "Base mainnet" : "Base Sepolia"}.</p>}
-          {accountAddress && isCheckingDeployment && <p className="text-[12px] text-muted">Checking whether the deterministic policy account is already deployed…</p>}
-          {accountStateUnknown && <p className="text-[12px] text-crit">Could not verify whether this policy account is deployed. Reload or restore the Base RPC connection before submitting another deployment.</p>}
+              {deriveError && <p className="text-[12px] text-crit">Could not derive the policy account on {network === "mainnet" ? "Base mainnet" : "Base Sepolia"}.</p>}
+              {accountAddress && isCheckingDeployment && <p className="text-[12px] text-muted">Checking whether the deterministic policy account is already deployed…</p>}
+              {accountStateUnknown && <p className="text-[12px] text-crit">Could not verify whether this policy account is deployed. Reload or restore the Base RPC connection before submitting another deployment.</p>}
 
-          <div className="flex flex-wrap items-center gap-2">
-            {deployed && accountAddress ? (
-              <ExplorerLink network={network} resource="address" value={accountAddress} className="h-9 rounded-lg bg-panel2 px-3 text-[12px] font-semibold text-blue hover:bg-panel3">
-                View account ↗
-              </ExplorerLink>
-            ) : (
-              <button type="button" onClick={() => void createAccount()} disabled={busy || isDeriving || isCheckingDeployment || !canDerive || accountStateUnknown} className="h-9 rounded-lg bg-blue px-3 text-[12px] font-semibold text-white hover:brightness-110 disabled:cursor-wait disabled:opacity-60">
-                {isSwitching ? "Switching network…" : isSubmitting ? "Confirm in wallet…" : isConfirming ? "Deploying account…" : "Create policy account"}
-              </button>
-            )}
-            <span className="text-[11px] text-faint">This is a one-time wallet transaction; it does not enable autonomous trading.</span>
-          </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {deployed && accountAddress ? (
+                  <>
+                    <ExplorerLink network={network} resource="address" value={accountAddress} className="h-9 rounded-lg bg-panel2 px-3 text-[12px] font-semibold text-blue hover:bg-panel3">
+                      View account ↗
+                    </ExplorerLink>
+                    <button type="button" onClick={() => setAccountDetailsOpen(false)} className="h-9 rounded-lg px-3 text-[12px] font-semibold text-muted hover:bg-panel2">Hide details</button>
+                  </>
+                ) : (
+                  <button type="button" onClick={() => void createAccount()} disabled={busy || isDeriving || isCheckingDeployment || !canDerive || accountStateUnknown} className="h-9 rounded-lg bg-blue px-3 text-[12px] font-semibold text-white hover:brightness-110 disabled:cursor-wait disabled:opacity-60">
+                    {isSwitching ? "Switching network…" : isSubmitting ? "Confirm in wallet…" : isConfirming ? "Deploying account…" : "Create policy account"}
+                  </button>
+                )}
+                {!deployed && <span className="text-[11px] text-faint">This is a one-time wallet transaction; it does not enable autonomous trading.</span>}
+              </div>
+            </>
+          )}
           {isConfirming && transactionHash && <p className="rounded-lg border border-edge bg-panel2 p-3 text-[12px] text-muted">Deployment transaction submitted; awaiting Base confirmation. <ExplorerLink network={network} resource="tx" value={transactionHash} className="underline">View transaction</ExplorerLink></p>}
           {deployed && accountAddress && <MandateSigningPanel key={accountAddress} owner={address} account={accountAddress} network={network} spot={spot} />}
           {deployed && accountAddress && <PolicyFundingPanel account={accountAddress} network={network} collateral={policy.collateral} collateralLabel={policy.collateralLabel} chainId={policy.chainId} />}
-          {deployed && accountAddress && activeMandate && <AgentMonitoringPanel account={accountAddress} mandateHash={activeMandate} network={network} />}
         </>
       )}
 

@@ -123,6 +123,8 @@ export function MandateSigningPanel({
   const [savingActions, setSavingActions] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isRegistering, setIsRegistering] = useState(false);
+  const [showSignedTerms, setShowSignedTerms] = useState(false);
+  const [editingLimits, setEditingLimits] = useState(false);
 
   const { connector } = useAccount();
   const { switchChainAsync, isPending: isSwitching } = useSwitchChain();
@@ -171,6 +173,10 @@ export function MandateSigningPanel({
     }
   }, [limits, spot]);
   const actionsDirty = savedActions != null && AGENT_ACTIONS.some((action) => savedActions[action] !== actions[action]);
+  // Once a policy is live, the editable form is noise on every return visit —
+  // show what's signed and what's switched on, and only expand the form when
+  // the user actually means to change something.
+  const collapsed = Boolean(active) && !editingLimits;
 
   // The standing view, as it would be stored. `referenceSpot` is captured now,
   // because "spot moved against the view" is meaningless without the price the
@@ -425,6 +431,8 @@ export function MandateSigningPanel({
 
       {!configured ? (
         <p className="mt-3 rounded-lg border border-crit/30 bg-crit/10 p-3 text-[12px] text-crit">The {network === "mainnet" ? "Base-mainnet" : "Base Sepolia"} policy configuration is incomplete.</p>
+      ) : collapsed ? (
+        <LimitsSummary limits={limits} thesis={savedThesis} actions={savedActions ?? actions} onEdit={() => setEditingLimits(true)} />
       ) : (
         <>
           <div className="mt-3 grid gap-3 sm:grid-cols-3">
@@ -443,9 +451,9 @@ export function MandateSigningPanel({
             />
           </div>
 
-          <div className="mt-4">
-            <h4 className="text-[12px] font-semibold text-fg">Objective and standing view</h4>
-            <p className="mt-1 max-w-[68ch] text-[11px] leading-relaxed text-faint">
+          <div className="mt-4 border-t border-edge pt-4">
+            <h4 className="text-[13px] font-bold tracking-[-0.01em] text-fg">Objective and standing view</h4>
+            <p className="mt-1 max-w-[68ch] text-[12px] leading-relaxed text-muted">
               Nothing on-chain records why a position was opened, and whether to close, roll or hold turns on exactly that. This
               is the view the agent assumes for anything it opens itself; a position opened at the trade desk can carry its own.
             </p>
@@ -493,8 +501,8 @@ export function MandateSigningPanel({
             </div>
             {managedPositions.length > 0 && (
               <div className="mt-2 rounded-lg border border-edge bg-panel p-2.5">
-                <p className="text-[12px] font-semibold text-fg">Per-position overrides</p>
-                <p className="mt-1 text-[11px] leading-relaxed text-faint">
+                <p className="text-[13px] font-bold tracking-[-0.01em] text-fg">Per-position overrides</p>
+                <p className="mt-1 text-[12px] leading-relaxed text-muted">
                   A position with its own view ignores the standing one. Because a broken view can trigger an exit, these are keyed
                   to the position id the agent actually acts on — never inferred from a recent trade.
                 </p>
@@ -541,33 +549,46 @@ export function MandateSigningPanel({
             </div>
           </div>
 
-          <div className="mt-3 grid gap-2 sm:grid-cols-3">
-            {availability.map((entry) => (
-              <ActionToggle
-                key={entry.action}
-                entry={entry}
-                onChange={(enabled) => setActions((value) => ({ ...value, [entry.action]: enabled }))}
-              />
-            ))}
+          <div className="mt-4 border-t border-edge pt-4">
+            <h4 className="text-[13px] font-bold tracking-[-0.01em] text-fg">Actions the agent may take</h4>
+            <p className="mt-1 max-w-[68ch] text-[12px] leading-relaxed text-muted">
+              These switches are stored off-chain and only ever narrow the signed policy below. The on-chain stop is Pause or
+              Revoke, in the policy account panel.
+            </p>
+            <div className="mt-2 grid gap-2 sm:grid-cols-3">
+              {availability.map((entry) => (
+                <ActionToggle
+                  key={entry.action}
+                  entry={entry}
+                  onChange={(enabled) => setActions((value) => ({ ...value, [entry.action]: enabled }))}
+                />
+              ))}
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-faint">
+              {actionsDirty && (
+                <button type="button" onClick={() => void saveActions()} disabled={savingActions} className="h-7 rounded-lg bg-blue px-2.5 text-[11px] font-semibold text-white disabled:cursor-wait disabled:opacity-60">
+                  {savingActions ? "Confirm in wallet…" : "Save switches"}
+                </button>
+              )}
+              {savedActions && !actionsDirty && <span className="text-calm">Switches saved.</span>}
+            </div>
           </div>
 
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-faint">
-            <span>
-              These switches are stored off-chain and only ever narrow the signed policy. The on-chain stop is Pause or Revoke.
-            </span>
-            {actionsDirty && (
-              <button type="button" onClick={() => void saveActions()} disabled={savingActions} className="h-7 rounded-lg bg-blue px-2.5 text-[11px] font-semibold text-white disabled:cursor-wait disabled:opacity-60">
-                {savingActions ? "Confirm in wallet…" : "Save switches"}
-              </button>
-            )}
-            {savedActions && !actionsDirty && <span className="text-calm">Switches saved.</span>}
+          <div className="mt-4 border-t border-edge pt-4">
+            <button
+              type="button"
+              onClick={() => setShowSignedTerms((value) => !value)}
+              className="text-[12px] font-semibold text-blue hover:underline"
+              aria-expanded={showSignedTerms}
+            >
+              {showSignedTerms ? "Hide what gets signed" : "Show what gets signed"}
+            </button>
+            {"error" in caps ? (
+              <p className="mt-3 rounded-lg border border-crit/30 bg-crit/10 p-3 text-[12px] text-crit">These limits cannot be signed: {caps.error}.</p>
+            ) : showSignedTerms ? (
+              <SignedTerms caps={caps.value} limits={limits} timing={timing} spot={spot} collateralLabel={policy.collateralLabel} />
+            ) : null}
           </div>
-
-          {"error" in caps ? (
-            <p className="mt-3 rounded-lg border border-crit/30 bg-crit/10 p-3 text-[12px] text-crit">These limits cannot be signed: {caps.error}.</p>
-          ) : (
-            <SignedTerms caps={caps.value} limits={limits} timing={timing} spot={spot} collateralLabel={policy.collateralLabel} />
-          )}
 
           {draft && (
             <div className="mt-3 rounded-lg border border-blue/30 bg-blue/5 p-3 text-[12px] text-muted">
@@ -595,6 +616,9 @@ export function MandateSigningPanel({
               {isSwitching ? "Switching network…" : isSigning ? "Confirm in wallet…" : "Review and sign limits"}
             </button>
             <span className="text-[11px] text-faint">The agent cannot change these terms.</span>
+            {active && (
+              <button type="button" onClick={() => setEditingLimits(false)} className="ml-auto h-9 rounded-lg px-3 text-[12px] font-semibold text-muted hover:bg-panel2">Done</button>
+            )}
           </div>
         </>
       )}
@@ -607,6 +631,35 @@ export function MandateSigningPanel({
       {active && <div className="mt-3 rounded-lg border border-edge bg-panel2 p-3 text-[12px] text-muted"><p>Active policy <span className="font-mono text-fg">{shortAddr(active)}</span>{control?.[0] ? ", paused" : ", executable only within its limits"}</p>{isReadingControl ? <p className="mt-2">Checking pause/revocation state…</p> : controlError ? <p className="mt-2 text-crit">Could not verify pause/revocation state. Controls are disabled until the Base RPC read recovers.</p> : <div className="mt-2 flex flex-wrap gap-2"><button type="button" onClick={() => void changeControl(control?.[0] ? "resumeMandate" : "pauseMandate")} disabled={busy} className="h-8 rounded-lg bg-panel3 px-3 text-[11px] font-semibold text-fg disabled:cursor-wait disabled:opacity-60">{control?.[0] ? "Resume" : "Pause"}</button><button type="button" onClick={() => void changeControl("revokeMandate")} disabled={busy} className="h-8 rounded-lg border border-crit/40 px-3 text-[11px] font-semibold text-crit disabled:cursor-wait disabled:opacity-60">Revoke</button></div>}</div>}
       {(transactionFailed || error) && <p className="mt-3 rounded-lg border border-crit/30 bg-crit/10 p-3 text-[12px] text-crit">{transactionFailed ? `Policy transaction did not succeed on-chain: ${walletActionError(transactionError, "check the linked transaction before retrying.")} The active policy is unchanged; network gas may have been charged.` : error}</p>}
     </section>
+  );
+}
+
+/** What's live, at a glance — the collapsed state of an already-signed
+ *  policy. Every value here is exactly what the full form below would show;
+ *  nothing is summarized away, only hidden until asked for. */
+function LimitsSummary({
+  limits,
+  thesis,
+  actions,
+  onEdit,
+}: {
+  limits: AgentLimits;
+  thesis: TradingThesis | null;
+  actions: Record<AgentAction, boolean>;
+  onEdit: () => void;
+}) {
+  const enabledActions = AGENT_ACTIONS.filter((action) => actions[action]);
+  return (
+    <div className="mt-3 flex flex-wrap items-start justify-between gap-3 rounded-lg border border-edge bg-panel2 p-3">
+      <div className="grid gap-x-4 gap-y-1.5 text-[12px] sm:grid-cols-2">
+        <span className="text-fg"><span className="text-faint">Asset </span><span className="font-semibold">{limits.asset}</span></span>
+        <span className="text-fg"><span className="text-faint">Max loss </span><span className="font-semibold">{fmtUsd(limits.maxLossUsd)}</span></span>
+        <span className="text-fg"><span className="text-faint">Max trade </span><span className="font-semibold">{fmtUsd(limits.maxTradeNotionalUsd)}</span></span>
+        <span className="text-fg"><span className="text-faint">View </span><span className="font-semibold">{thesis ? `${OBJECTIVE_LABEL[thesis.objective]} · ${thesis.direction[0]}${thesis.direction.slice(1).toLowerCase()}` : "Not set"}</span></span>
+        <span className="text-fg sm:col-span-2"><span className="text-faint">Actions </span><span className="font-semibold">{enabledActions.length > 0 ? enabledActions.map((action) => ACTION_LABEL[action]).join(", ") : "None enabled"}</span></span>
+      </div>
+      <button type="button" onClick={onEdit} className="h-8 shrink-0 rounded-lg bg-panel3 px-3 text-[11px] font-semibold text-blue hover:bg-panel">Edit limits</button>
+    </div>
   );
 }
 
