@@ -86,21 +86,22 @@ export function AgentMonitoringPanel({ account, mandateHash, network }: { accoun
       {needsAttention && <span className="rounded-full bg-crit/10 px-2.5 py-1 text-[10px] font-semibold text-crit">Action needed</span>}
     </div>
     <p className="mt-1 max-w-[68ch] text-[12px] leading-relaxed text-muted">
-      The external {network === "mainnet" ? "Thetanuts" : "shadow"} worker checks the live book and risk every 10–15 seconds. It can only act after funding, the signed threshold and persistence period, and a fresh eligible quote — and only through the actions you switched on. {network === "mainnet" ? "On Base mainnet that is Auto-Hedge alone." : "On Base Sepolia all three actions are available."}
+      Checks the live book every 10–15 seconds and can only act within your signed limits and enabled switches.{" "}
+      {network === "mainnet" ? "Only Auto-Hedge runs on Base mainnet." : "All three actions run on Base Sepolia."}
     </p>
     <div className="readout mt-3 grid gap-2 p-3 text-[11px] sm:grid-cols-[150px_1fr]">
       <span className="text-faint">Worker</span><span className="text-fg">{workerText(agent, agentError, now)}</span>
-      <span className="text-faint">Execution mode</span><span className="text-fg">{!agent ? "Checking worker mode…" : agent.dryRun ? "Dry run — validates only; it cannot spend funds." : network === "mainnet" ? "Broadcast enabled — a qualifying fill may use policy funds." : "Shadow execution — Base Sepolia test funds only."}</span>
-      <span className="text-faint">Latest decision</span><span className="text-fg">{agent?.latest ? decisionText(agent.latest) : "Waiting for the first worker check."}</span>
+      <span className="text-faint">Execution mode</span><span className="text-fg">{!agent ? "Checking…" : agent.dryRun ? "Dry run — cannot spend funds." : network === "mainnet" ? "Broadcast enabled." : "Shadow execution — test funds only."}</span>
+      <span className="text-faint">Latest decision</span><span className="text-fg">{agent?.latest ? (agent.latest.decision ? shortDecisionText(agent.latest) : decisionText(agent.latest)) : "Waiting for the first check."}</span>
       <span className="text-faint">Risk evidence</span><span className="text-fg">{evidence}{threshold != null ? ` · threshold ${threshold.toFixed(2)} / 100` : ""}</span>
       <span className="text-faint">Persistence</span><span className="text-fg">{persistence}</span>
       {agent?.recent && <><span className="text-faint">Latest UserOperation</span><span className={agent.recent.status === "confirmed" ? "text-calm" : "text-crit"}>{agent.recent.status === "confirmed" ? "Confirmed" : "Reverted"}{agent.recent.transactionHash && <>. <ExplorerLink network={network} resource="tx" value={agent.recent.transactionHash} className="underline">View transaction</ExplorerLink></>}</span></>}
     </div>
 
     {agent?.latest?.decision && <Assessment latest={agent.latest} network={network} />}
-    {agent?.worker === "not-reporting" || agent?.worker === "awaiting-first-check" ? <p className="mt-2 rounded-lg border border-blue/25 bg-bluesoft/30 p-3 text-[11px] text-faint">No worker report has reached this app yet. Run <code className="font-mono text-fg">{agent?.command ?? (network === "mainnet" ? "npm run agent:thetanuts" : "npm run agent:shadow")}</code> on the same machine as the local app, then this panel will update after its first check.</p> : null}
-    {(agent?.worker === "error" || agent?.worker === "stale" || agentError) && <p className="mt-2 rounded-lg border border-crit/30 bg-crit/10 p-3 text-[11px] text-crit">The worker has not completed a recent check. Inspect its terminal for the RPC or upstream error; it will not submit a fill while a check is failing.</p>}
-    <p className="mt-2 rounded-lg border border-blue/25 bg-bluesoft/30 p-3 text-[11px] text-faint">On-chain risk evidence: {evidence} · <ExplorerLink network={network} resource="address" value={account} className="underline">policy account</ExplorerLink> pause or revocation takes effect before every fill.</p>
+    {agent?.worker === "not-reporting" || agent?.worker === "awaiting-first-check" ? <p className="mt-2 rounded-lg border border-blue/25 bg-bluesoft/30 p-3 text-[11px] text-faint">No worker report yet. Run <code className="font-mono text-fg">{agent?.command ?? (network === "mainnet" ? "npm run agent:thetanuts" : "npm run agent:shadow")}</code> alongside this app.</p> : null}
+    {(agent?.worker === "error" || agent?.worker === "stale" || agentError) && <p className="mt-2 rounded-lg border border-crit/30 bg-crit/10 p-3 text-[11px] text-crit">Worker check failing — see its terminal. No fill until it recovers.</p>}
+    <p className="mt-2 rounded-lg border border-blue/25 bg-bluesoft/30 p-3 text-[11px] text-faint"><ExplorerLink network={network} resource="address" value={account} className="underline">Policy account</ExplorerLink>: pause or revoke takes effect before every fill.</p>
   </section>;
 }
 
@@ -191,25 +192,33 @@ function Assessment({ latest, network }: { latest: NonNullable<AgentStatus["late
   );
 }
 
+const OUTCOME_LABEL: Record<string, string> = {
+  "risk-below-threshold": "Waiting: live risk is below the signed threshold.",
+  "risk-persistence-pending": "Waiting: qualifying risk has not persisted long enough.",
+  "risk-observation-submitted": "Risk evidence submitted; awaiting confirmation.",
+  "risk-observation-simulated": "Dry-run: risk evidence validated, not broadcast.",
+  "risk-reset-submitted": "Risk reset submitted; awaiting confirmation.",
+  "risk-reset-simulated": "Dry-run: risk reset validated, not broadcast.",
+  "quote-unavailable": "Waiting: no fresh listed order satisfies the policy.",
+  "gas-unfunded": "Waiting: the account needs more ETH for gas.",
+  "pending-user-operation": "Waiting for the prior transaction's receipt.",
+  "fill-submitted": "Auto-Hedge: fill submitted; awaiting confirmation.",
+  "close-submitted": "Auto-Close: exit submitted; awaiting confirmation.",
+  "roll-submitted": "Auto-Roll: close-and-replace submitted; awaiting confirmation.",
+  "holding": "Holding — no action cleared every gate.",
+  "recommendation": "Recommendation only — cannot be executed here.",
+  "fill-simulated": "Dry-run: a fresh quote passed every check; no fill broadcast.",
+};
+
+/** Used when there's no Assessment box below to carry the explanation. */
 function decisionText(latest: NonNullable<AgentStatus["latest"]>) {
-  const labels: Record<string, string> = {
-    "risk-below-threshold": "Waiting: live risk is below the signed threshold.",
-    "risk-persistence-pending": "Waiting: qualifying risk has not persisted long enough.",
-    "risk-observation-submitted": "Risk evidence UserOperation submitted; awaiting confirmation.",
-    "risk-observation-simulated": "Dry-run: risk evidence passed validation but was not broadcast.",
-    "risk-reset-submitted": "Risk reset UserOperation submitted; awaiting confirmation.",
-    "risk-reset-simulated": "Dry-run: risk reset passed validation but was not broadcast.",
-    "quote-unavailable": "Waiting: no fresh listed order satisfies the signed policy.",
-    "gas-unfunded": "Waiting: the policy account needs more native ETH for UserOperation gas.",
-    "pending-user-operation": "Waiting for the prior UserOperation receipt.",
-    "fill-submitted": "Auto-Hedge: fill UserOperation submitted; awaiting confirmation.",
-    "close-submitted": "Auto-Close: exit UserOperation submitted; awaiting confirmation.",
-    "roll-submitted": "Auto-Roll: close-and-replace UserOperation submitted; awaiting confirmation.",
-    "holding": "Holding — no action cleared every gate this cycle.",
-    "recommendation": "Recommendation only: this exit cannot be executed here.",
-    "fill-simulated": "Dry-run: a fresh quote passed every policy check; no fill was broadcast.",
-  };
-  return `${labels[latest.outcome] ?? latest.outcome}${latest.detail ? ` ${latest.detail}` : ""}`;
+  const label = OUTCOME_LABEL[latest.outcome] ?? latest.outcome;
+  return latest.detail ? `${label} ${latest.detail}` : label;
+}
+
+/** Used when the Assessment box already explains the outcome below. */
+function shortDecisionText(latest: NonNullable<AgentStatus["latest"]>) {
+  return OUTCOME_LABEL[latest.outcome] ?? latest.outcome;
 }
 
 function duration(seconds: number) {

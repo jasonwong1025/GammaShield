@@ -25,22 +25,21 @@ export function AgentView({ snap, feed, asset, live, spot }: Props) {
 
   return (
     <div className="grid grow grid-cols-1 xl:grid-cols-[5fr_7fr] gap-px bg-edge">
-      {/* Settings rail: configure the account and its limits. Kept narrow and
-          collapsible — this is the form the agent reads once, not the thing
-          worth watching. */}
+      {/* Settings rail: configure the account and its limits, then watch what
+          it's doing right below that — same column, since both are about
+          the agent's own setup rather than the market it trades. */}
       <div className="flex flex-col gap-px min-w-0">
         <PolicyAccountPanel spot={spot} onAgentActive={setActiveAgent} />
-        <div className="grow bg-panel" />
-      </div>
-
-      {/* Main column: what the agent is actually doing, then the book it is
-          watching. This is the surface worth returning to. */}
-      <div className="flex flex-col gap-px min-w-0">
         {activeAgent && (
           <section className="card p-5" aria-label="Agent activity">
             <AgentMonitoringPanel account={activeAgent.account} mandateHash={activeAgent.mandateHash} network={activeAgent.network} />
           </section>
         )}
+        <div className="grow bg-panel" />
+      </div>
+
+      {/* Main column: the live book and the account's own positions. */}
+      <div className="flex flex-col gap-px min-w-0">
         <BookCard rows={feed} snap={snap} asset={asset} live={live} spot={spot} fill tabs={["positions"]} />
       </div>
     </div>
