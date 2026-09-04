@@ -62,7 +62,7 @@ The dashboard supports live BTC and ETH options data on Base mainnet, a Base Sep
 ### Install the application
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/jasonwong1025/GammaShield.git
 cd GammaShield
 npm install
 cp .env.example .env.local
@@ -278,45 +278,7 @@ Variables prefixed with `NEXT_PUBLIC_` are compiled into the browser bundle. The
 
 ## System Architecture
 
-```mermaid
-flowchart TB
-  subgraph Sources[Live data and AI]
-    Thetanuts[Thetanuts SDK and OptionBook]
-    Spot[Coinbase and Binance]
-    Gonka[GonkaRouter]
-  end
-
-  subgraph App[GammaShield application]
-    Dashboard[Dashboard]
-    Server[Snapshots, risk engines, and API routes]
-    Quotes[SDK-safe quote service]
-    Worker[External agent worker]
-  end
-
-  subgraph Mainnet[Base mainnet]
-    Wallet[Connected wallet]
-    OptionBook[Thetanuts OptionBook]
-    MainPolicy[ERC-4337 policy account]
-  end
-
-  subgraph Sepolia[Base Sepolia]
-    ShadowPolicy[ERC-4337 policy account]
-    ShadowBook[GammaShield ShadowOptionBook]
-  end
-
-  Thetanuts --> Server
-  Spot --> Server
-  Gonka --> Server
-  Server --> Dashboard
-  Server --> Quotes
-  Quotes --> Wallet
-  Wallet --> OptionBook
-  Server --> Worker
-  Worker --> MainPolicy
-  MainPolicy --> OptionBook
-  Worker --> ShadowPolicy
-  ShadowPolicy --> ShadowBook
-```
+![GammaShield runtime architecture](public/docs/architecture.png)
 
 ### Execution model
 
