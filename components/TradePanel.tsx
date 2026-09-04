@@ -760,22 +760,6 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
         </div>
       )}
 
-      {executionMode === "shadow" ? (
-        <p
-          className="note text-[11px] leading-relaxed text-muted"
-          style={{ borderLeftColor: "var(--blue)", background: "color-mix(in srgb, var(--blue) 6%, transparent)" }}
-        >
-          Mirrors this live quote on Base Sepolia using Circle test USDC. Try 0.01 contracts for a small test; this is not a Thetanuts position.
-        </p>
-      ) : (
-        <p
-          className="note text-[11px] leading-relaxed text-muted"
-          style={{ borderLeftColor: "var(--warn)", background: "color-mix(in srgb, var(--warn) 8%, transparent)" }}
-        >
-          Base mainnet uses real funds. Before your wallet can send a fill, GammaShield refetches the listed OptionBook order and simulates the exact transaction against your account.
-        </p>
-      )}
-
       {/* Per-contract risk for the option itself — a separate question from
           the book-level amplification impact below, which is about what this
           fill does to everyone else. */}
@@ -1018,11 +1002,6 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
         </p>
       )}
 
-      <p className="text-[11px] text-faint leading-relaxed">
-        Periods with a listed maker order fill instantly from the Thetanuts book; otherwise the
-        period trades through the Thetanuts RFQ auction at the real expiry. Premium is paid in
-        the option&apos;s collateral token; everything settles on Base.
-      </p>
       </>}
     </section>
   );
