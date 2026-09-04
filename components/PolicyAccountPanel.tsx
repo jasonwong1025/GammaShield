@@ -117,7 +117,7 @@ export function PolicyAccountPanel({ spot }: { spot: number }) {
             <span className="text-[11px] text-faint">This is a one-time wallet transaction; it does not enable autonomous trading.</span>
           </div>
           {isConfirming && transactionHash && <p className="rounded-lg border border-edge bg-panel2 p-3 text-[12px] text-muted">Deployment transaction submitted; awaiting Base confirmation. <ExplorerLink network={network} resource="tx" value={transactionHash} className="underline">View transaction</ExplorerLink></p>}
-          {deployed && accountAddress && <MandateSigningPanel owner={address} account={accountAddress} network={network} spot={spot} />}
+          {deployed && accountAddress && <MandateSigningPanel key={accountAddress} owner={address} account={accountAddress} network={network} spot={spot} />}
           {deployed && accountAddress && <PolicyFundingPanel account={accountAddress} network={network} collateral={policy.collateral} collateralLabel={policy.collateralLabel} chainId={policy.chainId} />}
           {deployed && accountAddress && activeMandate && <AgentMonitoringPanel account={accountAddress} mandateHash={activeMandate} network={network} />}
         </>

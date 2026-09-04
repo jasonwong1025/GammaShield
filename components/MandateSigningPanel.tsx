@@ -122,6 +122,7 @@ export function MandateSigningPanel({
   const [drafting, setDrafting] = useState(false);
   const [savingActions, setSavingActions] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isRegistering, setIsRegistering] = useState(false);
 
   const { connector } = useAccount();
   const { switchChainAsync, isPending: isSwitching } = useSwitchChain();
@@ -157,7 +158,7 @@ export function MandateSigningPanel({
   const configured = Boolean(policy.optionBook && policy.collateral && policy.agent);
   const signedHash = useMemo(() => signed && hashStruct({ data: mandateMessage(signed.mandate), primaryType: "Mandate", types: MANDATE_EIP712_TYPES }), [signed]);
   const active = activeMandateHash && activeMandateHash !== zeroHash ? activeMandateHash : null;
-  const busy = isSwitching || isSigning || isSubmitting || isConfirming;
+  const busy = isSwitching || isSigning || isSubmitting || isConfirming || isRegistering;
   const availability = useMemo(
     () => agentActionAvailability(limits, network, network === "sepolia" ? (shadowVersion == null ? null : Number(shadowVersion)) : null),
     [limits, network, shadowVersion],
@@ -357,8 +358,9 @@ export function MandateSigningPanel({
   };
 
   const registerMandate = async () => {
-    if (!signed) return;
+    if (!signed || isRegistering) return;
     setError(null);
+    setIsRegistering(true);
     try {
       await ensureWalletChain(policy.chainId, connector, switchChainAsync);
       await writeContractAsync({
@@ -370,6 +372,8 @@ export function MandateSigningPanel({
       });
     } catch (error) {
       setError(`Mandate registration was not completed: ${walletActionError(error, "no policy changed.")}`);
+    } finally {
+      setIsRegistering(false);
     }
   };
 
