@@ -100,6 +100,7 @@ CRITICAL COMMUNICATION RULES:
    - Per-Contract / Position Risk Score (0-100): Measures a specific trade or position you hold, scored across 6 parts (Premium, IV, Time Decay, Liquidity, Market Regime, Expiry Proximity).
    If the user asks about the "risk score", distinguish these two clearly!
 5. When relevant, connect your answer to the live market numbers provided in the user prompt (current spot price, risk score, regime).
+6. CRITICAL: Output ONLY the raw JSON object directly. Do NOT output <think> tags or internal chain-of-thought.
 
 OUTPUT FORMAT:
 Output ONLY a valid JSON object matching this schema without any markdown formatting:
@@ -131,7 +132,7 @@ Live Dashboard Context:
         GONKA_MODELS.PRIMARY,
         systemPrompt,
         userPrompt,
-        14_000,
+        25_000,
       );
       const parsed = extractJson<Omit<KnowledgeResult, "source" | "modelUsed">>(rawMiniMax);
       return {
@@ -150,7 +151,7 @@ Live Dashboard Context:
           GONKA_MODELS.FLASH,
           systemPrompt,
           userPrompt,
-          10_000,
+          22_000,
         );
         const parsed = extractJson<Omit<KnowledgeResult, "source" | "modelUsed">>(rawDeepSeek);
         return {
@@ -159,82 +160,19 @@ Live Dashboard Context:
           modelUsed: "DeepSeek Flash",
         };
       } catch (deepSeekErr) {
-        console.warn("[Knowledge Copilot] DeepSeek failover also failed, using local knowledge:", deepSeekErr);
+        console.warn("[Knowledge Copilot] DeepSeek failover also failed:", deepSeekErr);
       }
     }
   }
 
-  // 3. Tertiary Local Knowledge Base Fallback
-  return generateLocalKnowledgeResponse(params);
-}
-
-/**
- * Local deterministic knowledge responder for instant offline answers and zero-failure reliability.
- */
-function generateLocalKnowledgeResponse(params: KnowledgeRequest): KnowledgeResult {
-  const q = params.question.toLowerCase();
-  const spotFormatted = `$${params.spotPrice.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
-
-  // 1. Gamma & Why it is dangerous
-  if (q.includes("gamma") || q.includes("danger") || q.includes("accelerat")) {
-    return {
-      summary: "Gamma measures how fast your option's sensitivity (Delta) speeds up as the underlying price moves.",
-      analogy: "Think of Delta as the speedometer of your car, and Gamma as the accelerator pedal. A light press on the gas when Gamma is high makes your speed shoot up rapidly.",
-      explanation: "Gamma is dangerous because when market makers are short gamma during a sudden sell-off, they are forced to sell more and more crypto into the decline just to balance their books. This triggers an avalanche effect where selling creates even more selling.",
-      takeaway: "Always check the Gamma Flip level. Below the flip strike, market volatility can double or triple in minutes as automated hedging cascades take over.",
-      liveContext: `Right now, ${params.asset} is trading at ${spotFormatted} with a Book Risk Score of ${params.score}/100 in a ${params.regime} regime.`,
-      source: "deterministic",
-      modelUsed: "Knowledge Base",
-    };
-  }
-
-  // 2. Risk Score meaning (Book vs Contract)
-  if (q.includes("risk score") || q.includes("score") || q.includes("meaning") || q.includes("fragility")) {
-    return {
-      summary: "GammaShield uses two distinct risk scores: a 0–100 Market Fragility Score for the whole book, and a 0–100 Position Risk Score for individual contracts.",
-      analogy: "Think of the Market Risk Score as the weather forecast for the whole ocean (stormy or calm), while the Position Risk Score is the condition of your specific boat (solid hull or leaking).",
-      explanation: "The Market Fragility Score measures whether options dealers will dampen or amplify price shocks based on net GEX. The Per-Contract Risk Score evaluates a single option based on 6 factors: premium cost, implied volatility, time decay (theta), liquidity, market regime, and time to expiration.",
-      takeaway: "A high Market Score (>70) means market moves may snowball violently. A high Position Score means that particular contract is expensive, decaying rapidly, or hard to exit.",
-      liveContext: `The current ${params.asset} Market Fragility Score is ${params.score}/100 (${params.regime} regime).`,
-      source: "deterministic",
-      modelUsed: "Knowledge Base",
-    };
-  }
-
-  // 3. Gas fees and fluctuation on Base
-  if (q.includes("gas") || q.includes("fee") || q.includes("base") || q.includes("cost")) {
-    return {
-      summary: "A gas fee is the small transaction fee you pay in ETH to submit, approve, or execute an options trade on the Base blockchain.",
-      analogy: "Gas fees are like toll booths on an express highway. When traffic is light, the toll is just pennies; when there is a major rush hour or high congestion, the toll temporarily rises.",
-      explanation: "Because Base is an Ethereum Layer 2, its gas fees are typically ultra-cheap (often under $0.05). However, when many users trade or mint simultaneously, network congestion can cause fees to spike temporarily until traffic cools down.",
-      takeaway: "Always keep a small buffer of native ETH (around $5-$10) in your wallet on Base to cover approvals and trade fills without getting stuck.",
-      liveContext: `Executing options orders on ${params.asset} on Base requires gas in native ETH.`,
-      source: "deterministic",
-      modelUsed: "Knowledge Base",
-    };
-  }
-
-  // 4. Put vs Call
-  if (q.includes("put") || q.includes("call") || q.includes("difference") || q.includes("type")) {
-    return {
-      summary: "A Call option bets that the price will go up, while a Put option bets that the price will go down or acts as insurance against a crash.",
-      analogy: "Buying a Call is like reserving a house at today's price hoping it rises before you close. Buying a Put is like buying car collision insurance—if the market crashes, the insurance pays you out.",
-      explanation: "With a Call, you earn profit when the crypto price rises above your strike price. With a Put, you make money (or protect your existing crypto holdings) when the price falls below the strike price.",
-      takeaway: "On GammaShield, traders frequently buy protective Puts when dealer gamma is negative to hedge against sudden cascade crashes.",
-      liveContext: `${params.asset} is currently at ${spotFormatted}. A Put below this level protects your downside capital.`,
-      source: "deterministic",
-      modelUsed: "Knowledge Base",
-    };
-  }
-
-  // 5. General Options & Volatility Fallback
+  // 3. Return a clean, honest plain-English error card rather than hardcoded content
   return {
-    summary: `Options are smart contracts that give you the right (without the obligation) to buy or sell ${params.asset} at a locked-in price before a specific date.`,
-    analogy: "Think of an option like placing a non-refundable deposit to hold an item at a locked price. If the market price skyrockets, you get a bargain; if it tanks, you only lose your small deposit.",
-    explanation: "Unlike spot trading where you simply hold the token, options have an expiration date and their value is driven by spot price, time remaining, and market volatility.",
-    takeaway: "Monitor your position's time decay (Theta) closely. Options lose value every day they get closer to expiration unless the market moves in your favor.",
-    liveContext: `Current ${params.asset} spot is ${spotFormatted} with market risk at ${params.score}/100.`,
-    source: "deterministic",
-    modelUsed: "Knowledge Base",
+    summary: "The AI models on the Gonka Network are temporarily busy or experiencing high queue latency.",
+    analogy: "Like a temporary traffic jam on the network highway, the decentralized inference nodes took longer than expected to return a response.",
+    explanation: `We attempted to reach ${GONKA_MODELS.PRIMARY} and ${GONKA_MODELS.FLASH}, but the request timed out. Your market data for ${params.asset} (Spot: $${params.spotPrice.toLocaleString("en-US", { maximumFractionDigits: 2 })}, Fragility Score: ${params.score}/100) is still actively streaming.`,
+    takeaway: "Please wait a few seconds and click Ask again to retry the inference.",
+    liveContext: `Live ${params.asset} market data remains fully active.`,
+    source: "ai",
+    modelUsed: "Gonka Gateway (Timeout)",
   };
 }

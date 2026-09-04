@@ -10,6 +10,8 @@ type CopilotMode = "ask" | "rumor";
 type Props = {
   snap: AssetSnapshot;
   isOpen?: boolean;
+  isExpanded?: boolean;
+  onToggleExpand?: () => void;
   onNavigateToHedge?: (strike?: number) => void;
   onClose?: () => void;
   onProcessingChange?: (loading: boolean) => void;
@@ -25,6 +27,13 @@ type ChatMessage = {
   knowledgeData?: KnowledgeResult;
   source?: "ai" | "gonka" | "deterministic";
   modelUsed?: string | null;
+  traces?: {
+    stepName: string;
+    model: string;
+    requestId: string | null;
+    score: number;
+    perspective: string;
+  }[];
   timestamp: number;
 };
 
@@ -39,7 +48,7 @@ const ASK_PILLS = [
 
 const RUMOR_PILLS = [
   "Whale moving 50,000 ETH to exchange, crash imminent!",
-  "SEC investigating liquid staking derivative protocols",
+  "https://coindesk.com/markets/sec-investigating-liquid-staking-protocols",
   "Derivatives dealer short gamma cascade alert",
 ];
 
@@ -47,13 +56,15 @@ const DEFAULT_WELCOME: ChatMessage = {
   id: "welcome",
   sender: "ai",
   mode: "ask",
-  text: `👋 Hi! I'm your GammaShield Copilot. Ask any question about options mechanics, gamma risks, gas fees, or risk scores in plain English—or switch tabs to verify a market rumor.`,
+  text: `👋 Hi! I'm your GammaShield Copilot. Ask any question about options mechanics, gamma risks, gas fees, or risk scores in plain English—or switch tabs to verify a market rumor via Gonka multi-model consensus.`,
   timestamp: Date.now(),
 };
 
 export function UnifiedCopilotChat({
   snap,
   isOpen = true,
+  isExpanded = false,
+  onToggleExpand,
   onNavigateToHedge,
   onClose,
   onProcessingChange,
@@ -62,6 +73,7 @@ export function UnifiedCopilotChat({
   const [mode, setMode] = useState<CopilotMode>("ask");
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [copiedTraceId, setCopiedTraceId] = useState<string | null>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
 
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
@@ -72,7 +84,7 @@ export function UnifiedCopilotChat({
           const parsed = JSON.parse(saved);
           if (Array.isArray(parsed) && parsed.length > 0) return parsed;
         }
-      } catch {}
+      } catch { }
     }
     return [DEFAULT_WELCOME];
   });
@@ -82,7 +94,7 @@ export function UnifiedCopilotChat({
     if (typeof window !== "undefined") {
       try {
         sessionStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
-      } catch {}
+      } catch { }
     }
   }, [messages]);
 
@@ -109,8 +121,14 @@ export function UnifiedCopilotChat({
     if (typeof window !== "undefined") {
       try {
         sessionStorage.setItem(STORAGE_KEY, JSON.stringify(fresh));
-      } catch {}
+      } catch { }
     }
+  };
+
+  const copyTrace = (id: string) => {
+    navigator.clipboard.writeText(id);
+    setCopiedTraceId(id);
+    setTimeout(() => setCopiedTraceId(null), 2000);
   };
 
   const handleSend = async (textToSend = input) => {
@@ -160,7 +178,7 @@ export function UnifiedCopilotChat({
         setMessages((prev) => [...prev, aiMessage]);
         onNewAiMessage?.();
       } else {
-        // Rumor Fact-Check Mode
+        // Rumor Fact-Check Mode with Multi-Model Consensus & URL Extraction
         const res = await fetch("/api/factcheck", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -187,6 +205,7 @@ export function UnifiedCopilotChat({
           rumorData: data,
           source: json.source,
           modelUsed: json.modelUsed,
+          traces: data.traces || json.traces,
           timestamp: Date.now(),
         };
         setMessages((prev) => [...prev, aiMessage]);
@@ -197,7 +216,7 @@ export function UnifiedCopilotChat({
         id: `err_${Date.now()}`,
         sender: "ai",
         mode,
-        text: `Unable to get answer: ${err instanceof Error ? err.message : "Network error"}`,
+        text: `Unable to verify rumor: ${err instanceof Error ? err.message : "Network error"}`,
         timestamp: Date.now(),
       };
       setMessages((prev) => [...prev, errMsg]);
@@ -222,6 +241,18 @@ export function UnifiedCopilotChat({
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
+          {onToggleExpand && (
+            <button
+              type="button"
+              onClick={onToggleExpand}
+              title={isExpanded ? "Restore compact size" : "Expand window"}
+              aria-label={isExpanded ? "Restore compact size" : "Expand window"}
+              className="flex items-center justify-center size-7 rounded-lg text-faint hover:text-fg hover:bg-panel2 transition text-[13px]"
+            >
+              {isExpanded ? "🗗" : "⛶"}
+            </button>
+          )}
+
           {messages.length > 1 && (
             <button
               type="button"
@@ -253,22 +284,20 @@ export function UnifiedCopilotChat({
           <button
             type="button"
             onClick={() => setMode("ask")}
-            className={`px-3 py-1 rounded-md text-[12px] font-medium transition ${
-              mode === "ask"
+            className={`px-3 py-1 rounded-md text-[12px] font-medium transition ${mode === "ask"
                 ? "bg-panel3 text-fg font-semibold shadow-xs"
                 : "text-muted hover:text-fg"
-            }`}
+              }`}
           >
             💡 Learn & Ask
           </button>
           <button
             type="button"
             onClick={() => setMode("rumor")}
-            className={`px-3 py-1 rounded-md text-[12px] font-medium transition ${
-              mode === "rumor"
+            className={`px-3 py-1 rounded-md text-[12px] font-medium transition ${mode === "rumor"
                 ? "bg-panel3 text-fg font-semibold shadow-xs"
                 : "text-muted hover:text-fg"
-            }`}
+              }`}
           >
             🔍 Verify Rumor
           </button>
@@ -283,11 +312,10 @@ export function UnifiedCopilotChat({
         {messages.map((m) => (
           <div
             key={m.id}
-            className={`flex flex-col gap-2 p-3.5 rounded-xl text-[12.5px] leading-relaxed transition ${
-              m.sender === "user"
+            className={`flex flex-col gap-2 p-3.5 rounded-xl text-[12.5px] leading-relaxed transition ${m.sender === "user"
                 ? "bg-bluesoft/70 border border-blue/20 text-fg ml-10 self-end"
                 : "bg-panel2 border border-edge text-fg mr-4 self-start"
-            }`}
+              }`}
           >
             {/* Message header */}
             <div className="flex items-center justify-between text-[11px] font-medium text-faint">
@@ -360,51 +388,109 @@ export function UnifiedCopilotChat({
               </div>
             )}
 
-            {/* RUMOR FACT-CHECK RESULT CARD */}
+            {/* RUMOR FACT-CHECK RESULT CARD WITH MULTI-MODEL CONSENSUS */}
             {m.rumorData && (
-              <div className="mt-2 p-3 rounded-lg bg-panel border border-edge flex flex-col gap-2.5">
-                <div className="flex items-center justify-between gap-3 pb-2 border-b border-edge">
+              <div className="mt-2 p-3.5 rounded-lg bg-panel border border-edge flex flex-col gap-3">
+                {/* Extracted URL / Tweet Source (if URL was submitted) */}
+                {m.rumorData.extractedClaim?.isUrl && (
+                  <div className="flex items-center gap-2 p-2 rounded-lg bg-blue/5 border border-blue/20 text-[11.5px]">
+                    <span className="font-semibold text-blue shrink-0">🔗 Source:</span>
+                    {m.rumorData.extractedClaim.domain && (
+                      <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-panel border border-edge text-fg shrink-0 font-medium">
+                        {m.rumorData.extractedClaim.domain}
+                      </span>
+                    )}
+                    <span className="truncate text-muted" title={m.rumorData.extractedClaim.headline}>
+                      {m.rumorData.extractedClaim.headline}
+                    </span>
+                  </div>
+                )}
+
+                {/* Consensus Truth Score Header */}
+                <div className="flex items-center justify-between gap-3 pb-2.5 border-b border-edge">
                   <div className="flex items-center gap-3">
-                    <div className="flex flex-col items-center justify-center size-11 rounded-full border border-edge bg-panel2 text-center">
+                    <div className="flex flex-col items-center justify-center size-12 rounded-full border border-edge bg-panel2 text-center shrink-0 shadow-xs">
                       <span
                         className="num text-[15px] font-bold leading-none"
                         style={{ color: m.rumorData.truthScore > 65 ? "var(--crit)" : "var(--calm)" }}
                       >
                         {m.rumorData.truthScore}%
                       </span>
-                      <span className="text-[8px] text-faint font-bold uppercase mt-0.5">Truth</span>
+                      <span className="text-[7.5px] text-faint font-bold uppercase mt-0.5 tracking-tight">Consensus</span>
                     </div>
-                    <div>
-                      <span className="font-bold text-[12.5px] text-fg">
-                        {m.rumorData.truthScore > 65 ? "⚠️ High Fragility Alert" : "🛡️ Low Volatility Risk / FUD"}
-                      </span>
-                      <span
-                        className="ml-2 text-[10px] font-bold px-2 py-0.5 rounded-full"
-                        style={{
-                          background: m.rumorData.urgency === "CRITICAL" ? "rgba(216, 67, 59, 0.15)" : "rgba(18, 160, 110, 0.15)",
-                          color: m.rumorData.urgency === "CRITICAL" ? "var(--crit)" : "var(--calm)",
-                        }}
-                      >
-                        {m.rumorData.urgency}
+                    <div className="flex flex-col gap-0.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-[12.5px] text-fg">
+                          {m.rumorData.truthScore > 65 ? "⚠️ High Fragility Alert" : "🛡️ Low Volatility Risk / FUD"}
+                        </span>
+                        <span
+                          className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                          style={{
+                            background: m.rumorData.urgency === "CRITICAL" ? "rgba(216, 67, 59, 0.15)" : "rgba(18, 160, 110, 0.15)",
+                            color: m.rumorData.urgency === "CRITICAL" ? "var(--crit)" : "var(--calm)",
+                          }}
+                        >
+                          {m.rumorData.urgency}
+                        </span>
+                      </div>
+                      <span className="text-[11px] text-muted">
+                        {m.rumorData.consensusStatus === "STRONG"
+                          ? `⚡ Strong Multi-Model Consensus (${m.rumorData.consensusAgreementPct}% alignment)`
+                          : "⚡ Multi-Model Cross-Examination Verified"}
                       </span>
                     </div>
                   </div>
                 </div>
 
-                <div className="text-[12px] text-muted leading-relaxed">
-                  <span className="font-semibold text-fg block mb-0.5">
-                    {m.source === "gonka" || m.source === "ai" ? "Quantitative AI reasoning:" : "Deterministic market-structure calculation:"}
+                {/* Executive Verdict */}
+                <div className="p-2.5 rounded-lg bg-panel2 border border-edge text-[12px] leading-relaxed">
+                  <span className="font-semibold text-fg text-[11px] block mb-1">
+                    Consensus Verdict:
                   </span>
-                  <p>{m.rumorData.reasoning}</p>
+                  <p className="text-muted">{m.rumorData.verdict}</p>
+                </div>
+
+                {/* Dual-Model Perspectives */}
+                <div className="flex flex-col gap-2">
+                  {/* Perspective A: Factual Verification */}
+                  {m.rumorData.factualPerspective && (
+                    <div className="p-2.5 rounded-lg bg-panel2 border border-edge text-[11.5px] flex flex-col gap-1">
+                      <div className="flex items-center justify-between gap-1.5 font-semibold text-fg text-[11px]">
+                        <div className="flex items-center gap-1.5">
+                          <span>🔍</span>
+                          <span>Factual News Veracity</span>
+                        </div>
+                        <span className="font-mono text-[10px] text-muted font-normal px-1.5 py-0.5 rounded bg-panel border border-edge shrink-0">
+                          {(m.traces?.[0] || m.rumorData.traces?.[0])?.model?.split("/").pop() || "Kimi-K2.6"}
+                        </span>
+                      </div>
+                      <p className="text-muted leading-relaxed">{m.rumorData.factualPerspective}</p>
+                    </div>
+                  )}
+
+                  {/* Perspective B: Quantitative GEX Feedback */}
+                  {m.rumorData.marketPerspective && (
+                    <div className="p-2.5 rounded-lg bg-panel2 border border-edge text-[11.5px] flex flex-col gap-1">
+                      <div className="flex items-center justify-between gap-1.5 font-semibold text-fg text-[11px]">
+                        <div className="flex items-center gap-1.5">
+                          <span>📊</span>
+                          <span>Dealer GEX & Hedging Feedback</span>
+                        </div>
+                        <span className="font-mono text-[10px] text-muted font-normal px-1.5 py-0.5 rounded bg-panel border border-edge shrink-0">
+                          {(m.traces?.[1] || m.rumorData.traces?.[1])?.model?.split("/").pop() || "MiniMax-M2.7"}
+                        </span>
+                      </div>
+                      <p className="text-muted leading-relaxed">{m.rumorData.marketPerspective}</p>
+                    </div>
+                  )}
                 </div>
 
                 {/* Autonomous Hedge Recommendation */}
                 <div
-                  className={`p-2.5 rounded-lg border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-[11.5px] ${
-                    m.rumorData.shouldHedge
+                  className={`p-2.5 rounded-lg border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-[11.5px] ${m.rumorData.shouldHedge
                       ? "border-crit/30 bg-crit/10"
                       : "border-calm/30 bg-calm/10"
-                  }`}
+                    }`}
                 >
                   <div className="flex flex-col gap-0.5">
                     <div className="flex items-center gap-1.5 font-bold text-fg">
@@ -428,6 +514,52 @@ export function UnifiedCopilotChat({
                     </button>
                   )}
                 </div>
+
+                {/* Gonka Network Multi-Model Transparency Trace Panel */}
+                {(m.traces || m.rumorData.traces) && (
+                  <div className="mt-0.5 p-2.5 rounded-lg bg-panel2/70 border border-edge flex flex-col gap-1.5 text-[11px]">
+                    <div className="flex items-center justify-between text-faint pb-1 border-b border-edge/60">
+                      <span className="font-semibold text-fg text-[10.5px] uppercase tracking-wider flex items-center gap-1.5">
+                        <span className="size-1.5 rounded-full bg-blue shrink-0" />
+                        Gonka Network Multi-Model Inference Trace
+                      </span>
+                      <span className="text-[9.5px] font-mono text-muted">Gateway: gonkarouter.io</span>
+                    </div>
+
+                    <div className="flex flex-col gap-1 pt-0.5">
+                      {(m.traces || m.rumorData.traces)?.map((step, sIdx) => (
+                        <div
+                          key={sIdx}
+                          className="flex items-center justify-between gap-2 p-1.5 rounded bg-panel border border-edge text-[10.5px]"
+                        >
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="font-medium text-fg truncate">{step.stepName}:</span>
+                            <span className="font-mono text-muted text-[10px] truncate max-w-[120px]" title={step.model}>
+                              {step.model.split("/").pop()}
+                            </span>
+                          </div>
+
+                          {step.requestId ? (
+                            <div className="flex items-center gap-1.5 shrink-0 font-mono text-[10px]">
+                              <span className="text-faint truncate max-w-[110px]" title={step.requestId}>
+                                {step.requestId.length > 18 ? `${step.requestId.slice(0, 16)}…` : step.requestId}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => copyTrace(step.requestId!)}
+                                className="px-1.5 py-0.5 rounded bg-panel2 text-blue hover:text-fg hover:bg-panel3 transition font-sans font-medium text-[9.5px]"
+                              >
+                                {copiedTraceId === step.requestId ? "✓ Copied" : "Copy ID"}
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-faint font-mono text-[10px]">Local consensus</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -436,7 +568,11 @@ export function UnifiedCopilotChat({
         {loading && (
           <div className="flex items-center gap-2 p-3 rounded-xl bg-panel2 border border-edge text-[12px] text-muted self-start animate-pulse">
             <span className="size-3 rounded-full border-2 border-blue border-t-transparent animate-spin" />
-            <span>Explaining market concepts with GammaShield Copilot…</span>
+            <span>
+              {mode === "ask"
+                ? "Explaining market concepts with GammaShield Copilot…"
+                : "Running Gonka Multi-Model Consensus…"}
+            </span>
           </div>
         )}
       </div>
