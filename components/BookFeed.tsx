@@ -20,6 +20,10 @@ import { ThetanutsPositions } from "./ThetanutsPositions";
 import { EXECUTION_NETWORK } from "@/lib/explorer";
 import { useExecutionNetwork } from "./ExecutionNetworkProvider";
 
+type BookCardTab = "book" | "expiries" | "positions";
+
+const ALL_TABS: readonly BookCardTab[] = ["book", "expiries", "positions"];
+
 export function BookCard({
   rows,
   snap,
@@ -28,6 +32,7 @@ export function BookCard({
   spot,
   volBaseline,
   fill = false,
+  tabs = ALL_TABS,
 }: {
   rows: FeedRow[];
   snap: AssetSnapshot;
@@ -44,44 +49,50 @@ export function BookCard({
    *  it from crowding out its siblings; on the AI Agent tab it is alone in
    *  the side rail, and the cap used to leave the rest of the column blank. */
   fill?: boolean;
+  /** Which tabs this instance offers. Defaults to all three; the Dashboard
+   *  and AI Agent tab each surface a different subset of this same card. */
+  tabs?: readonly BookCardTab[];
 }) {
-  const [tab, setTab] = useState<"book" | "expiries" | "positions">("book");
+  const [tab, setTab] = useState<BookCardTab>(tabs[0]);
   const [positionsRefresh, setPositionsRefresh] = useState(0);
   const { network } = useExecutionNetwork();
   useEffect(() => {
     const showPosition = () => {
       setPositionsRefresh((value) => value + 1);
-      setTab("positions");
+      if (tabs.includes("positions")) setTab("positions");
     };
     window.addEventListener("thetanuts-position-changed", showPosition);
     return () => window.removeEventListener("thetanuts-position-changed", showPosition);
-  }, []);
+  }, [tabs]);
   const filtered = rows.filter((r) => r.asset === asset);
   const bookLabel = live ? "OptionBook (live)" : "Modeled book";
+  const labelOf: Record<BookCardTab, string> = {
+    book: bookLabel,
+    expiries: "Expiries",
+    positions: "My positions",
+  };
 
   return (
     <section className={`card flex flex-col min-h-0 overflow-hidden ${fill ? "flex-1" : ""}`} aria-label={bookLabel}>
       <div className="flex items-center justify-between px-5 pt-4 pb-3">
-        <div className="flex items-center gap-1 rounded-lg bg-panel2 p-0.5">
-          {(
-            [
-              ["book", bookLabel],
-              ["expiries", "Expiries"],
-              ["positions", "My positions"],
-            ] as const
-          ).map(([key, label]) => (
-            <button
-              key={key}
-              onClick={() => setTab(key)}
-              aria-pressed={tab === key}
-              className={`h-7 whitespace-nowrap rounded-md px-2.5 text-[12px] font-medium transition ${
-                tab === key ? "bg-panel3 text-fg" : "text-muted hover:text-fg"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        {tabs.length > 1 ? (
+          <div className="flex items-center gap-1 rounded-lg bg-panel2 p-0.5">
+            {tabs.map((key) => (
+              <button
+                key={key}
+                onClick={() => setTab(key)}
+                aria-pressed={tab === key}
+                className={`h-7 whitespace-nowrap rounded-md px-2.5 text-[12px] font-medium transition ${
+                  tab === key ? "bg-panel3 text-fg" : "text-muted hover:text-fg"
+                }`}
+              >
+                {labelOf[key]}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <span className="text-[12px] font-medium text-fg">{labelOf[tab]}</span>
+        )}
         <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[11px] text-muted">
           {live && <span className="live-dot inline-block size-1.5 rounded-full bg-calm" />}
           {tab === "book" ? `${filtered.length} orders` : tab === "expiries" ? `${snap.expiries.length} dates` : EXECUTION_NETWORK[network].label}

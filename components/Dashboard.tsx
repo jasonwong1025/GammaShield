@@ -139,6 +139,7 @@ export function Dashboard() {
                         live={live}
                         spot={livePrice}
                         volBaseline={snap.volBaseline?.[asset] ?? null}
+                        tabs={["book", "expiries"]}
                       />
                       <RiskView snap={a} />
                       <div className="grow bg-panel" />
