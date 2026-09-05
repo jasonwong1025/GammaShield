@@ -241,11 +241,19 @@
 
       .cta { display: grid; grid-template-columns: 1.18fr .86fr; gap: 70px; margin-top: 96px; padding-top: 32px; border-top: 2px solid var(--line); }
       .cta p { margin-top: 20px; color: #d1d3d9; font-size: clamp(16px, 1.55vw, 23px); line-height: 1.45; }
-      .contact { display: grid; gap: 20px; }
-      .contact div { padding-bottom: 18px; border-bottom: 1px solid var(--line); }
+      .contact { padding-bottom: 18px; border-bottom: 1px solid var(--line); }
       .contact .eyebrow { font-size: 12px; }
-      .contact a, .contact span { display: block; margin-top: 11px; color: white; font-size: clamp(16px, 1.55vw, 22px); text-decoration: none; }
-      .closing-line { position: absolute; right: 98px; bottom: 57px; left: 98px; padding-left: 25px; border-left: 4px solid var(--green); color: var(--green); font-size: clamp(18px, 1.9vw, 28px); font-weight: 700; }
+      .destination-grid { display: grid; grid-template-columns: 1.3fr .9fr; gap: 24px; margin-top: 22px; }
+      .destination img { display: block; width: 104px; margin-top: 14px; padding: 5px; background: white; }
+      .destination a { display: block; color: var(--cyan); font-size: clamp(11px, .85vw, 13px); line-height: 1.35; text-decoration: none; overflow-wrap: anywhere; }
+      .destination .destination-link { margin-top: 10px; }
+      .destination .github-link { font-size: 11px; letter-spacing: -.04em; white-space: nowrap; }
+      .cta-slide .cta { margin-top: 58px; }
+
+      @media (max-height: 700px) and (min-width: 761px) {
+        .architecture-slide { padding-top: 42px; padding-bottom: 18px; }
+        .architecture { width: min(80%, 940px); margin-top: 18px; }
+      }
 
       .counter { position: fixed; right: 24px; bottom: 22px; z-index: 2; color: #d0d3da; font-size: 13px; }
 
@@ -278,7 +286,6 @@
         .competitor-brand .panoptic-logo { width: 50px; height: 15px; }
         .competitor-brand .gamma-logo { width: 17px; height: 17px; }
         .cta { margin-top: 45px; gap: 30px; padding-top: 20px; }
-        .closing-line { right: 38px; bottom: 30px; left: 38px; font-size: 12px; }
         .counter { right: 10px; bottom: 10px; }
       }
 
@@ -412,7 +419,7 @@
           </div>
         </section>
 
-        <section class="slide" data-slide aria-label="Slide 10: Call to action">
+        <section class="slide cta-slide" data-slide aria-label="Slide 10: Call to action">
           <h1>Let GammaShield manage the risk<br />between decisions</h1>
           <div class="cta">
             <div>
@@ -420,14 +427,21 @@
               <p>Protocol engineering, quantitative risk, and autonomous-agent development.</p>
             </div>
             <div class="contact">
-              <div>
-                <p class="eyebrow">CONNECT &amp; BUILD</p>
-                <p class="eyebrow" style="margin-top: 22px; color: #aeb1ba">GITHUB REPOSITORY</p>
-                <a href="https://github.com/jasonwong1025/GammaShield"><img src="github-qr.png" alt="QR code linking to the GammaShield GitHub repository" style="display: block; width: 156px; margin-top: 16px; background: white; padding: 8px;" /></a>
+              <p class="eyebrow">CONNECT &amp; BUILD</p>
+              <div class="destination-grid">
+                <div class="destination">
+                  <p class="eyebrow" style="color: #aeb1ba">GITHUB REPOSITORY</p>
+                  <a href="https://github.com/jasonwong1025/GammaShield"><img src="github-qr.png" alt="QR code linking to the GammaShield GitHub repository" /></a>
+                  <a class="destination-link github-link" href="https://github.com/jasonwong1025/GammaShield">github.com/jasonwong1025/GammaShield</a>
+                </div>
+                <div class="destination">
+                  <p class="eyebrow" style="color: #aeb1ba">LIVE APP</p>
+                  <a href="https://gamma-shield.vercel.app/"><img src="vercel-qr.png" alt="QR code linking to the GammaShield live app" /></a>
+                  <a class="destination-link" href="https://gamma-shield.vercel.app/">gamma-shield.vercel.app</a>
+                </div>
               </div>
             </div>
           </div>
-          <p class="closing-line">Build safer DeFi options—one guarded position at a time.</p>
         </section>
       </div>
     </main>
