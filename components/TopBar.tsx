@@ -16,24 +16,28 @@ export function TopBar({ activeTab = "dashboard", onTabChange, hasHighRiskAlert 
   const { network, setNetwork } = useExecutionNetwork();
   return (
     <div className="shrink-0">
-      <header className="flex items-center gap-6 px-5 h-16 border-b border-edge bg-bg/80 backdrop-blur">
+      <header className="flex items-center gap-5 px-4 h-14 border-b border-edge bg-bg">
         {/* Logo */}
         <div
-          className="flex items-center gap-3 cursor-pointer"
+          className="flex items-center gap-2.5 cursor-pointer"
           onClick={() => onTabChange?.("dashboard")}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src="/gammashield-lockup.png"
             alt="GammaShield"
-            className="h-8 w-auto shrink-0"
+            className="h-6 w-auto shrink-0"
           />
+          <span className="chip eyebrow text-[9px] text-calm">
+            <span className="live-dot size-1.5 rounded-full bg-current" />
+            Live
+          </span>
         </div>
 
-        {/* Navigation Tabs — an underline indicator flush with the header's
-            own bottom rule, not a soft pill; matches the flat, hairline
-            language used for panels elsewhere. */}
-        <nav className="hidden md:flex items-stretch gap-6 ml-6 h-full text-[13px]" aria-label="Sections">
+        {/* Navigation tabs — a single hairline rule underneath the whole bar
+            already reads as the boundary, so the active tab needs only an
+            underline, not a pill. */}
+        <nav className="hidden md:flex items-stretch gap-5 h-full text-[13px]" aria-label="Sections">
           <button
             type="button"
             onClick={() => onTabChange?.("dashboard")}
@@ -56,17 +60,24 @@ export function TopBar({ activeTab = "dashboard", onTabChange, hasHighRiskAlert 
           >
             <ShieldIcon className="size-3.5 shrink-0" />
             AI Agent
-            <span className="eyebrow text-[9px] px-1.5 py-0.5 rounded bg-calm/10 text-calm">{EXECUTION_NETWORK[network].shortLabel}</span>
-            {hasHighRiskAlert && <span className="flex size-2 rounded-full bg-crit animate-ping" title="Danger Zone: Risk > 75%" />}
+            {hasHighRiskAlert && <span className="flex size-1.5 rounded-full bg-crit animate-ping" title="Danger zone: risk above 75" />}
             {activeTab === "agent" && <span className="absolute inset-x-0 -bottom-px h-[2px] bg-blue" />}
           </button>
         </nav>
 
-        {/* Right side WalletConnect and actions */}
+        {/* Right side: network toggle + wallet */}
         <div className="ml-auto flex items-center gap-3">
-          <div className="hidden sm:grid grid-cols-2 gap-1 rounded-lg bg-panel2 p-1" aria-label="Execution network">
+          <div className="hidden sm:flex items-center gap-1 rounded-md border border-edge p-0.5" aria-label="Execution network">
             {(Object.entries(EXECUTION_NETWORK) as [keyof typeof EXECUTION_NETWORK, (typeof EXECUTION_NETWORK)[keyof typeof EXECUTION_NETWORK]][]).map(([key, value]) => (
-              <button key={key} type="button" onClick={() => setNetwork(key)} aria-pressed={network === key} className={`h-7 rounded-md px-2 text-[11px] font-semibold ${network === key ? "bg-panel text-fg shadow-sm" : "text-muted hover:text-fg"}`}>
+              <button
+                key={key}
+                type="button"
+                onClick={() => setNetwork(key)}
+                aria-pressed={network === key}
+                className={`eyebrow h-6 rounded px-2 text-[10px] font-semibold transition ${
+                  network === key ? "bg-panel3 text-fg" : "text-faint hover:text-muted"
+                }`}
+              >
                 {value.shortLabel}
               </button>
             ))}

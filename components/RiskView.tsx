@@ -10,6 +10,7 @@ import type { AssetSnapshot } from "@/lib/engine";
 import { fmtUsd } from "@/lib/format";
 import { GexChartBody } from "./GexChart";
 import { HeatmapBody } from "./Heatmap";
+import { Disclosure } from "./Disclosure";
 
 const TABS = [
   {
@@ -32,25 +33,22 @@ export function RiskView({ snap }: { snap: AssetSnapshot }) {
 
   return (
     <section className="card p-5 pb-2" aria-label="Dealer gamma and open interest">
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-1 rounded-lg bg-panel2 p-0.5 self-start">
-            {TABS.map((t) => (
-              <button
-                key={t.key}
-                onClick={() => setTab(t.key)}
-                aria-pressed={tab === t.key}
-                className={`px-3 h-7 rounded-md text-[12px] font-medium transition ${
-                  tab === t.key ? "bg-panel3 text-fg" : "text-muted hover:text-fg"
-                }`}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-          <p className="text-[12px] text-muted">{active.subtitle}</p>
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-1 rounded-lg bg-panel2 p-0.5">
+          {TABS.map((t) => (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              aria-pressed={tab === t.key}
+              className={`px-3 h-7 rounded-md text-[12px] font-medium transition ${
+                tab === t.key ? "bg-panel3 text-fg" : "text-muted hover:text-fg"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
         </div>
-        <div className="text-[11px] text-muted shrink-0 pt-1">
+        <div className="text-[11px] text-muted shrink-0">
           {tab === "gamma" ? (
             <div className="flex items-center gap-3">
               <span><span className="text-calm">●</span> dampening</span>
@@ -60,6 +58,12 @@ export function RiskView({ snap }: { snap: AssetSnapshot }) {
             <span className="num">{fmtUsd(snap.depthUsd)} on book</span>
           )}
         </div>
+      </div>
+
+      <div className="pt-1.5 pb-1">
+        <Disclosure label="What am I looking at?">
+          <p className="text-[12px] text-muted pt-1">{active.subtitle}</p>
+        </Disclosure>
       </div>
 
       {tab === "gamma" ? <GexChartBody snap={snap} /> : <HeatmapBody snap={snap} />}

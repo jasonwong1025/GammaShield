@@ -7,6 +7,7 @@
 
 import type { ContractRisk, RiskComponent, RiskLevel } from "@/lib/contractRisk";
 import { riskColor } from "@/lib/format";
+import { Disclosure } from "./Disclosure";
 
 const LEVEL_LABEL: Record<RiskLevel, string> = {
   low: "Low",
@@ -33,37 +34,44 @@ export function RiskScoreChip({ risk }: { risk: ContractRisk | null }) {
 function ComponentRow({ component }: { component: RiskComponent }) {
   const color = riskColor(component.score);
   return (
-    <div className="flex flex-col gap-1">
-      <div className="flex items-baseline gap-2">
-        <span className="text-fg w-[112px] shrink-0">{component.label}</span>
-        <div className="grow h-1.5 rounded-full bg-panel3 overflow-hidden">
-          <div
-            className="h-full rounded-full"
-            style={{ width: `${component.score}%`, background: color }}
-          />
-        </div>
-        <span className="num w-8 text-right font-semibold" style={{ color }}>
-          {component.score.toFixed(0)}
-        </span>
+    <div className="flex items-baseline gap-2">
+      <span className="text-fg w-[112px] shrink-0">{component.label}</span>
+      <div className="grow h-1.5 rounded-full bg-panel3 overflow-hidden">
+        <div
+          className="h-full rounded-full"
+          style={{ width: `${component.score}%`, background: color }}
+        />
       </div>
-      <div className="pl-[120px] flex flex-col gap-0.5">
-        {component.parts.map((part) => (
-          <p key={part.key} className="text-faint text-[11px] leading-snug">
-            <span className="text-muted">{part.label}</span> {part.score.toFixed(0)}
-            {part.detail ? ` — ${part.detail}` : ""}
-          </p>
-        ))}
-        {component.dropped.map((drop) => (
-          <p key={drop.key} className="text-faint text-[11px] leading-snug italic">
-            {drop.label} not scored — {drop.reason}
-          </p>
-        ))}
-        {component.mirrored && (
-          <p className="text-faint text-[11px] leading-snug">
-            Inverted for short exposure — this works in your favour.
-          </p>
-        )}
-      </div>
+      <span className="num w-8 text-right font-semibold" style={{ color }}>
+        {component.score.toFixed(0)}
+      </span>
+    </div>
+  );
+}
+
+/** The working behind one component's bar — how it was scored, and what got
+ *  dropped rather than guessed. Lives in the panel's shared disclosure. */
+function ComponentDetail({ component }: { component: RiskComponent }) {
+  if (component.parts.length === 0 && component.dropped.length === 0 && !component.mirrored) return null;
+  return (
+    <div className="flex flex-col gap-0.5">
+      <p className="text-muted text-[11px] font-semibold">{component.label}</p>
+      {component.parts.map((part) => (
+        <p key={part.key} className="text-faint text-[11px] leading-snug">
+          <span className="text-muted">{part.label}</span> {part.score.toFixed(0)}
+          {part.detail ? ` — ${part.detail}` : ""}
+        </p>
+      ))}
+      {component.dropped.map((drop) => (
+        <p key={drop.key} className="text-faint text-[11px] leading-snug italic">
+          {drop.label} not scored — {drop.reason}
+        </p>
+      ))}
+      {component.mirrored && (
+        <p className="text-faint text-[11px] leading-snug">
+          Inverted for short exposure — this works in your favour.
+        </p>
+      )}
     </div>
   );
 }
@@ -98,27 +106,33 @@ export function ContractRiskPanel({
         </p>
       )}
 
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-1.5">
         {risk.components.map((c) => (
           <ComponentRow key={c.key} component={c} />
         ))}
       </div>
 
-      {risk.dropped.length > 0 && (
-        <p className="text-faint text-[11px] leading-relaxed border-t border-edge/60 pt-2">
-          Not scored: {risk.dropped.map((d) => `${d.label} (${d.reason})`).join(", ")}. Remaining
-          weights renormalise — nothing is filled in with a default.
-        </p>
-      )}
-
-      {volBaseline && (
-        <p className="text-faint text-[11px] leading-relaxed">
-          Vol reference: {(volBaseline.vol * 100).toFixed(0)}% trailing {volBaseline.windowDays}d
-          realized, ranked against {volBaseline.lookbackDays} days of history ({volBaseline.source}).
-          This venue publishes no implied-vol history, so percentile is measured against realized
-          vol and labelled as such.
-        </p>
-      )}
+      <Disclosure label="How this was scored">
+        <div className="flex flex-col gap-2 pt-1.5 mt-0.5 border-t border-edge/60">
+          {risk.components.map((c) => (
+            <ComponentDetail key={c.key} component={c} />
+          ))}
+          {risk.dropped.length > 0 && (
+            <p className="text-faint text-[11px] leading-relaxed">
+              Not scored: {risk.dropped.map((d) => `${d.label} (${d.reason})`).join(", ")}. Remaining
+              weights renormalise — nothing is filled in with a default.
+            </p>
+          )}
+          {volBaseline && (
+            <p className="text-faint text-[11px] leading-relaxed">
+              Vol reference: {(volBaseline.vol * 100).toFixed(0)}% trailing {volBaseline.windowDays}d
+              realized, ranked against {volBaseline.lookbackDays} days of history ({volBaseline.source}).
+              This venue publishes no implied-vol history, so percentile is measured against realized
+              vol and labelled as such.
+            </p>
+          )}
+        </div>
+      </Disclosure>
     </div>
   );
 }

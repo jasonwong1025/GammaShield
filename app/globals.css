@@ -1,26 +1,27 @@
 @import "tailwindcss";
 
-/* Light "clean white" theme. Previous navy palette kept for easy revert:
-   bg #0b1226 · bg-deep #080e1e · panel #111a30 · panel-2 #16213c
-   panel-3 #1b2848 · edge #1f2b4a · edge-2 #2b3a61 · text #e8edf7
-   muted #8b96ad · faint #5a6580 · blue #3178f2 · blue-soft #17243f
-   calm #34c08b · warn #e9b44c · crit #e4574f */
+/* Instrument-panel dark theme — GammaShield is a risk monitor, styled like
+   one. Previous light "clean white" palette kept for easy revert:
+   bg #f4f6fa · bg-deep #edf0f6 · panel #ffffff · panel-2 #f3f5f9
+   panel-3 #e9edf4 · edge #e3e8f0 · edge-2 #c9d2e0 · text #172136
+   muted #5d6a83 · faint #8a94a8 · blue #2b66d9 · blue-soft #e8effc
+   calm #12a06e · warn #c8891a · crit #d8433b */
 :root {
-  --bg: #f4f6fa;
-  --bg-deep: #edf0f6;
-  --panel: #ffffff;
-  --panel-2: #f3f5f9;
-  --panel-3: #e9edf4;
-  --edge: #e3e8f0;
-  --edge-2: #c9d2e0;
-  --text: #172136;
-  --muted: #5d6a83;
-  --faint: #8a94a8;
-  --blue: #2b66d9;
-  --blue-soft: #e8effc;
-  --calm: #12a06e;
-  --warn: #c8891a;
-  --crit: #d8433b;
+  --bg: #0a0d12;
+  --bg-deep: #05070a;
+  --panel: #10141b;
+  --panel-2: #161b24;
+  --panel-3: #1d232f;
+  --edge: #232a37;
+  --edge-2: #333e4e;
+  --text: #e8ecf1;
+  --muted: #8891a0;
+  --faint: #5b6472;
+  --blue: #2f8fef;
+  --blue-soft: #13202f;
+  --calm: #34d399;
+  --warn: #fbbf24;
+  --crit: #f87171;
 }
 
 @theme inline {
@@ -91,7 +92,21 @@ body {
 }
 .field:focus-within {
   border-color: var(--blue);
-  box-shadow: 0 0 0 3px var(--blue-soft);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 25%, transparent);
+}
+
+/* Bordered instrument chip — the console's badge primitive (LIVE, network,
+   risk level, plan step). Pairs with .eyebrow for the mono/tracked label;
+   the border+wash both key off currentColor so one class works for every
+   status color without a variant per hue. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  border: 1px solid color-mix(in srgb, currentColor 45%, transparent);
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  border-radius: 4px;
+  padding: 0.15em 0.45em;
 }
 
 /* A value you cannot change: settled terms, derived addresses, on-chain
@@ -253,7 +268,7 @@ input[type="range"].sim-range::-webkit-slider-thumb {
   border-radius: 50%;
   background: #fff;
   border: 2px solid var(--blue);
-  box-shadow: 0 2px 8px rgba(23, 33, 54, 0.2);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
   cursor: pointer;
 }
 input[type="range"].sim-range::-moz-range-thumb {
@@ -262,7 +277,7 @@ input[type="range"].sim-range::-moz-range-thumb {
   border-radius: 50%;
   background: #fff;
   border: 2px solid var(--blue);
-  box-shadow: 0 2px 8px rgba(23, 33, 54, 0.2);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
   cursor: pointer;
 }
 input[type="range"].sim-range::-moz-range-track {
