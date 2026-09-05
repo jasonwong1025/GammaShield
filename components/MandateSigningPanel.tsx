@@ -440,7 +440,7 @@ export function MandateSigningPanel({
   };
 
   return (
-    <section className="py-5" aria-label="Set agent limits">
+    <section className="@container py-5" aria-label="Set agent limits">
       <StepHeader title={collapsed ? "Limits in force" : "Set the agent's limits"}>
         {/* Settled terms do not need the explanation of what setting them
             means; it belongs on the step you are actually working through. */}
@@ -453,59 +453,91 @@ export function MandateSigningPanel({
         <LimitsSummary signed={signedMandate ?? null} hash={active ?? null} thesis={savedThesis} thesisRead={thesisRead} actions={savedActions ?? actions} onEdit={() => setEditingLimits(true)} />
       ) : (
         <>
-          <div className="rowlist mt-3">
-            {/* The asset is not a control here — it follows the dashboard. That
-                is fine until the account already runs a policy on a different
-                one, because registering supersedes it: the switch would be
-                silent, one click from live, and in the wrong market. */}
-            <SettingRow
-              label="Asset"
-              hint={signedAsset && signedAsset !== asset
-                ? undefined
-                : "follows the asset the dashboard is showing"}
+          {/* Three independent groups — bounds, permissions, and the view
+              behind them — laid out so a visit sets one and glances at the
+              others, instead of scrolling a single column past controls
+              that have nothing to do with the one being changed. */}
+          <div className="mt-3 grid grid-cols-1 gap-3 @lg:grid-cols-5">
+            <LimitCard
+              title="Limits"
+              description="The most this account can put at risk, in total and per fill."
+              className="@lg:col-span-2 !self-stretch"
             >
-              <span className="text-[13px] font-semibold text-fg">{asset}</span>
-            </SettingRow>
-            {signedAsset && signedAsset !== asset && (
-              <p className="pb-3 text-[12px] leading-relaxed text-warn">
-                The policy in force covers {signedAsset}. This follows the asset the dashboard is showing, so signing now replaces
-                it with {asset} — switch the dashboard back to {signedAsset} to keep it.
-              </p>
-            )}
-            <SettingRow label="Maximum loss" hint="the most premium the agent may put at risk in total">
-              <MoneyInput label="Maximum loss" value={maxLossText} onChange={(value) => { setMaxLossText(value); setSigned(null); }} />
-            </SettingRow>
-            <SettingRow label="Maximum per trade" hint="notional of one fill, not the premium it costs">
-              <MoneyInput label="Maximum per trade" value={maxTradeText} onChange={(value) => { setMaxTradeText(value); setSigned(null); }} />
-            </SettingRow>
+              {/* The asset is not a control here — it follows the dashboard.
+                  That is fine until the account already runs a policy on a
+                  different one, because registering supersedes it: the
+                  switch would be silent, one click from live, and in the
+                  wrong market. */}
+              <div className="flex items-baseline justify-between">
+                <span className="text-[12px] text-muted">Asset</span>
+                <span className="text-[13px] font-semibold text-fg">{asset}</span>
+              </div>
+              {signedAsset && signedAsset !== asset && (
+                <p className="text-[12px] leading-relaxed text-warn">
+                  The policy in force covers {signedAsset}. Signing now replaces it with {asset} — switch the dashboard back to{" "}
+                  {signedAsset} to keep it.
+                </p>
+              )}
+              <div className="grid grid-cols-1 gap-3 @sm:grid-cols-2">
+                <Field label="Maximum loss" hint="total premium at risk">
+                  <MoneyInput wide label="Maximum loss" value={maxLossText} onChange={(value) => { setMaxLossText(value); setSigned(null); }} />
+                </Field>
+                <Field label="Maximum per trade" hint="notional of one fill">
+                  <MoneyInput wide label="Maximum per trade" value={maxTradeText} onChange={(value) => { setMaxTradeText(value); setSigned(null); }} />
+                </Field>
+              </div>
+            </LimitCard>
+
+            <LimitCard
+              title="What it may do"
+              description="These switches only ever narrow the signed policy. The on-chain stop is Pause or Revoke, below."
+              className="@lg:col-span-3 !self-stretch"
+            >
+              <div className="rowlist">
+                {availability.map((entry) => (
+                  <ActionToggle
+                    key={entry.action}
+                    entry={entry}
+                    onChange={(enabled) => setActions((value) => ({ ...value, [entry.action]: enabled }))}
+                  />
+                ))}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {actionsDirty && (
+                  <button type="button" onClick={() => void saveActions()} disabled={savingActions} className="h-8 rounded-lg bg-blue px-3 text-[12px] font-semibold text-white disabled:cursor-wait disabled:opacity-60">
+                    {savingActions ? "Confirm in wallet…" : "Save switches"}
+                  </button>
+                )}
+                {savedActions && !actionsDirty && <span className="text-[12px] text-calm">Switches saved.</span>}
+              </div>
+            </LimitCard>
           </div>
 
-          <div className="mt-5">
-            <h4 className="text-[13px] font-bold tracking-[-0.01em] text-fg">Why you are holding</h4>
-            <p className="mt-1 max-w-[64ch] text-[12px] leading-relaxed text-muted">
-              Nothing on-chain records why a position was opened, and whether to close, roll or hold turns on exactly that. The
-              agent assumes this view for anything it opens itself.
-            </p>
-            <div className="rowlist mt-2">
-              <SettingRow label="Objective" hint={OBJECTIVE_DESCRIPTION[objective]}>
-                <SelectInput label="Objective" value={objective} onChange={(value) => setObjective(value as TradingObjective)}>
+          <LimitCard
+            title="Why you're holding"
+            description="Nothing on-chain records why a position was opened, and whether to close, roll or hold turns on exactly that. The agent assumes this view for anything it opens itself."
+            className="mt-3"
+          >
+            <div className="grid grid-cols-1 gap-3 @lg:grid-cols-2 @5xl:grid-cols-4">
+              <Field label="Objective" hint={OBJECTIVE_DESCRIPTION[objective]}>
+                <SelectInput wide label="Objective" value={objective} onChange={(value) => setObjective(value as TradingObjective)}>
                   {TRADING_OBJECTIVES.map((value) => (
                     <option key={value} value={value}>{OBJECTIVE_LABEL[value]}</option>
                   ))}
                 </SelectInput>
-              </SettingRow>
-              <SettingRow label="Direction" hint={`Measured against ${fmtUsd(spot)} spot now. A 10% move against it marks the view broken.`}>
-                <SelectInput label="Direction" value={direction} onChange={(value) => setDirection(value as ThesisDirection)}>
+              </Field>
+              <Field label="Direction" hint={`vs. ${fmtUsd(spot)} spot now — 10% against it marks the view broken`}>
+                <SelectInput wide label="Direction" value={direction} onChange={(value) => setDirection(value as ThesisDirection)}>
                   <option value="BULLISH">Bullish</option>
                   <option value="BEARISH">Bearish</option>
                   <option value="NEUTRAL">Neutral</option>
                 </SelectInput>
-              </SettingRow>
-              <SettingRow label="Price target" hint="optional — reaching it can take profit, depending on the objective">
-                <MoneyInput label="Price target" value={targetText} onChange={setTargetText} />
-              </SettingRow>
-              <SettingRow label="Time horizon" hint="optional — the view expires with it; blank leaves it open-ended">
-                <span className="field flex w-[8rem] items-baseline gap-1 px-2.5 py-1.5">
+              </Field>
+              <Field label="Price target" hint="optional — can take profit, depending on the objective">
+                <MoneyInput wide label="Price target" value={targetText} onChange={setTargetText} />
+              </Field>
+              <Field label="Time horizon" hint="optional — blank leaves it open-ended">
+                <span className="field flex w-full items-baseline gap-1 px-2.5 py-1.5">
                   <input
                     inputMode="decimal"
                     aria-label="Time horizon in days"
@@ -515,10 +547,11 @@ export function MandateSigningPanel({
                   />
                   <span className="text-[12px] text-faint">days</span>
                 </span>
-              </SettingRow>
+              </Field>
             </div>
+
             {managedPositions.length > 0 && (
-              <div className="mt-3">
+              <div>
                 <p className="text-[13px] font-semibold text-fg">Views on single positions</p>
                 <p className="mt-0.5 max-w-[64ch] text-[12px] leading-relaxed text-faint">
                   Overrides the standing view for one position. Because a broken view can trigger an exit, each is keyed to the
@@ -553,7 +586,7 @@ export function MandateSigningPanel({
               </div>
             )}
 
-            <div className="mt-2.5 flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {thesisDirty && (
                 <button type="button" onClick={() => void saveThesis()} disabled={savingThesis} className="h-8 rounded-lg bg-blue px-3 text-[12px] font-semibold text-white disabled:cursor-wait disabled:opacity-60">
                   {savingThesis ? "Confirm in wallet…" : "Save view"}
@@ -562,31 +595,7 @@ export function MandateSigningPanel({
               {savedThesis && !thesisDirty && <span className="text-[12px] text-calm">View saved.</span>}
               <span className="text-[12px] text-faint">Signed by you and kept off-chain — a target price is a revisable opinion, not a spending limit.</span>
             </div>
-          </div>
-
-          <div className="mt-5">
-            <h4 className="text-[13px] font-bold tracking-[-0.01em] text-fg">What it may do</h4>
-            <p className="mt-1 max-w-[64ch] text-[12px] leading-relaxed text-muted">
-              These switches only ever narrow the signed policy. The on-chain stop is Pause or Revoke, below.
-            </p>
-            <div className="rowlist mt-2">
-              {availability.map((entry) => (
-                <ActionToggle
-                  key={entry.action}
-                  entry={entry}
-                  onChange={(enabled) => setActions((value) => ({ ...value, [entry.action]: enabled }))}
-                />
-              ))}
-            </div>
-            <div className="mt-2.5 flex flex-wrap items-center gap-2">
-              {actionsDirty && (
-                <button type="button" onClick={() => void saveActions()} disabled={savingActions} className="h-8 rounded-lg bg-blue px-3 text-[12px] font-semibold text-white disabled:cursor-wait disabled:opacity-60">
-                  {savingActions ? "Confirm in wallet…" : "Save switches"}
-                </button>
-              )}
-              {savedActions && !actionsDirty && <span className="text-[12px] text-calm">Switches saved.</span>}
-            </div>
-          </div>
+          </LimitCard>
 
           {draft && (
             <div className="note mt-4" style={{ borderLeftColor: "var(--blue)", background: "var(--blue-soft)" }}>
@@ -807,9 +816,9 @@ function SettingRow({ label, hint, children }: { label: string; hint?: string; c
   );
 }
 
-function MoneyInput({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+function MoneyInput({ label, value, onChange, wide }: { label: string; value: string; onChange: (value: string) => void; wide?: boolean }) {
   return (
-    <span className="field flex w-[8rem] items-baseline gap-1 px-2.5 py-1.5">
+    <span className={`field flex items-baseline gap-1 px-2.5 py-1.5 ${wide ? "w-full" : "w-[8rem]"}`}>
       <span className="text-[13px] font-semibold text-faint">$</span>
       <input
         inputMode="decimal"
@@ -822,18 +831,56 @@ function MoneyInput({ label, value, onChange }: { label: string; value: string; 
   );
 }
 
-function SelectInput({ label, value, onChange, children }: { label: string; value: string; onChange: (value: string) => void; children: React.ReactNode }) {
+function SelectInput({ label, value, onChange, children, wide }: { label: string; value: string; onChange: (value: string) => void; children: React.ReactNode; wide?: boolean }) {
   return (
-    <span className="field inline-flex px-2 py-1.5">
+    <span className={`field ${wide ? "flex w-full" : "inline-flex"} px-2 py-1.5`}>
       <select
         aria-label={label}
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="bg-transparent text-[13px] font-semibold text-fg outline-none"
+        className={`bg-transparent text-[13px] font-semibold text-fg outline-none ${wide ? "w-full" : ""}`}
       >
         {children}
       </select>
     </span>
+  );
+}
+
+/** One of the "Set the agent's limits" step's independent groups — bounds,
+ *  permissions, the view behind them. A bordered block rather than another
+ *  stacked heading, so the three read as separate settings you configure on
+ *  their own terms instead of one long form. */
+function LimitCard({
+  title,
+  description,
+  className = "",
+  children,
+}: {
+  title: string;
+  description?: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={`card flex flex-col gap-3 p-4 ${className}`}>
+      <div>
+        <h4 className="text-[13px] font-bold tracking-[-0.01em] text-fg">{title}</h4>
+        {description && <p className="mt-1 text-[12px] leading-relaxed text-muted">{description}</p>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/** Label above, control below — a compact form field for a grid of two or
+ *  four, unlike SettingRow's full-width label-left/control-right row. */
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <label className="flex flex-col gap-1.5">
+      <span className="text-[12px] font-semibold text-fg">{label}</span>
+      {children}
+      {hint && <span className="text-[11px] leading-snug text-faint">{hint}</span>}
+    </label>
   );
 }
 

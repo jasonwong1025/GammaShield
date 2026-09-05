@@ -179,7 +179,7 @@ export function BookCard({
   };
 
   return (
-    <section className={`card flex flex-col min-h-0 overflow-hidden ${fill ? "flex-1" : ""}`} aria-label={bookLabel}>
+    <section className={`card flex w-full flex-col min-h-0 overflow-hidden ${fill ? "flex-1" : ""}`} aria-label={bookLabel}>
       <div className="flex items-center justify-between px-5 pt-4 pb-3">
         {tabs.length > 1 ? (
           <div className="flex items-center gap-1 rounded-lg bg-panel2 p-0.5">

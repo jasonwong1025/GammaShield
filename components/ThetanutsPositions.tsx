@@ -128,10 +128,10 @@ export function ThetanutsPositions({
   const optimisticStillPending = optimistic && !confirmedTxHashes.has(optimistic.entryTxHash!.toLowerCase());
   const displayPositions = optimisticStillPending ? [optimistic!, ...positions] : positions;
   const filtered = displayPositions.filter((position) => position.asset === asset);
-  if (!address) return <Empty label="Connect wallet from the top bar to view Base-mainnet Thetanuts positions." />;
-  if (!loaded) return <p className="px-5 py-10 text-center text-[12px] text-faint">Reading Thetanuts indexer…</p>;
-  if (error) return <Empty action={() => void load(address, deployedPolicy ? policyAccount : undefined)} label={error} />;
-  if (!filtered.length) return <Empty action={() => void load(address, deployedPolicy ? policyAccount : undefined)} label={`No open ${asset} positions indexed for ${deployedPolicy ? "this wallet or policy account" : "this wallet"}.`} />;
+  if (!address) return <Empty fill={fill} label="Connect wallet from the top bar to view Base-mainnet Thetanuts positions." />;
+  if (!loaded) return <Empty fill={fill} label="Reading Thetanuts indexer…" />;
+  if (error) return <Empty fill={fill} action={() => void load(address, deployedPolicy ? policyAccount : undefined)} label={error} />;
+  if (!filtered.length) return <Empty fill={fill} action={() => void load(address, deployedPolicy ? policyAccount : undefined)} label={`No open ${asset} positions indexed for ${deployedPolicy ? "this wallet or policy account" : "this wallet"}.`} />;
 
   return (
     <div className={`feed-scroll overflow-auto grow min-h-0 ${fill ? "" : "max-h-[430px]"}`}>
@@ -181,6 +181,14 @@ export function ThetanutsPositions({
   );
 }
 
-function Empty({ action, label }: { action?: () => void; label: string }) {
-  return <div className="px-5 py-10 text-center text-[12px] text-faint"><p>{label}</p>{action && <button onClick={action} className="mt-3 text-blue hover:underline">Refresh</button>}</div>;
+/** Centered and grown to fill the card when `fill` is set — otherwise this
+ *  message sits pinned to the top of a tall, mostly-blank column, which is
+ *  exactly the "wasted space" a lone card on the AI Agent tab used to leave. */
+function Empty({ action, label, fill }: { action?: () => void; label: string; fill?: boolean }) {
+  return (
+    <div className={`flex flex-col items-center justify-center gap-3 px-5 text-center text-[12px] text-faint ${fill ? "grow min-h-[160px]" : "py-10"}`}>
+      <p>{label}</p>
+      {action && <button onClick={action} className="text-blue hover:underline">Refresh</button>}
+    </div>
+  );
 }
