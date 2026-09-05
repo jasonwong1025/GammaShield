@@ -164,6 +164,45 @@ body {
   background: var(--blue);
 }
 
+/* Agent surfaces sit in AgentView's hairline grid, so they don't need their
+   own rounded card border. */
+.agent-surface {
+  background: var(--panel);
+}
+.agent-surface .readout {
+  border-radius: 0;
+}
+
+/* The monitoring verdict is the one live surface on the agent page. A slow
+   scan appears only after a fresh worker report; it is deliberately absent
+   while the policy is merely active, so motion never overstates protection. */
+.agent-monitor {
+  position: relative;
+  overflow: hidden;
+  padding: 0.875rem;
+  border-left: 2px solid var(--edge-2);
+  background: var(--panel-2);
+}
+.agent-monitor[data-state="waiting"] {
+  border-left-color: color-mix(in srgb, var(--warn) 65%, var(--edge));
+}
+.agent-monitor[data-state="attention"] {
+  border-left-color: color-mix(in srgb, var(--crit) 75%, var(--edge));
+}
+.agent-monitor[data-state="checking"]::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 -35%;
+  width: 28%;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--calm) 10%, transparent), transparent);
+  animation: agent-scan 3.4s ease-in-out infinite;
+}
+@keyframes agent-scan {
+  from { transform: translateX(0); }
+  to { transform: translateX(500%); }
+}
+
 /* Permission switch. Still a checkbox — same keyboard behaviour, same disabled
    semantics, same focus ring — drawn as a switch because these three read as
    capabilities you grant the agent rather than boxes you tick. */
@@ -207,31 +246,6 @@ body {
   }
 }
 
-/* Step marker for the policy setup sequence. Numbered because this content
-   genuinely is ordered — deploy, sign, fund, monitor — and each step is
-   unavailable until the one before it is done. */
-.step-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.375rem;
-  height: 1.375rem;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  background: var(--panel-3);
-  color: var(--muted);
-}
-.step-mark[data-state="current"] {
-  background: var(--blue);
-  color: #fff;
-}
-.step-mark[data-state="done"] {
-  background: color-mix(in srgb, var(--calm) 15%, transparent);
-  color: var(--calm);
-}
-
 /* Price flash on update */
 @keyframes flash-up {
   0% { color: var(--calm); }
@@ -256,6 +270,7 @@ body {
 .live-dot { animation: tick 2s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) {
   .live-dot { animation: none; }
+  .agent-monitor[data-state="checking"]::after { animation: none; }
 }
 
 /* Scroll areas */
@@ -317,4 +332,3 @@ input[type="range"].sim-range::-moz-range-progress {
   outline-offset: 2px;
   border-radius: 6px;
 }
-

@@ -77,21 +77,18 @@ export function AgentMonitoringPanel({ account, mandateHash, network }: { accoun
   const persistenceEndsAt = eligibleSince + persistenceSeconds;
   const persistence = !observedAt || !eligibleSince ? "No qualifying on-chain risk observation yet." : now == null ? "Checking whether the risk observation is still valid…" : validUntil <= now ? "The last risk observation expired; the worker must refresh it." : now < persistenceEndsAt ? `Risk evidence is eligible; ${duration(persistenceEndsAt - now)} remains before a fill can be considered.` : "Risk persistence requirement is satisfied; a fresh eligible quote is still required.";
 
-  const needsAttention = agent?.worker === "error" || agent?.worker === "stale" || agentError;
+  const monitoring = monitoringSummary(agent, agentError, now);
   return <section aria-label="Agent monitoring">
-    {/* The verdict, and nothing else by default. Everything the agent weighed
-        to reach it is real and stays available, but a visit is normally only
-        asking "is it fine?" — so the workings wait to be asked for. */}
-    <div className="flex flex-wrap items-baseline justify-between gap-2">
-      <h3 className="text-[15px] font-bold tracking-[-0.01em] text-fg">{headline(agent, agentError)}</h3>
-      <span className={`text-[12px] ${needsAttention ? "font-semibold text-crit" : "text-faint"}`}>{workerText(agent, agentError, now)}</span>
+    <div className="agent-monitor" data-state={monitoring.state}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="eyebrow text-[11px] text-faint">Monitoring</p>
+          <h3 className="mt-1 text-[15px] font-bold tracking-[-0.01em] text-fg">{monitoring.title}</h3>
+        </div>
+        <span className={`chip text-[11px] font-semibold ${monitoring.tone}`}>{monitoring.badge}</span>
+      </div>
+      <p className="mt-2 max-w-[62ch] text-[13px] leading-relaxed text-muted">{monitoring.detail}</p>
     </div>
-
-    {agent?.latest && (
-      <p className="mt-1 text-[13px] leading-relaxed text-muted">
-        {agent.latest.decision?.explanation ?? decisionText(agent.latest)}
-      </p>
-    )}
 
     {/* Consequential enough to stay in view: one says the AI started this
         itself, the other that nothing was actually executed. */}
@@ -109,8 +106,15 @@ export function AgentMonitoringPanel({ account, mandateHash, network }: { accoun
       </p>
     )}
 
-    {(agent?.worker === "error" || agent?.worker === "stale" || agentError) && <p className="note mt-2.5 text-[12px] text-crit" style={{ borderLeftColor: "var(--crit)" }}>The worker check is failing — see its terminal. Nothing will be filled until it recovers.</p>}
-    {agent?.worker === "not-reporting" || agent?.worker === "awaiting-first-check" ? <p className="note mt-2.5 text-[12px] leading-relaxed text-faint" style={{ borderLeftColor: "var(--edge-2)" }}>Run <code className="font-mono text-fg">{agent?.command ?? (network === "mainnet" ? "npm run agent:thetanuts" : "npm run agent:shadow")}</code> alongside this app to start it checking.</p> : null}
+    {monitoring.needsDeveloperSetup && (
+      <div className="mt-2.5">
+        <Disclosure label="Developer setup">
+          <p className="mt-2.5 text-[12px] leading-relaxed text-faint">
+            For a local demo, run <code className="font-mono text-fg">{agent?.command ?? (network === "mainnet" ? "npm run agent:thetanuts" : "npm run agent:shadow")}</code> alongside this app.
+          </p>
+        </Disclosure>
+      </div>
+    )}
 
     <div className="mt-2.5">
       <Disclosure label={agent?.latest?.decision ? "Why this, and not the others?" : "Show what it checks"}>
@@ -143,15 +147,30 @@ export function AgentMonitoringPanel({ account, mandateHash, network }: { accoun
 
 /** The verdict as a sentence, so a hold reads as a decision rather than as
  *  nothing having happened. */
-function headline(agent: AgentStatus | null, error: boolean) {
-  if (error || agent?.worker === "error" || agent?.worker === "stale") return "Checks have stopped";
-  if (!agent?.latest) return "Waiting for the first check";
-  const action = agent.latest.decision?.action;
+function monitoringSummary(agent: AgentStatus | null, error: boolean, now: number | null) {
+  if (error) return { state: "attention", title: "Monitoring status is unavailable", badge: "Needs attention", tone: "text-crit", detail: "The app cannot read the monitoring service. Nothing will be filled until it recovers.", needsDeveloperSetup: false };
+  if (!agent || agent.worker === "not-reporting") return { state: "waiting", title: "Monitoring has not started", badge: "Not started", tone: "text-warn", detail: "Your policy is active, but no monitoring service has reported yet. It cannot act until the first check arrives.", needsDeveloperSetup: true };
+  if (agent.worker === "awaiting-first-check") return { state: "waiting", title: "Waiting for the first check", badge: "Starting", tone: "text-warn", detail: "Monitoring has not recorded a market check for this policy yet. It cannot act yet.", needsDeveloperSetup: true };
+  if (agent.worker === "error" || agent.worker === "stale") return { state: "attention", title: "Monitoring needs attention", badge: agent.worker === "stale" ? "Stale" : "Error", tone: "text-crit", detail: "The last monitoring check did not complete. Nothing will be filled until a fresh check succeeds.", needsDeveloperSetup: false };
+  if (!agent.latest) return { state: "waiting", title: "Waiting for the first check", badge: "Starting", tone: "text-warn", detail: "The monitoring service has not recorded a market decision for this policy yet.", needsDeveloperSetup: false };
+  const title = headline(agent.latest);
+  return {
+    state: "checking",
+    title,
+    badge: `Checked ${timeAgo(agent.latest.checkedAt, now)}`,
+    tone: "text-calm",
+    detail: agent.latest.decision?.explanation ?? decisionText(agent.latest),
+    needsDeveloperSetup: false,
+  };
+}
+
+function headline(latest: NonNullable<AgentStatus["latest"]>) {
+  const action = latest.decision?.action;
   if (action === "HOLD") return "Holding — nothing needs doing";
   if (action === "CLOSE") return "Closing the position";
   if (action === "ROLL") return "Rolling the position";
   if (action === "HEDGE") return "Buying protection";
-  return shortDecisionText(agent.latest);
+  return shortDecisionText(latest);
 }
 
 function Fact({ label, value, tone }: { label: string; value: React.ReactNode; tone?: string }) {
@@ -161,15 +180,6 @@ function Fact({ label, value, tone }: { label: string; value: React.ReactNode; t
       <span className={`max-w-[46ch] text-right text-[12px] ${tone ?? "text-fg"}`}>{value}</span>
     </div>
   );
-}
-
-function workerText(agent: AgentStatus | null, error: boolean, now: number | null) {
-  if (error) return "Status could not be read from this app.";
-  if (!agent || agent.worker === "not-reporting") return "No report yet.";
-  if (agent.worker === "awaiting-first-check") return "No worker decision recorded yet.";
-  if (agent.worker === "error") return "Last worker check failed.";
-  if (agent.worker === "stale") return "Last worker report is stale.";
-  return agent.latest ? `Checked ${timeAgo(agent.latest.checkedAt, now)}.` : "Checking.";
 }
 
 const HEALTH_TONE: Record<string, string> = {

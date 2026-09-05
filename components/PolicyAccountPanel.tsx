@@ -52,6 +52,7 @@ export function PolicyAccountPanel({ asset, spot }: { asset: OptionsAsset; spot:
   const activeMandate = activeMandateHash && activeMandateHash !== zeroHash ? activeMandateHash : null;
   const accountStateUnknown = Boolean(bytecodeError);
   const [accountDetailsOpen, setAccountDetailsOpen] = useState(false);
+  const [policyDetailsOpen, setPolicyDetailsOpen] = useState(false);
 
   const deploymentMessage = deploymentFailed
     ? `The deployment transaction did not succeed on-chain: ${walletActionError(deploymentError, "check the linked transaction before retrying.")} No policy account was created; network gas may have been charged.`
@@ -82,7 +83,7 @@ export function PolicyAccountPanel({ asset, spot }: { asset: OptionsAsset; spot:
           a policy is live this is the only part worth reading on most visits,
           so it sits above the setup it came from rather than below it. */}
       {live && (
-        <section className="card" aria-label="Agent status">
+        <section className="agent-surface" aria-label="Agent status">
           <AgentStatusHeader account={accountAddress} mandateHash={activeMandate} network={network} chainId={policy.chainId} />
           <div className="p-5">
             <AgentMonitoringPanel account={accountAddress} mandateHash={activeMandate} network={network} />
@@ -90,26 +91,39 @@ export function PolicyAccountPanel({ asset, spot }: { asset: OptionsAsset; spot:
         </section>
       )}
 
-      <section className="card" aria-label="Policy account setup">
+      <section className="agent-surface" aria-label="Policy account setup">
         {!policy.factory || !policy.agent ? (
           <p className="m-5 rounded-lg border border-crit/30 bg-crit/10 p-3 text-[12px] text-crit">The {network === "mainnet" ? "Base-mainnet" : "Base Sepolia"} policy-account factory or agent is not configured.</p>
         ) : !isConnected || !address ? (
           <div className="p-5">
             <h3 className="text-[15px] font-bold tracking-[-0.01em] text-fg">Set up the agent</h3>
-            <p className="mt-1 text-[12px] leading-relaxed text-muted">Connect the wallet that will own this policy account. Setup takes three steps: create the account, sign the limits, fund it.</p>
+            <p className="mt-1 text-[12px] leading-relaxed text-muted">Connect the wallet that will own this policy account. Create it once, choose its limits, then add funds.</p>
+          </div>
+        ) : live && accountAddress && !policyDetailsOpen ? (
+          <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-3 p-5">
+            <div>
+              <p className="text-[13px] font-semibold text-fg">Policy account ready</p>
+              <p className="mt-1 text-[12px] text-muted">Limits and funding are managed separately from your main wallet.</p>
+            </div>
+            <div className="flex items-center gap-3 text-[12px]">
+              <ExplorerLink network={network} resource="address" value={accountAddress} className="font-mono text-muted hover:text-blue">{shortAddr(accountAddress)}</ExplorerLink>
+              <button type="button" onClick={() => setPolicyDetailsOpen(true)} className="h-8 rounded-md bg-panel3 px-3 font-semibold text-blue hover:bg-panel2">Manage policy</button>
+            </div>
           </div>
         ) : (
           <div className="rowlist px-5">
-            {/* Step 1 — done work collapses to a single line, so the step you
-                are actually on is the one occupying the page. */}
+            {/* Completed account setup collapses to one quiet row. */}
             {deployed && accountAddress && !accountDetailsOpen ? (
-              <StepLine step={1} state="done" title="Policy account">
-                <ExplorerLink network={network} resource="address" value={accountAddress} className="font-mono text-fg hover:text-blue">{shortAddr(accountAddress)}</ExplorerLink>
-                <button type="button" onClick={() => setAccountDetailsOpen(true)} className="font-semibold text-blue hover:underline">Details</button>
-              </StepLine>
+              <div className="flex items-center justify-between gap-4 py-3.5">
+                <span className="text-[13px] font-semibold text-fg">Policy account</span>
+                <span className="flex shrink-0 items-center gap-3 text-[12px]">
+                  <ExplorerLink network={network} resource="address" value={accountAddress} className="font-mono text-fg hover:text-blue">{shortAddr(accountAddress)}</ExplorerLink>
+                  <button type="button" onClick={() => setAccountDetailsOpen(true)} className="font-semibold text-blue hover:underline">Details</button>
+                </span>
+              </div>
             ) : (
               <div className="py-5 first:pt-0">
-                <StepHeader step={1} state={deployed ? "done" : "current"} title="Policy account">
+                <StepHeader title="Policy account">
                   A dedicated smart account on {network === "mainnet" ? "Base mainnet" : "Base Sepolia"} holds the funds the agent may
                   spend. It cannot act until you register a bounded mandate.
                 </StepHeader>
@@ -144,37 +158,21 @@ export function PolicyAccountPanel({ asset, spot }: { asset: OptionsAsset; spot:
               </div>
             )}
 
-            {/* Steps 2 and 3 exist whether or not they can be reached yet;
-                showing them greyed is how the sequence stays legible from the
-                first visit, rather than appearing once step 1 lands. */}
             {deployed && accountAddress ? (
               <>
                 <MandateSigningPanel key={accountAddress} owner={address} account={accountAddress} network={network} asset={asset} spot={spot} />
                 <PolicyFundingPanel account={accountAddress} network={network} collateral={policy.collateral} collateralLabel={policy.collateralLabel} chainId={policy.chainId} />
+                {live && (
+                  <div className="flex justify-end py-3">
+                    <button type="button" onClick={() => setPolicyDetailsOpen(false)} className="text-[12px] font-semibold text-muted hover:text-fg">Back to monitoring</button>
+                  </div>
+                )}
               </>
-            ) : (
-              <>
-                <StepLine step={2} state="waiting" title="Set the agent's limits" />
-                <StepLine step={3} state="waiting" title="Fund the account" />
-              </>
-            )}
+            ) : null}
           </div>
         )}
       </section>
     </>
-  );
-}
-
-/** A step that needs no room: either finished, or not reachable yet. */
-function StepLine({ step, state, title, children }: { step: number; state: "done" | "waiting"; title: string; children?: React.ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-4 py-3.5">
-      <span className="flex min-w-0 items-center gap-2.5">
-        <span className="step-mark shrink-0" data-state={state} aria-hidden>{state === "done" ? "✓" : step}</span>
-        <span className={`text-[13px] font-semibold ${state === "done" ? "text-fg" : "text-faint"}`}>{title}</span>
-      </span>
-      {children && <span className="flex shrink-0 items-center gap-3 text-[12px]">{children}</span>}
-    </div>
   );
 }
 
@@ -252,11 +250,8 @@ function PolicyFundingPanel({ account, network, collateral, collateralLabel, cha
   if (!open) {
     return (
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-3.5">
-        <span className="flex min-w-0 items-center gap-2.5">
-          <span className="step-mark shrink-0" data-state={funded ? "done" : "current"} aria-hidden>{funded ? "✓" : 3}</span>
-          <span className={`text-[13px] font-semibold ${funded ? "text-fg" : "text-warn"}`}>
-            {funded ? "Funded" : ethBalance?.value ? `Needs ${collateralLabel} before it can trade` : "Needs funding before it can trade"}
-          </span>
+        <span className={`text-[13px] font-semibold ${funded ? "text-fg" : "text-warn"}`}>
+          {funded ? "Funding available" : ethBalance?.value ? `Needs ${collateralLabel} before it can trade` : "Needs funding before it can trade"}
         </span>
         <span className="flex shrink-0 items-center gap-3 text-[12px]">
           <span className="num text-muted">{balanceText}</span>
@@ -268,7 +263,7 @@ function PolicyFundingPanel({ account, network, collateral, collateralLabel, cha
 
   return (
     <section className="py-5" aria-label="Fund policy account">
-      <StepHeader step={3} state={funded ? "done" : "current"} title="Fund the account">
+      <StepHeader title="Fund the account">
         Transfers go straight from your wallet to this policy account. ETH pays transaction gas; {collateralLabel} is the collateral
         the agent trades with.
       </StepHeader>
