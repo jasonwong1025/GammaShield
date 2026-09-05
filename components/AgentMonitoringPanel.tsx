@@ -44,6 +44,12 @@ export function AgentMonitoringPanel({ account, mandateHash, network }: { accoun
   const [now, setNow] = useState<number | null>(null);
   const [demoTriggering, setDemoTriggering] = useState(false);
   const [demoError, setDemoError] = useState<string | null>(null);
+  // DEMO ONLY — a tick run from the button, held apart from `agent` so the
+  // 15s poll below cannot overwrite it. On a serverless deployment that poll
+  // reads a state file no worker ever wrote, so it always answers
+  // "not-reporting" and would otherwise wipe a real result off the screen a
+  // few seconds after the click.
+  const [demoLatest, setDemoLatest] = useState<AgentStatus | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -89,24 +95,27 @@ export function AgentMonitoringPanel({ account, mandateHash, network }: { accoun
       if (!response.ok) throw new Error(payload?.error ?? `demo tick ${response.status}`);
       const results = Array.isArray(payload?.results) ? payload.results : [];
       const mine = results.find((entry: { account?: string }) => entry.account?.toLowerCase() === account.toLowerCase());
-      if (mine) {
-        setAgent((previous) => ({
-          dryRun: previous?.dryRun ?? false,
-          command: previous?.command ?? "npm run agent:shadow",
-          worker: "checking",
-          latest: {
-            outcome: mine.outcome,
-            detail: mine.detail ?? null,
-            score: mine.score ?? null,
-            threshold: mine.threshold ?? null,
-            checkedAt: new Date().toISOString(),
-            userOpHash: mine.userOpHash ?? null,
-            health: mine.health ?? null,
-            decision: mine.decision ?? null,
-          },
-          recent: previous?.recent ?? null,
-        }));
+      if (!mine) {
+        throw new Error(
+          `the tick ran, but returned no result for ${account.slice(0, 6)}…${account.slice(-4)} — this page may be showing a different policy account than the agent found.`,
+        );
       }
+      setDemoLatest((previous) => ({
+        dryRun: previous?.dryRun ?? false,
+        command: previous?.command ?? "npm run agent:shadow",
+        worker: "checking",
+        latest: {
+          outcome: mine.outcome,
+          detail: mine.detail ?? null,
+          score: mine.score ?? null,
+          threshold: mine.threshold ?? null,
+          checkedAt: new Date().toISOString(),
+          userOpHash: mine.userOpHash ?? null,
+          health: mine.health ?? null,
+          decision: mine.decision ?? null,
+        },
+        recent: previous?.recent ?? null,
+      }));
       setAgentError(false);
     } catch (error) {
       setDemoError(error instanceof Error ? error.message : "demo tick failed");
@@ -115,17 +124,22 @@ export function AgentMonitoringPanel({ account, mandateHash, network }: { accoun
     }
   };
 
+  // The button's own result wins over the background poll: on a
+  // serverless deployment the poll has no state file to read and would
+  // otherwise erase a real tick from the panel seconds after the click.
+  const status = demoLatest ?? agent;
+
   const score = riskState ? Number(riskState[0]) / 100 : null;
   const eligibleSince = riskState ? Number(riskState[1]) : 0;
   const observedAt = riskState ? Number(riskState[2]) : 0;
   const validUntil = riskState ? Number(riskState[3]) : 0;
-  const threshold = mandate ? Number(mandate.riskThresholdBps) / 100 : agent?.latest?.threshold ?? null;
+  const threshold = mandate ? Number(mandate.riskThresholdBps) / 100 : status?.latest?.threshold ?? null;
   const persistenceSeconds = mandate ? Number(mandate.persistenceSeconds) : 0;
   const evidence = isRiskPending ? "checking on-chain evidence…" : riskError ? "unavailable — Base RPC read failed" : !observedAt ? "not observed yet" : `${score?.toFixed(2)} / 100${now != null && validUntil <= now ? " — expired" : ""}`;
   const persistenceEndsAt = eligibleSince + persistenceSeconds;
   const persistence = !observedAt || !eligibleSince ? "No qualifying on-chain risk observation yet." : now == null ? "Checking whether the risk observation is still valid…" : validUntil <= now ? "The last risk observation expired; the worker must refresh it." : now < persistenceEndsAt ? `Risk evidence is eligible; ${duration(persistenceEndsAt - now)} remains before a fill can be considered.` : "Risk persistence requirement is satisfied; a fresh eligible quote is still required.";
 
-  const monitoring = monitoringSummary(agent, agentError, now);
+  const monitoring = monitoringSummary(status, agentError, now);
   return <section aria-label="Agent monitoring">
     <div className="agent-monitor" data-state={monitoring.state}>
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -140,13 +154,13 @@ export function AgentMonitoringPanel({ account, mandateHash, network }: { accoun
 
     {/* Consequential enough to stay in view: one says the AI started this
         itself, the other that nothing was actually executed. */}
-    {agent?.latest?.decision?.aiInitiated && (
+    {status?.latest?.decision?.aiInitiated && (
       <p className="note mt-2.5 text-[12px] leading-relaxed text-muted" style={{ borderLeftColor: "var(--blue)", background: "var(--blue-soft)" }}>
         The AI raised this exit itself, on a broken thesis — the one action it may start rather than only narrow. It still had to
         pass the signed policy, and it is always the whole position.
       </p>
     )}
-    {agent?.latest?.decision?.recommendationOnly && (
+    {status?.latest?.decision?.recommendationOnly && (
       <p className="note mt-2.5 text-[12px] leading-relaxed text-muted" style={{ borderLeftColor: "var(--warn)", background: "color-mix(in srgb, var(--warn) 8%, transparent)" }}>
         {network === "mainnet"
           ? "Base mainnet has no way to execute this. A Thetanuts option can be closed only bilaterally, the OptionBook exposes no maker orders to end users, and an RFQ mints a new option rather than buying this one back — so this is priced for you to act on, not executed."
@@ -183,9 +197,9 @@ export function AgentMonitoringPanel({ account, mandateHash, network }: { accoun
     )}
 
     <div className="mt-2.5">
-      <Disclosure label={agent?.latest?.decision ? "Why this, and not the others?" : "Show what it checks"}>
+      <Disclosure label={status?.latest?.decision ? "Why this, and not the others?" : "Show what it checks"}>
         <div className="mt-2.5">
-          {agent?.latest?.decision && <Assessment latest={agent.latest} />}
+          {status?.latest?.decision && <Assessment latest={status.latest} />}
           <div className="rowlist mt-2.5">
             <Fact label="Execution mode" value={!agent ? "Checking…" : agent.dryRun ? "Dry run — it cannot spend funds" : network === "mainnet" ? "Broadcast enabled" : "Shadow execution — test funds only"} />
             {/* Distinct from the risk in the assessment: that is what the

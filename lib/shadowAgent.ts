@@ -33,8 +33,16 @@ import { getPolicyUserOperationReceipt, submitPolicyUserOperation } from "@/lib/
 import { discoverPolicyAccounts } from "@/lib/policyAgentDiscovery";
 
 const ENTRY_POINT = "0x0000000071727De22E5E9d8BAf0edAc6f37da032";
-const RISK_LIFETIME_SECONDS = 120;
-const RISK_REFRESH_SECONDS = 90;
+// The account rejects an attestation whose window exceeds
+// MAX_RISK_OBSERVATION_AGE (3 minutes), so 170 takes almost all of what it
+// allows and leaves 10s of margin. The old 120 left a full minute unused,
+// which mattered because the bundler needs two gas estimates and a block
+// before the attestation is read — on a cold serverless invocation that was
+// enough to expire it in flight (InvalidRiskObservation).
+const RISK_LIFETIME_SECONDS = 170;
+// Refresh once the observation is down to its last ~40s of validity, keeping
+// the same "refresh before it lapses" behaviour the shorter lifetime had.
+const RISK_REFRESH_SECONDS = 130;
 const ERC20_ABI = ["function balanceOf(address) view returns (uint256)"] as const;
 const FILL_ABI = [
   "function fillShadow((bytes32 fillId,bytes32 sourceHash,bytes32 asset,address buyer,bool isCall,uint128 strikeE8,uint64 expiry,uint64 validUntil,uint128 contractsE6,uint128 premiumUsdc),bytes)",
@@ -214,12 +222,22 @@ async function runShadowAgent(accountAddress: string, config: ReturnType<typeof 
     daysToExpiry: managed ? (managed.expiryTs - nowSeconds) / 86_400 : null,
   });
 
+  // Stamped here rather than from the tick's `now`, which was taken before the
+  // market snapshot, the position reads, the on-chain history and the trigger
+  // pass. The account only accepts an observation for MAX_RISK_OBSERVATION_AGE
+  // (3 minutes) and rejects it outright once `validUntil` is behind the block
+  // it lands in, so every second spent gathering evidence used to come out of
+  // the window the bundler still needs for two gas estimates and inclusion. A
+  // cold serverless invocation could burn most of it before signing and fail
+  // with InvalidRiskObservation. The score itself is what was measured; only
+  // the timestamp is refreshed.
+  const observedAt = BigInt(Math.floor(Date.now() / 1000));
   const risk = {
     mandateHash: policy.hash,
     riskScoreBps: scoreBps,
     positionRiskScoreBps: positionRiskBps(positionRisk),
-    observedAt: now,
-    validUntil: now + BigInt(RISK_LIFETIME_SECONDS),
+    observedAt,
+    validUntil: observedAt + BigInt(RISK_LIFETIME_SECONDS),
     persistenceSeconds: policy.mandate.persistenceSeconds,
   };
   const riskSignature = await agent.signTypedData(
@@ -407,8 +425,18 @@ async function act(context: ActContext): Promise<ShadowAgentResult> {
     .join(" ");
   if (resolved.aiInitiated) report.decision = { ...decision, action: "CLOSE", aiInitiated: true, reason: resolved.aiRationale ?? decision.reason };
   if (resolved.action === "hold") return { ...report, outcome: "holding", detail };
-  if (resolved.action === "close" || resolved.action === "roll") return await exit(context, resolved, detail);
-  return await hedge(context, resolved.contracts, detail);
+  // Every outcome carries the assessment, not just a hold. `hedge` and `exit`
+  // build their results from `base`, which has no decision or health, so an
+  // executed fill — or a refusal to fill, which is the more common and more
+  // interesting case — would otherwise reach the panel with nothing to say
+  // about WHY. That is the one thing the monitoring panel exists to show.
+  const withAssessment = (result: ShadowAgentResult): ShadowAgentResult => ({
+    ...result,
+    decision: report.decision,
+    health: report.health,
+  });
+  if (resolved.action === "close" || resolved.action === "roll") return withAssessment(await exit(context, resolved, detail));
+  return withAssessment(await hedge(context, resolved.contracts, detail));
 }
 
 async function hedge(context: ActContext, contracts: number, detail: string): Promise<ShadowAgentResult> {

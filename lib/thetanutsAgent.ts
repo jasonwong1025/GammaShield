@@ -25,8 +25,13 @@ import { evaluateThesis, readThesisRecord, targetReached, thesisFor } from "@/li
 import { positionHealthOf, type AutonomousDecision, type PositionHealth } from "@/lib/autonomous/types";
 
 const ENTRY_POINT = "0x0000000071727De22E5E9d8BAf0edAc6f37da032";
-const RISK_LIFETIME_SECONDS = 120;
-const RISK_REFRESH_SECONDS = 90;
+// Matches MandateAccount's MAX_RISK_OBSERVATION_AGE (3 minutes) less a 10s
+// margin. The bundler needs two gas estimates and a block before the
+// attestation is read, so a short window can expire in flight.
+const RISK_LIFETIME_SECONDS = 170;
+// Refresh once the observation is down to its last ~40s, preserving the
+// "refresh before it lapses" margin the shorter lifetime had.
+const RISK_REFRESH_SECONDS = 130;
 const BASE_OPTION_BOOK = "0x1bDff855d6811728acaDC00989e79143a2bdfDed";
 const BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const FILL_ABI = ["function fillOrder((address maker,uint256 orderExpiryTimestamp,address collateral,bool isCall,address priceFeed,address implementation,bool isLong,uint256 maxCollateralUsable,uint256[] strikes,uint256 expiry,uint256 price,uint256 numContracts,bytes extraOptionData),bytes signature,address referrer) returns (address)"] as const;
@@ -119,7 +124,11 @@ async function runThetanutsAgent(accountAddress: string, config: ReturnType<type
     ? computePositionRisk({ position: managed, spot, nowSec: nowSeconds, marketScore: score, contractDepthUsd: null })
     : null;
 
-  const risk = { mandateHash: policy.hash, riskScoreBps: scoreBps, positionRiskScoreBps: positionRiskBps(positionRisk), observedAt: now, validUntil: now + BigInt(RISK_LIFETIME_SECONDS), persistenceSeconds: policy.mandate.persistenceSeconds };
+  // Stamped here, not from the tick's `now`: that was taken before the
+  // snapshot and on-chain reads, and every second of those came out of the
+  // window the account still needs the attestation to be valid in.
+  const observedAt = BigInt(Math.floor(Date.now() / 1000));
+  const risk = { mandateHash: policy.hash, riskScoreBps: scoreBps, positionRiskScoreBps: positionRiskBps(positionRisk), observedAt, validUntil: observedAt + BigInt(RISK_LIFETIME_SECONDS), persistenceSeconds: policy.mandate.persistenceSeconds };
   const riskSignature = await agent.signTypedData({ name: "GammaShield Risk", version: "1", chainId: 8453, verifyingContract: accountAddress }, { RiskAttestation: [{ name: "mandateHash", type: "bytes32" }, { name: "riskScoreBps", type: "uint16" }, { name: "positionRiskScoreBps", type: "uint16" }, { name: "observedAt", type: "uint64" }, { name: "validUntil", type: "uint64" }, { name: "persistenceSeconds", type: "uint64" }] }, risk);
   if (scoreBps < Number(policy.mandate.riskThresholdBps)) {
     if (state.scoreBps < policy.mandate.riskThresholdBps || state.validUntil < now) return { ...base, outcome: "risk-below-threshold" };
@@ -289,35 +298,39 @@ async function runThetanutsAgent(accountAddress: string, config: ReturnType<type
     };
   }
   if (resolved.action !== "hedge") return { ...report, outcome: "holding", detail: decisionDetail };
+  // Past this point an assessment exists, so every outcome carries it —
+  // a refusal to fill is a judgement the panel has to be able to explain,
+  // not a blank. The early returns above run before any decision is made
+  // and correctly report `base` alone.
 
   const period = TRADE_PERIODS.find((days) => BigInt(days * 86400) >= policy.mandate.minTenorSeconds && BigInt(days * 86400) <= policy.mandate.maxTenorSeconds);
-  if (!period) return { ...base, outcome: "quote-unavailable", detail: "No supported Thetanuts tenor fits this mandate." };
+  if (!period) return { ...report, outcome: "quote-unavailable", detail: "No supported Thetanuts tenor fits this mandate." };
   const contracts = resolved.contracts;
-  if (!Number.isFinite(contracts) || contracts < 0.001) return { ...base, outcome: "quote-unavailable", detail: "Mandate contract cap is below the executable minimum." };
+  if (!Number.isFinite(contracts) || contracts < 0.001) return { ...report, outcome: "quote-unavailable", detail: "Mandate contract cap is below the executable minimum." };
   const quote = await getTradeQuote(policy.mandate.asset, "put", contracts, period, {
     fresh: true,
     maxPremiumUsd: Number(policy.mandate.maxPremiumPerFill) / 1e6,
   });
-  if (quote.source !== "book" || !quote.txs) return { ...base, outcome: "quote-unavailable", detail: "No fresh listed Thetanuts order is eligible; RFQ estimates are never auto-filled." };
-  if (quote.txs.fill.to.toLowerCase() !== BASE_OPTION_BOOK.toLowerCase()) return { ...base, outcome: "quote-unavailable", detail: "SDK fill targets an unrecognized OptionBook." };
+  if (quote.source !== "book" || !quote.txs) return { ...report, outcome: "quote-unavailable", detail: "No fresh listed Thetanuts order is eligible; RFQ estimates are never auto-filled." };
+  if (quote.txs.fill.to.toLowerCase() !== BASE_OPTION_BOOK.toLowerCase()) return { ...report, outcome: "quote-unavailable", detail: "SDK fill targets an unrecognized OptionBook." };
   const decoded = new ethers.Interface(FILL_ABI).decodeFunctionData("fillOrder", quote.txs.fill.data);
   const order = decoded[0];
   const premium = BigInt(order.price) * BigInt(order.numContracts) / 100_000_000n;
   const tenor = BigInt(order.expiry) - now;
-  if (order.isCall || order.isLong || String(decoded[2]).toLowerCase() !== ethers.ZeroAddress || premium <= 0n || premium > policy.mandate.maxPremiumPerFill || BigInt(order.numContracts) > policy.mandate.maxContractsPerFill || tenor < policy.mandate.minTenorSeconds || tenor > policy.mandate.maxTenorSeconds || BigInt(order.orderExpiryTimestamp) <= now) return { ...base, outcome: "quote-unavailable", detail: "The fresh SDK preview does not satisfy the signed policy." };
+  if (order.isCall || order.isLong || String(decoded[2]).toLowerCase() !== ethers.ZeroAddress || premium <= 0n || premium > policy.mandate.maxPremiumPerFill || BigInt(order.numContracts) > policy.mandate.maxContractsPerFill || tenor < policy.mandate.minTenorSeconds || tenor > policy.mandate.maxTenorSeconds || BigInt(order.orderExpiryTimestamp) <= now) return { ...report, outcome: "quote-unavailable", detail: "The fresh SDK preview does not satisfy the signed policy." };
   // The mandate caps contracts; the user set a notional limit. Check the real
   // strike here, where it is finally known, rather than trusting the conversion.
   const fillNotionalUsd = (Number(order.numContracts) / 1e6) * (Number(order.strikes[0]) / 1e8);
   const signedNotionalCap = (Number(policy.mandate.maxContractsPerFill) / 1e6) * (Number(order.strikes[0]) / 1e8);
-  if (fillNotionalUsd > signedNotionalCap + 1e-9) return { ...base, outcome: "quote-unavailable", detail: "The fill's notional exceeds the signed per-trade limit at this strike." };
-  if (policy.control.spentPremium + premium > policy.mandate.maxPremiumTotal) return { ...base, outcome: "quote-unavailable", detail: "The signed mandate's total premium cap is exhausted." };
-  if (policy.control.lastExecutionAt !== 0n && now < policy.control.lastExecutionAt + policy.mandate.minExecutionIntervalSeconds) return { ...base, outcome: "quote-unavailable", detail: "The signed mandate's execution cooldown is active." };
-  if ((await new ethers.Contract(BASE_USDC, ERC20_ABI, provider).balanceOf(accountAddress)) < premium) return { ...base, outcome: "quote-unavailable", detail: "Policy account lacks enough USDC for the exact SDK preview." };
+  if (fillNotionalUsd > signedNotionalCap + 1e-9) return { ...report, outcome: "quote-unavailable", detail: "The fill's notional exceeds the signed per-trade limit at this strike." };
+  if (policy.control.spentPremium + premium > policy.mandate.maxPremiumTotal) return { ...report, outcome: "quote-unavailable", detail: "The signed mandate's total premium cap is exhausted." };
+  if (policy.control.lastExecutionAt !== 0n && now < policy.control.lastExecutionAt + policy.mandate.minExecutionIntervalSeconds) return { ...report, outcome: "quote-unavailable", detail: "The signed mandate's execution cooldown is active." };
+  if ((await new ethers.Contract(BASE_USDC, ERC20_ABI, provider).balanceOf(accountAddress)) < premium) return { ...report, outcome: "quote-unavailable", detail: "Policy account lacks enough USDC for the exact SDK preview." };
   const signedQuote = { mandateHash: policy.hash, fillCalldataHash: ethers.keccak256(quote.txs.fill.data), premium, contracts: BigInt(order.numContracts), observedAt: now, validUntil: now + BigInt(RISK_LIFETIME_SECONDS) };
   const quoteSignature = await agent.signTypedData({ name: "GammaShield Thetanuts Quote", version: "1", chainId: 8453, verifyingContract: accountAddress }, { ThetanutsQuote: [{ name: "mandateHash", type: "bytes32" }, { name: "fillCalldataHash", type: "bytes32" }, { name: "premium", type: "uint256" }, { name: "contracts", type: "uint256" }, { name: "observedAt", type: "uint64" }, { name: "validUntil", type: "uint64" }] }, signedQuote);
   const callData = account.interface.encodeFunctionData("executeThetanuts", [policy.hash, risk, riskSignature, signedQuote, quoteSignature, quote.txs.fill.data]);
   const userOpHash = await submitPolicyUserOperation({ chainId: 8453, provider, agent, sender: accountAddress, callData, pimlicoApiKey: config.pimlicoApiKey, dryRun: config.dryRun });
-  return config.dryRun ? { ...base, outcome: "fill-simulated", detail: "Pimlico accepted the UserOperation estimate; it was not broadcast." } : { ...base, outcome: "fill-submitted", userOpHash: userOpHash ?? undefined };
+  return config.dryRun ? { ...report, outcome: "fill-simulated", detail: "Pimlico accepted the UserOperation estimate; it was not broadcast." } : { ...report, outcome: "fill-submitted", userOpHash: userOpHash ?? undefined };
 }
 
 async function submitRisk(account: ethers.Contract, hash: string, risk: Record<string, bigint | number | string>, riskSignature: string, provider: ethers.Provider, agent: ethers.Wallet, sender: string, config: ReturnType<typeof runtimeConfig>, outcome: "risk-reset-submitted" | "risk-reset-simulated" | "risk-observation-submitted" | "risk-observation-simulated", base: Omit<ThetanutsAgentResult, "outcome" | "userOpHash">) {
