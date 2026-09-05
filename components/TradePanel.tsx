@@ -161,12 +161,15 @@ function displayToken(symbol: string) {
   return symbol.replace(/^aBas/, "");
 }
 
-function fmtDays(d: number) {
-  return d < 1 ? `${Math.round(d * 24)}h` : `${Math.round(d)}d`;
+/** Time remaining to a fixed calendar expiry — never a restated tenor length, since the two can drift apart. */
+function fmtDaysLeft(d: number) {
+  return d < 1 ? `${Math.round(d * 24)}h left` : `${Math.round(d)}d left`;
 }
 
-function periodLabel(p: TradePeriod) {
-  return p === 7 ? "1 Week" : p === 14 ? "2 Weeks" : "4 Weeks";
+/** The real listed expiry date nearest this nominal tenor — leads on the date so there's no duration to contradict. */
+function tenorLabel(p: TradePeriod, expiries: { period: TradePeriod; ts: number }[]) {
+  const entry = expiries.find((e) => e.period === p);
+  return entry ? fmtExpiryDate(entry.ts) : `${p}d`;
 }
 
 export function TradePanel({
@@ -800,13 +803,13 @@ export function TradePanel({
                     period === p ? "bg-panel text-fg shadow-sm" : "text-muted hover:text-fg"
                   }`}
                 >
-                  <span>{periodLabel(p)}</span>
+                  <span>{entry ? fmtExpiryDate(entry.ts) : `${p}d`}</span>
                   {entry && (
                     <span className="text-[10px] font-normal text-faint flex items-center gap-1">
                       {entry.fillable && (
                         <span className="size-1 rounded-full bg-calm inline-block" />
                       )}
-                      {fmtDays(entry.days)}
+                      {fmtDaysLeft(entry.days)}
                     </span>
                   )}
                 </button>
@@ -873,7 +876,7 @@ export function TradePanel({
         >
           <p className="eyebrow text-[10px] font-semibold text-blue">Protective-put plan</p>
           <p className="mt-1 text-muted">
-            Protecting {fmtContracts(amount)} {asset} through {quote ? fmtExpiryDate(quote.expiryTs) : periodLabel(period)}. Your premium cap is {fmtUsd(hedgeIntent.maxPremiumUsd, false, 2)}.
+            Protecting {fmtContracts(amount)} {asset} through {quote ? fmtExpiryDate(quote.expiryTs) : tenorLabel(period, expiries)}. Your premium cap is {fmtUsd(hedgeIntent.maxPremiumUsd, false, 2)}.
           </p>
           {quote && protectedFloorAfterPremium !== null && (
             <p className="mt-1 text-fg">
@@ -1050,7 +1053,7 @@ export function TradePanel({
             className="h-10 rounded-lg bg-blue text-white text-[13px] font-semibold hover:brightness-110 transition disabled:opacity-50"
           >
             {validAmount
-              ? `Request quotes · ${periodLabel(period)} via RFQ auction`
+              ? `Request quotes · ${tenorLabel(period, expiries)} via RFQ auction`
               : "Enter an amount to trade"}
           </button>
           {nearestFillable && (
@@ -1058,7 +1061,7 @@ export function TradePanel({
               onClick={() => setPeriod(nearestFillable.period)}
               className="text-[11px] text-muted hover:text-fg transition self-center"
             >
-              or jump to instant fill · {periodLabel(nearestFillable.period)}
+              or jump to instant fill · {tenorLabel(nearestFillable.period, expiries)}
             </button>
           )}
         </div>
@@ -1073,7 +1076,7 @@ export function TradePanel({
               onClick={() => setPeriod(nearestFillable.period)}
               className="mt-2 block text-blue hover:underline"
             >
-              Choose instant fill · {periodLabel(nearestFillable.period)}
+              Choose instant fill · {tenorLabel(nearestFillable.period, expiries)}
             </button>
           )}
         </div>
