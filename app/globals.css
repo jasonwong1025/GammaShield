@@ -172,6 +172,10 @@ body {
 .agent-surface .readout {
   border-radius: 0;
 }
+.agent-workspace .card {
+  border: 0;
+  border-radius: 0;
+}
 
 /* The monitoring verdict is the one live surface on the agent page. A slow
    scan appears only after a fresh worker report; it is deliberately absent
