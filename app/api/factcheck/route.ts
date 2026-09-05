@@ -2,13 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { analyzeMarketRumor, GONKA_MODELS, type FactCheckRequest } from "@/lib/gonka";
 import { getOptimalPutHedge } from "@/lib/optimizer";
 import { ALL_ASSETS, type Asset } from "@/lib/assets";
+import { extractClaimFromInput } from "@/lib/claimExtractor";
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const { headline, asset, gexScore, spotPrice, flipStrike, netGexUsd, regime, model } = body;
 
-    if (typeof headline !== "string" || !headline.trim() || headline.length > 600) {
+    if (typeof headline !== "string" || !headline.trim() || headline.length > 1000) {
       return NextResponse.json({ error: "Missing or invalid headline parameter" }, { status: 400 });
     }
     if (typeof asset !== "string" || !ALL_ASSETS.includes(asset as (typeof ALL_ASSETS)[number])) {
@@ -36,8 +37,11 @@ export async function POST(req: NextRequest) {
       optimalContract = optRec.optimalContract;
     } catch {}
 
+    // Extract claim from URL or tweet if a link was submitted
+    const extractedClaim = await extractClaimFromInput(headline);
+
     const requestParams: FactCheckRequest = {
-      headline: headline.trim(),
+      headline: extractedClaim.headline,
       asset: currentAsset,
       gexScore: Number(gexScore) || 50,
       spotPrice: currentSpot,
@@ -46,6 +50,7 @@ export async function POST(req: NextRequest) {
       regime: regime || "neutral",
       model: model || undefined,
       optimalContract,
+      extractedClaim,
     };
 
     const analysis = await analyzeMarketRumor(requestParams);

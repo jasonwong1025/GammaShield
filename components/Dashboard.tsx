@@ -25,6 +25,7 @@ export function Dashboard() {
   const [activeTab, setActiveTab] = useState<NavTab>("dashboard");
   const [asset, setAsset] = useState<Asset>("BTC");
   const [snap, setSnap] = useState<MarketSnapshot | null>(null);
+  const [pendingRow, setPendingRow] = useState<FeedRow | null>(null);
   const [ticker, setTicker] = useState<Ticker | null>(null);
   const [error, setError] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -132,7 +133,14 @@ export function Dashboard() {
               <>
                 {/* TAB 1: Main Dashboard (Trading, OptionBook, RiskView from main) */}
                 {activeTab === "dashboard" && (
-                  <TradingArea snap={snap} a={a} asset={asset} live={live} livePrice={livePrice} />
+                  <TradingArea
+                    snap={snap}
+                    a={a}
+                    asset={asset}
+                    live={live}
+                    livePrice={livePrice}
+                    pendingRow={pendingRow}
+                  />
                 )}
 
                 {/* TAB 2: AI agent workspace — limits, policy, monitoring */}
@@ -153,8 +161,24 @@ export function Dashboard() {
 
       <CopilotWidget
         snap={a}
-        onNavigateToAgent={() => {
-          setActiveTab("agent");
+        onNavigateToHedge={(strike) => {
+          setActiveTab("dashboard");
+          // Route the AI's suggested strike to the nearest actual listed PUT
+          // on the current book — TradePanel reviews real orders only, never
+          // a strike the model invented but nothing on Base is quoting.
+          const puts = typeof strike === "number" ? snap?.feed.filter((r) => r.asset === asset && !r.isCall) : null;
+          if (puts && puts.length > 0) {
+            const nearest = puts.reduce((best, r) =>
+              Math.abs(r.strike - strike!) < Math.abs(best.strike - strike!) ? r : best,
+            );
+            setPendingRow(nearest);
+            // One-shot handoff: TradingArea applies pendingRow via a
+            // render-time comparison (see its appliedPendingRow state) in
+            // the render this triggers, which lands before this timeout
+            // fires. Clearing it after stops an unrelated later tab
+            // revisit from silently re-opening the same suggestion.
+            setTimeout(() => setPendingRow(null), 0);
+          }
         }}
       />
     </div>
@@ -170,12 +194,14 @@ function TradingArea({
   asset,
   live,
   livePrice,
+  pendingRow,
 }: {
   snap: MarketSnapshot;
   a: AssetSnapshot;
   asset: Asset;
   live: boolean;
   livePrice: number;
+  pendingRow?: FeedRow | null;
 }) {
   const { setNetwork } = useExecutionNetwork();
   const [orderIntent, setOrderIntent] = useState<OrderIntent | null>(null);
@@ -189,27 +215,46 @@ function TradingArea({
     setOrderIntent(null);
   }
 
+  const buildOrderIntent = (row: FeedRow): OrderIntent => ({
+    asset: row.asset,
+    side: row.isCall ? "call" : "put",
+    strike: row.strike,
+    expiryTs: row.expiryTs,
+    // Same formula the row's own risk score was sized against
+    // (lib/snapshot.ts) — starting the panel here keeps the quantity
+    // component of the two scores comparable.
+    contracts: row.collateralUsd / Math.max(row.strike, 1),
+    nonce: Date.now(),
+  });
+
   const onBuyRow = useCallback(
     (row: FeedRow) => {
       // The OptionBook feed only ever exists on Base mainnet — force the
       // execution toggle there regardless of what it was on, so the panel
       // renders the real buy button rather than the Sepolia mirror.
       setNetwork("mainnet");
-      setOrderIntent({
-        asset: row.asset,
-        side: row.isCall ? "call" : "put",
-        strike: row.strike,
-        expiryTs: row.expiryTs,
-        // Same formula the row's own risk score was sized against
-        // (lib/snapshot.ts) — starting the panel here keeps the quantity
-        // component of the two scores comparable.
-        contracts: row.collateralUsd / Math.max(row.strike, 1),
-        nonce: Date.now(),
-      });
+      setOrderIntent(buildOrderIntent(row));
       document.getElementById(TRADE_PANEL_ANCHOR_ID)?.scrollIntoView({ behavior: "smooth", block: "start" });
     },
     [setNetwork],
   );
+
+  // A Copilot hedge suggestion routes here as a real book row (Dashboard
+  // resolved the AI's strike to the nearest listed PUT). Applied as a
+  // render-time adjustment (same pattern as prevAsset above) rather than an
+  // effect, since Dashboard's pendingRow is a one-shot value it clears right
+  // after — an effect would run one render too late to see it.
+  const [appliedPendingRow, setAppliedPendingRow] = useState<FeedRow | null>(null);
+  if (pendingRow && pendingRow !== appliedPendingRow) {
+    setAppliedPendingRow(pendingRow);
+    setNetwork("mainnet");
+    setOrderIntent(buildOrderIntent(pendingRow));
+  }
+
+  useEffect(() => {
+    if (!appliedPendingRow) return;
+    document.getElementById(TRADE_PANEL_ANCHOR_ID)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [appliedPendingRow]);
 
   return (
     <div className="grid grow grid-cols-1 xl:grid-cols-[1fr_380px] gap-px bg-edge">
