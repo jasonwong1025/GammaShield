@@ -139,7 +139,12 @@ export function AgentMonitoringPanel({ account, mandateHash, network }: { accoun
   const persistenceEndsAt = eligibleSince + persistenceSeconds;
   const persistence = !observedAt || !eligibleSince ? "No qualifying on-chain risk observation yet." : now == null ? "Checking whether the risk observation is still valid…" : validUntil <= now ? "The last risk observation expired; the worker must refresh it." : now < persistenceEndsAt ? `Risk evidence is eligible; ${duration(persistenceEndsAt - now)} remains before a fill can be considered.` : "Risk persistence requirement is satisfied; a fresh eligible quote is still required.";
 
-  const monitoring = monitoringSummary(status, agentError, now);
+  // Sepolia is where the demo button lives. With a worker running (local
+  // dev) the poll returns real status and the on-demand branch never
+  // applies; without one (any serverless deployment) it keeps the panel
+  // from alarming about a worker that was never meant to exist there.
+  const onDemand = network === "sepolia";
+  const monitoring = monitoringSummary(status, agentError, now, onDemand);
   return <section aria-label="Agent monitoring">
     <div className="agent-monitor" data-state={monitoring.state}>
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -227,7 +232,20 @@ export function AgentMonitoringPanel({ account, mandateHash, network }: { accoun
 
 /** The verdict as a sentence, so a hold reads as a decision rather than as
  *  nothing having happened. */
-function monitoringSummary(agent: AgentStatus | null, error: boolean, now: number | null) {
+function monitoringSummary(agent: AgentStatus | null, error: boolean, now: number | null, onDemand: boolean) {
+  // `onDemand` means checks are run from the button rather than by a
+  // background worker — the case on any serverless deployment, where
+  // /api/agent-status reads a state file nothing ever writes. Reporting a
+  // missing worker as "needs attention" there is alarming and wrong: there
+  // is no worker to be unhealthy. It reads as ready-to-check instead, and
+  // only a real assessment replaces it.
+  const idle = !agent || agent.worker === "not-reporting" || agent.worker === "awaiting-first-check" ||
+    agent.worker === "error" || agent.worker === "stale" || !agent.latest;
+  if (onDemand && idle) {
+    return { state: "waiting", title: "Ready to check", badge: "On demand", tone: "text-muted",
+      detail: "Checks run when you ask for one here. Run a check to assess the live book against your signed limits.",
+      needsDeveloperSetup: false };
+  }
   if (error) return { state: "attention", title: "Monitoring status is unavailable", badge: "Needs attention", tone: "text-crit", detail: "The app cannot read the monitoring service. Nothing will be filled until it recovers.", needsDeveloperSetup: false };
   if (!agent || agent.worker === "not-reporting") return { state: "waiting", title: "Monitoring has not started", badge: "Not started", tone: "text-warn", detail: "Your policy is active, but no monitoring service has reported yet. It cannot act until the first check arrives.", needsDeveloperSetup: true };
   if (agent.worker === "awaiting-first-check") return { state: "waiting", title: "Waiting for the first check", badge: "Starting", tone: "text-warn", detail: "Monitoring has not recorded a market check for this policy yet. It cannot act yet.", needsDeveloperSetup: true };
