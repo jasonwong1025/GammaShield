@@ -8,14 +8,16 @@ import { erc20Abi, mandateAccountAbi, mandateAccountFactoryAbi, useReadErc20Bala
 import { shortAddr } from "@/lib/format";
 import { wagmiConfig } from "@/lib/wagmi";
 import { MandateSigningPanel } from "./MandateSigningPanel";
+import { AgentStatusHeader } from "./AgentStatusHeader";
 import { AgentMonitoringPanel } from "./AgentMonitoringPanel";
 import { StepHeader } from "./StepHeader";
 import { ExplorerLink } from "./ExplorerLink";
 import { useExecutionNetwork } from "./ExecutionNetworkProvider";
 import { policyNetwork } from "@/lib/policyNetwork";
 import { ensureWalletChain, walletActionError } from "@/lib/walletChain";
+import type { OptionsAsset } from "@/lib/assets";
 
-export function PolicyAccountPanel({ spot }: { spot: number }) {
+export function PolicyAccountPanel({ asset, spot }: { asset: OptionsAsset; spot: number }) {
   const { network } = useExecutionNetwork();
   const policy = policyNetwork(network);
   const { address, connector, isConnected } = useAccount();
@@ -49,6 +51,8 @@ export function PolicyAccountPanel({ spot }: { spot: number }) {
   });
   const activeMandate = activeMandateHash && activeMandateHash !== zeroHash ? activeMandateHash : null;
   const accountStateUnknown = Boolean(bytecodeError);
+  const [policyDetailsOpen, setPolicyDetailsOpen] = useState(false);
+
   const deploymentMessage = deploymentFailed
     ? `The deployment transaction did not succeed on-chain: ${walletActionError(deploymentError, "check the linked transaction before retrying.")} No policy account was created; network gas may have been charged.`
     : message;
@@ -71,60 +75,99 @@ export function PolicyAccountPanel({ spot }: { spot: number }) {
     }
   };
 
+  const live = deployed && accountAddress && activeMandate;
   return (
-    <section className="card p-5 flex flex-col gap-4" aria-label="Policy account setup">
-      <StepHeader
-        step={1}
-        state={deployed ? "done" : "current"}
-        title="Policy account"
-        aside={
-          <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${deployed ? "bg-calm/15 text-calm" : "bg-panel2 text-muted"}`}>
-            {deployed ? "Deployed" : "Not deployed"}
-          </span>
-        }
-      >
-        A dedicated smart account on {network === "mainnet" ? "Base mainnet" : "Base Sepolia"} holds the funds the agent may spend. It
-        cannot act until you register a bounded mandate.
-      </StepHeader>
-
-      {!policy.factory || !policy.agent ? (
-        <p className="rounded-lg border border-crit/30 bg-crit/10 p-3 text-[12px] text-crit">The {network === "mainnet" ? "Base-mainnet" : "Base Sepolia"} policy-account factory or agent is not configured.</p>
-      ) : !isConnected || !address ? (
-        <p className="rounded-lg border border-edge bg-panel2 p-3 text-[12px] text-muted">Connect the wallet that will own this policy account.</p>
-      ) : (
-        <>
-          <div className="readout grid gap-2 p-3 text-[12px] sm:grid-cols-[130px_1fr]">
-            <span className="text-faint">Owner wallet</span>
-            <ExplorerLink network={network} resource="address" value={address} className="font-mono text-fg hover:text-blue">{shortAddr(address)}</ExplorerLink>
-            <span className="text-faint">Derived account</span>
-            {accountAddress ? <ExplorerLink network={network} resource="address" value={accountAddress} className="font-mono text-fg hover:text-blue">{shortAddr(accountAddress)}</ExplorerLink> : <span className="font-mono text-fg">{isDeriving ? "Deriving…" : "Unavailable"}</span>}
+    <>
+      {/* What it is doing now, kept apart from what it is allowed to do. Once
+          a policy is live this is the only part worth reading on most visits,
+          so it sits above the setup it came from rather than below it. */}
+      {live && (
+        <section className="agent-surface" aria-label="Agent status">
+          <AgentStatusHeader account={accountAddress} mandateHash={activeMandate} network={network} chainId={policy.chainId} />
+          <div className="p-5">
+            <AgentMonitoringPanel account={accountAddress} mandateHash={activeMandate} network={network} />
           </div>
-
-          {deriveError && <p className="text-[12px] text-crit">Could not derive the policy account on {network === "mainnet" ? "Base mainnet" : "Base Sepolia"}.</p>}
-          {accountAddress && isCheckingDeployment && <p className="text-[12px] text-muted">Checking whether the deterministic policy account is already deployed…</p>}
-          {accountStateUnknown && <p className="text-[12px] text-crit">Could not verify whether this policy account is deployed. Reload or restore the Base RPC connection before submitting another deployment.</p>}
-
-          <div className="flex flex-wrap items-center gap-2">
-            {deployed && accountAddress ? (
-              <ExplorerLink network={network} resource="address" value={accountAddress} className="h-9 rounded-lg bg-panel2 px-3 text-[12px] font-semibold text-blue hover:bg-panel3">
-                View account ↗
-              </ExplorerLink>
-            ) : (
-              <button type="button" onClick={() => void createAccount()} disabled={busy || isDeriving || isCheckingDeployment || !canDerive || accountStateUnknown} className="h-9 rounded-lg bg-blue px-3 text-[12px] font-semibold text-white hover:brightness-110 disabled:cursor-wait disabled:opacity-60">
-                {isSwitching ? "Switching network…" : isSubmitting ? "Confirm in wallet…" : isConfirming ? "Deploying account…" : "Create policy account"}
-              </button>
-            )}
-            <span className="text-[11px] text-faint">This is a one-time wallet transaction; it does not enable autonomous trading.</span>
-          </div>
-          {isConfirming && transactionHash && <p className="rounded-lg border border-edge bg-panel2 p-3 text-[12px] text-muted">Deployment transaction submitted; awaiting Base confirmation. <ExplorerLink network={network} resource="tx" value={transactionHash} className="underline">View transaction</ExplorerLink></p>}
-          {deployed && accountAddress && <MandateSigningPanel owner={address} account={accountAddress} network={network} spot={spot} />}
-          {deployed && accountAddress && <PolicyFundingPanel account={accountAddress} network={network} collateral={policy.collateral} collateralLabel={policy.collateralLabel} chainId={policy.chainId} />}
-          {deployed && accountAddress && activeMandate && <AgentMonitoringPanel account={accountAddress} mandateHash={activeMandate} network={network} />}
-        </>
+        </section>
       )}
 
-      {(isSuccess || deploymentMessage) && <p className="rounded-lg border border-edge bg-panel2 p-3 text-[12px] text-muted">{isSuccess ? <>Policy account deployed. A registered mandate and sufficient ETH/USDC are required before agent actions are eligible. {transactionHash && <ExplorerLink network={network} resource="tx" value={transactionHash} className="text-blue hover:underline">View deployment</ExplorerLink>}</> : deploymentMessage}</p>}
-    </section>
+      {live && (
+        <button
+          type="button"
+          className="agent-disclosure"
+          aria-expanded={policyDetailsOpen}
+          aria-controls="policy-controls"
+          onClick={() => setPolicyDetailsOpen((open) => !open)}
+        >
+          <span>Policy controls</span>
+          <ChevronIcon />
+        </button>
+      )}
+
+      {(!live || policyDetailsOpen) && <section id={live ? "policy-controls" : undefined} className="agent-surface" aria-label="Policy account setup">
+        {!policy.factory || !policy.agent ? (
+          <p className="m-5 rounded-lg border border-crit/30 bg-crit/10 p-3 text-[12px] text-crit">The {network === "mainnet" ? "Base-mainnet" : "Base Sepolia"} policy-account factory or agent is not configured.</p>
+        ) : !isConnected || !address ? (
+          <div className="p-5">
+            <h3 className="text-[15px] font-bold tracking-[-0.01em] text-fg">Set up the agent</h3>
+            <p className="mt-1 text-[12px] leading-relaxed text-muted">Connect the wallet that will own this policy account. Create it once, choose its limits, then add funds.</p>
+          </div>
+        ) : (
+          <div className="rowlist px-5">
+            {deployed && accountAddress ? (
+              <div className="flex items-center justify-between gap-4 py-3.5">
+                <span className="text-[13px] font-semibold text-fg">Policy account</span>
+                <span className="flex shrink-0 items-center gap-3 text-[12px]">
+                  <ExplorerLink network={network} resource="address" value={accountAddress} className="font-mono text-fg hover:text-blue">{shortAddr(accountAddress)}</ExplorerLink>
+                </span>
+              </div>
+            ) : (
+              <div className="py-5 first:pt-0">
+                <StepHeader title="Policy account">
+                  A dedicated smart account on {network === "mainnet" ? "Base mainnet" : "Base Sepolia"} holds the funds the agent may
+                  spend. It cannot act until you register a bounded mandate.
+                </StepHeader>
+
+                <div className="readout mt-3 grid gap-2 p-3 text-[12px] sm:grid-cols-[130px_1fr]">
+                  <span className="text-faint">Owner wallet</span>
+                  <ExplorerLink network={network} resource="address" value={address} className="font-mono text-fg hover:text-blue">{shortAddr(address)}</ExplorerLink>
+                  <span className="text-faint">Derived account</span>
+                  {accountAddress ? <ExplorerLink network={network} resource="address" value={accountAddress} className="font-mono text-fg hover:text-blue">{shortAddr(accountAddress)}</ExplorerLink> : <span className="font-mono text-fg">{isDeriving ? "Deriving…" : "Unavailable"}</span>}
+                </div>
+
+                {deriveError && <p className="mt-2 text-[12px] text-crit">Could not derive the policy account on {network === "mainnet" ? "Base mainnet" : "Base Sepolia"}.</p>}
+                {accountAddress && isCheckingDeployment && <p className="mt-2 text-[12px] text-muted">Checking whether the deterministic policy account is already deployed…</p>}
+                {accountStateUnknown && <p className="mt-2 text-[12px] text-crit">Could not verify whether this policy account is deployed. Reload or restore the Base RPC connection before submitting another deployment.</p>}
+
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button type="button" onClick={() => void createAccount()} disabled={busy || isDeriving || isCheckingDeployment || !canDerive || accountStateUnknown} className="h-9 rounded-lg bg-blue px-3 text-[12px] font-semibold text-white hover:brightness-110 disabled:cursor-wait disabled:opacity-60">
+                    {isSwitching ? "Switching network…" : isSubmitting ? "Confirm in wallet…" : isConfirming ? "Deploying account…" : "Create policy account"}
+                  </button>
+                  {!deployed && <span className="text-[12px] text-faint">One wallet transaction. It does not enable trading on its own.</span>}
+                </div>
+
+                {isConfirming && transactionHash && <p className="mt-3 text-[12px] text-muted">Deployment submitted; awaiting Base confirmation. <ExplorerLink network={network} resource="tx" value={transactionHash} className="text-blue underline">View transaction</ExplorerLink></p>}
+                {(isSuccess || deploymentMessage) && <p className="mt-3 text-[12px] text-muted">{isSuccess ? <>Policy account deployed. It still needs signed limits and funding before it can act. {transactionHash && <ExplorerLink network={network} resource="tx" value={transactionHash} className="text-blue hover:underline">View deployment</ExplorerLink>}</> : deploymentMessage}</p>}
+              </div>
+            )}
+
+            {deployed && accountAddress ? (
+              <>
+                <MandateSigningPanel key={accountAddress} owner={address} account={accountAddress} network={network} asset={asset} spot={spot} />
+                <PolicyFundingPanel account={accountAddress} network={network} collateral={policy.collateral} collateralLabel={policy.collateralLabel} chainId={policy.chainId} />
+              </>
+            ) : null}
+          </div>
+        )}
+      </section>}
+    </>
+  );
+}
+
+function ChevronIcon() {
+  return (
+    <svg className="size-4" aria-hidden viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75">
+      <path d="m4 6 4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   );
 }
 
@@ -135,6 +178,7 @@ function PolicyFundingPanel({ account, network, collateral, collateralLabel, cha
   const { writeContractAsync } = useWriteContract();
   const [ethAmount, setEthAmount] = useState("0.001");
   const [usdcAmount, setUsdcAmount] = useState("5");
+  const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<{ kind: "idle" | "pending" | "success" | "error"; message?: string; hash?: Hex }>({ kind: "idle" });
   const { data: ethBalance, refetch: refetchEth } = useBalance({
     address: account,
@@ -190,41 +234,68 @@ function PolicyFundingPanel({ account, network, collateral, collateralLabel, cha
   };
 
   const busy = status.kind === "pending";
+  // Funded means both: ETH pays for the UserOperation, collateral pays for the
+  // fill, and the agent is stuck without either.
+  const funded = Boolean(ethBalance?.value && usdcBalance);
+  const balanceText = `${ethBalance ? displayAmount(formatEther(ethBalance.value)) : "…"} ETH, ${usdcBalance != null ? displayAmount(formatUnits(usdcBalance, 6)) : "…"} ${collateralLabel}`;
+
+  // The form is not the resting state. Funded, this is one line reporting a
+  // balance; unfunded, it is one line saying what is missing — either way you
+  // open the form deliberately rather than scrolling past it every visit.
+  if (!open) {
+    return (
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-3.5">
+        <span className={`text-[13px] font-semibold ${funded ? "text-fg" : "text-warn"}`}>
+          {funded ? "Funding available" : ethBalance?.value ? `Needs ${collateralLabel} before it can trade` : "Needs funding before it can trade"}
+        </span>
+        <span className="flex shrink-0 items-center gap-3 text-[12px]">
+          <span className="num text-muted">{balanceText}</span>
+          <button type="button" onClick={() => setOpen(true)} className="font-semibold text-blue hover:underline">{funded ? "Add funds" : "Fund it"}</button>
+        </span>
+      </div>
+    );
+  }
+
   return (
-    <section className="mt-4 border-t border-edge pt-4" aria-label="Fund policy account">
-      <StepHeader
-        step={3}
-        // Funded means both: ETH pays for the UserOperation, collateral pays
-        // for the fill, and the agent is stuck without either.
-        state={ethBalance?.value && usdcBalance ? "done" : "current"}
-        title="Fund the account"
-      >
-        Transfers go straight from your connected wallet to this fixed policy account. ETH pays UserOperation gas; {collateralLabel} is
-        the bounded trade collateral.
+    <section className="py-5" aria-label="Fund policy account">
+      <StepHeader title="Fund the account">
+        Transfers go straight from your wallet to this policy account. ETH pays transaction gas; {collateralLabel} is the collateral
+        the agent trades with.
       </StepHeader>
 
-      <div className="readout mt-3 grid gap-2 p-3 text-[11px] sm:grid-cols-[110px_1fr]">
-        <span className="text-faint">Recipient</span><ExplorerLink network={network} resource="address" value={account} className="font-mono text-fg hover:text-blue">{shortAddr(account)}</ExplorerLink>
-        <span className="text-faint">Current balance</span><span className="text-fg">{ethBalance ? `${displayAmount(formatEther(ethBalance.value))} ETH` : "… ETH"} · {usdcBalance != null ? `${displayAmount(formatUnits(usdcBalance, 6))} ${collateralLabel}` : `… ${collateralLabel}`}</span>
+      <div className="rowlist mt-3">
+        <div className="flex items-baseline justify-between gap-4 py-2">
+          <span className="text-[12px] text-muted">Recipient</span>
+          <ExplorerLink network={network} resource="address" value={account} className="font-mono text-[12px] text-fg hover:text-blue">{shortAddr(account)}</ExplorerLink>
+        </div>
+        <div className="flex items-baseline justify-between gap-4 py-2">
+          <span className="text-[12px] text-muted">Balance</span>
+          <span className="num text-[13px] font-semibold text-fg">{balanceText}</span>
+        </div>
       </div>
 
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <FundingField label={`${network === "mainnet" ? "Base" : "Base Sepolia"} ETH`} value={ethAmount} onChange={setEthAmount} button="Fund ETH" disabled={busy} onFund={() => void fund("ETH")} />
-        <FundingField label={`${network === "mainnet" ? "Base" : "Base Sepolia"} ${collateralLabel}`} value={usdcAmount} onChange={setUsdcAmount} button="Fund USDC" disabled={busy || !collateral} onFund={() => void fund("USDC")} />
+        <FundingField label={`${network === "mainnet" ? "Base" : "Base Sepolia"} ${collateralLabel}`} value={usdcAmount} onChange={setUsdcAmount} button={`Fund ${collateralLabel}`} disabled={busy || !collateral} onFund={() => void fund("USDC")} />
       </div>
-      <p className="mt-2 text-[11px] text-faint">Each transfer has its own wallet confirmation. USDC is transferred directly—there is no approval or spending allowance.</p>
-      {status.kind !== "idle" && <p className={`mt-3 rounded-lg border p-3 text-[12px] ${status.kind === "error" ? "border-crit/30 bg-crit/10 text-crit" : status.kind === "success" ? "border-calm/30 bg-calm/10 text-calm" : "border-edge bg-panel2 text-muted"}`}>{status.message} {status.hash && <ExplorerLink network={network} resource="tx" value={status.hash} className="underline">View transaction</ExplorerLink>}</p>}
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[12px] text-faint">Each transfer is confirmed in your wallet. Nothing is approved or delegated.</p>
+        <button type="button" onClick={() => setOpen(false)} className="text-[12px] font-semibold text-muted hover:text-fg">Done</button>
+      </div>
+      {status.kind !== "idle" && <p className={`mt-3 text-[12px] ${status.kind === "error" ? "text-crit" : status.kind === "success" ? "text-calm" : "text-muted"}`}>{status.message} {status.hash && <ExplorerLink network={network} resource="tx" value={status.hash} className="underline">View transaction</ExplorerLink>}</p>}
     </section>
   );
 }
 
 function FundingField({ label, value, onChange, button, disabled, onFund }: { label: string; value: string; onChange: (value: string) => void; button: string; disabled: boolean; onFund: () => void }) {
   return (
-    <label className="rounded-lg border border-edge bg-panel2 p-3 text-[12px] text-muted">
-      <span>{label}</span>
-      <input type="text" inputMode="decimal" value={value} onChange={(event) => onChange(event.target.value)} className="mt-2 h-9 w-full rounded-md border border-edge bg-panel px-2 font-mono text-fg outline-none focus:border-blue" aria-label={`${label} funding amount`} />
-      <button type="button" onClick={onFund} disabled={disabled} className="mt-2 h-8 rounded-lg bg-blue px-3 text-[11px] font-semibold text-white hover:brightness-110 disabled:cursor-wait disabled:opacity-60">{button}</button>
-    </label>
+    <div>
+      <label className="field flex items-baseline gap-2 p-2.5">
+        <span className="text-[12px] text-muted">{label}</span>
+        <input type="text" inputMode="decimal" value={value} onChange={(event) => onChange(event.target.value)} className="num min-w-0 flex-1 bg-transparent text-right text-[13px] font-semibold text-fg outline-none" aria-label={`${label} funding amount`} />
+      </label>
+      <button type="button" onClick={onFund} disabled={disabled} className="mt-2 h-8 w-full rounded-lg bg-panel3 px-3 text-[12px] font-semibold text-blue hover:bg-panel2 disabled:cursor-wait disabled:opacity-60">{button}</button>
+    </div>
   );
 }
 

@@ -83,9 +83,9 @@ export async function runShadowAgents(options: { pendingAccounts?: Iterable<stri
   // ponytail: scans this single demo factory; add an indexed event store before serving enough accounts to make this expensive.
   const latestBlock = await provider.getBlockNumber();
   const discoveryFromBlock = Math.max(config.deploymentBlock, options.discoveryFromBlock ?? config.deploymentBlock);
-  const discoveredAccounts = await discoverPolicyAccounts(factory, discoveryFromBlock, latestBlock);
+  const discovery = await discoverPolicyAccounts(factory, discoveryFromBlock, latestBlock);
   const knownAccounts = [...(options.knownAccounts ?? [])].filter((account): account is string => typeof account === "string" && ethers.isAddress(account)).map((account) => ethers.getAddress(account));
-  const accounts = [...new Set([...knownAccounts, ...discoveredAccounts])];
+  const accounts = [...new Set([...knownAccounts, ...discovery.accounts])];
   const pendingAccounts = new Set([...(options.pendingAccounts ?? [])].filter((account): account is string => typeof account === "string" && ethers.isAddress(account)).map((account) => ethers.getAddress(account).toLowerCase()));
   const snapshot = await getMarketSnapshot({ fresh: true });
   const results: ShadowAgentResult[] = [];
@@ -97,7 +97,7 @@ export async function runShadowAgents(options: { pendingAccounts?: Iterable<stri
     const result = await runShadowAgent(account, config, provider, agent, snapshot);
     if (result) results.push(result);
   }
-  return { results, accounts, scannedToBlock: latestBlock };
+  return { results, accounts, scannedToBlock: discovery.scannedToBlock };
 }
 
 export async function getShadowUserOperationReceipt(userOpHash: string) {

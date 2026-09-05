@@ -6,10 +6,10 @@ import { UnifiedCopilotChat } from "./UnifiedCopilotChat";
 
 type Props = {
   snap: AssetSnapshot | null;
-  onNavigateToAgent: (strike?: number) => void;
+  onNavigateToHedge: (strike?: number) => void;
 };
 
-export function CopilotWidget({ snap, onNavigateToAgent }: Props) {
+export function CopilotWidget({ snap, onNavigateToHedge }: Props) {
   const [open, setOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [hasUnread, setHasUnread] = useState(false);
@@ -109,7 +109,7 @@ export function CopilotWidget({ snap, onNavigateToAgent }: Props) {
             isExpanded={isExpanded}
             onToggleExpand={() => setIsExpanded((prev) => !prev)}
             onNavigateToHedge={(strike) => {
-              onNavigateToAgent(strike);
+              onNavigateToHedge(strike);
               setOpen(false);
             }}
             onClose={() => setOpen(false)}

@@ -113,7 +113,8 @@ All chart/dashboard components are `"use client"`. Layout: `Dashboard.tsx` compo
 
 ## Conventions
 
-- **Theme:** light theme, navy accent palette, Inter font. Colors come from CSS variables in `app/globals.css` — don't hardcode hex values in components.
+- **Theme:** dark instrument-panel theme — near-black base, one cyan-blue interactive accent (`--blue`), and the risk semantics (`--calm`/`--warn`/`--crit`) kept as a separate hue family so "clickable" and "dangerous" are never the same color. IBM Plex Mono for chrome (nav, panel headers, numbers, `.chip`/`.eyebrow` badges), Inter for prose. Colors come from CSS variables in `app/globals.css` — don't hardcode hex values in components; chart libraries (ECharts, lightweight-charts) can't read CSS vars, so their color literals are hardcoded to match the tokens and must be updated together if the tokens change.
+- **Progressive disclosure:** this product has a lot to be honest about (dropped sub-scores, modeled-vs-live labels, methodology footers), and printing all of it inline is what made earlier passes feel overwhelming. Default views show the reading — a number, a bar, a chip — and the explanation collapses behind the shared `Disclosure` component (`components/Disclosure.tsx`). Nothing gets deleted this way, only deferred one click; keep new explanatory prose behind `Disclosure` rather than always-on paragraphs.
 - **TypeScript:** strict; shared shapes (`NormalizedOrder`, `AssetSnapshot`, `MarketSnapshot`, `Asset`) are exported from `lib/` — extend those types rather than redefining shapes locally.
 - **Imports:** use the `@/` alias (`@/lib/...`, `@/components/...`).
 - **Honesty about data:** the UI must always distinguish live vs. modeled vs. cached data. This is a risk product — never fabricate or silently substitute data.

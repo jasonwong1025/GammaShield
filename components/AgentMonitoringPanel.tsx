@@ -5,7 +5,7 @@ import { useReadContract } from "wagmi";
 import { mandateAccountAbi } from "@/lib/generated/contracts";
 import type { ExecutionNetwork } from "@/lib/explorer";
 import { ExplorerLink } from "./ExplorerLink";
-import { StepHeader } from "./StepHeader";
+import { Disclosure } from "./Disclosure";
 import type { Address, Hex } from "viem";
 
 type AgentStatus = {
@@ -77,37 +77,109 @@ export function AgentMonitoringPanel({ account, mandateHash, network }: { accoun
   const persistenceEndsAt = eligibleSince + persistenceSeconds;
   const persistence = !observedAt || !eligibleSince ? "No qualifying on-chain risk observation yet." : now == null ? "Checking whether the risk observation is still valid…" : validUntil <= now ? "The last risk observation expired; the worker must refresh it." : now < persistenceEndsAt ? `Risk evidence is eligible; ${duration(persistenceEndsAt - now)} remains before a fill can be considered.` : "Risk persistence requirement is satisfied; a fresh eligible quote is still required.";
 
-  return <section className="mt-4 border-t border-edge pt-4" aria-label="Agent monitoring">
-    <StepHeader
-      step={4}
-      state={agent?.worker === "error" || agent?.worker === "stale" || agentError ? "current" : "done"}
-      title={agent?.worker === "error" || agent?.worker === "stale" || agentError ? "Agent needs attention" : "Policy is active"}
-    >
-      The external {network === "mainnet" ? "Thetanuts" : "shadow"} worker checks the live book and risk every 10–15 seconds. It can only act after funding, the signed threshold and persistence period, and a fresh eligible quote — and only through the actions you switched on. {network === "mainnet" ? "On Base mainnet that is Auto-Hedge alone." : "On Base Sepolia all three actions are available."}
-    </StepHeader>
-    <div className="readout mt-3 grid gap-2 p-3 text-[11px] sm:grid-cols-[150px_1fr]">
-      <span className="text-faint">Worker</span><span className="text-fg">{workerText(agent, agentError, now)}</span>
-      <span className="text-faint">Execution mode</span><span className="text-fg">{!agent ? "Checking worker mode…" : agent.dryRun ? "Dry run — validates only; it cannot spend funds." : network === "mainnet" ? "Broadcast enabled — a qualifying fill may use policy funds." : "Shadow execution — Base Sepolia test funds only."}</span>
-      <span className="text-faint">Latest decision</span><span className="text-fg">{agent?.latest ? decisionText(agent.latest) : "Waiting for the first worker check."}</span>
-      <span className="text-faint">Risk evidence</span><span className="text-fg">{evidence}{threshold != null ? ` · threshold ${threshold.toFixed(2)} / 100` : ""}</span>
-      <span className="text-faint">Persistence</span><span className="text-fg">{persistence}</span>
-      {agent?.recent && <><span className="text-faint">Latest UserOperation</span><span className={agent.recent.status === "confirmed" ? "text-calm" : "text-crit"}>{agent.recent.status === "confirmed" ? "Confirmed" : "Reverted"}{agent.recent.transactionHash && <>. <ExplorerLink network={network} resource="tx" value={agent.recent.transactionHash} className="underline">View transaction</ExplorerLink></>}</span></>}
+  const monitoring = monitoringSummary(agent, agentError, now);
+  return <section aria-label="Agent monitoring">
+    <div className="agent-monitor" data-state={monitoring.state}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="eyebrow text-[11px] text-faint">Monitoring</p>
+          <h3 className="mt-1 text-[15px] font-bold tracking-[-0.01em] text-fg">{monitoring.title}</h3>
+        </div>
+        <span className={`chip text-[11px] font-semibold ${monitoring.tone}`}>{monitoring.badge}</span>
+      </div>
+      <p className="mt-2 max-w-[62ch] text-[13px] leading-relaxed text-muted">{monitoring.detail}</p>
     </div>
 
-    {agent?.latest?.decision && <Assessment latest={agent.latest} network={network} />}
-    {agent?.worker === "not-reporting" || agent?.worker === "awaiting-first-check" ? <p className="mt-2 rounded-lg border border-blue/25 bg-bluesoft/30 p-3 text-[11px] text-faint">No worker report has reached this app yet. Run <code className="font-mono text-fg">{agent?.command ?? (network === "mainnet" ? "npm run agent:thetanuts" : "npm run agent:shadow")}</code> on the same machine as the local app, then this panel will update after its first check.</p> : null}
-    {(agent?.worker === "error" || agent?.worker === "stale" || agentError) && <p className="mt-2 rounded-lg border border-crit/30 bg-crit/10 p-3 text-[11px] text-crit">The worker has not completed a recent check. Inspect its terminal for the RPC or upstream error; it will not submit a fill while a check is failing.</p>}
-    <p className="mt-2 rounded-lg border border-blue/25 bg-bluesoft/30 p-3 text-[11px] text-faint">On-chain risk evidence: {evidence} · <ExplorerLink network={network} resource="address" value={account} className="underline">policy account</ExplorerLink> pause or revocation takes effect before every fill.</p>
+    {/* Consequential enough to stay in view: one says the AI started this
+        itself, the other that nothing was actually executed. */}
+    {agent?.latest?.decision?.aiInitiated && (
+      <p className="note mt-2.5 text-[12px] leading-relaxed text-muted" style={{ borderLeftColor: "var(--blue)", background: "var(--blue-soft)" }}>
+        The AI raised this exit itself, on a broken thesis — the one action it may start rather than only narrow. It still had to
+        pass the signed policy, and it is always the whole position.
+      </p>
+    )}
+    {agent?.latest?.decision?.recommendationOnly && (
+      <p className="note mt-2.5 text-[12px] leading-relaxed text-muted" style={{ borderLeftColor: "var(--warn)", background: "color-mix(in srgb, var(--warn) 8%, transparent)" }}>
+        {network === "mainnet"
+          ? "Base mainnet has no way to execute this. A Thetanuts option can be closed only bilaterally, the OptionBook exposes no maker orders to end users, and an RFQ mints a new option rather than buying this one back — so this is priced for you to act on, not executed."
+          : "This deployment cannot execute the action, so it is a recommendation only."}
+      </p>
+    )}
+
+    {monitoring.needsDeveloperSetup && (
+      <div className="mt-2.5">
+        <Disclosure label="Developer setup">
+          <p className="mt-2.5 text-[12px] leading-relaxed text-faint">
+            For a local demo, run <code className="font-mono text-fg">{agent?.command ?? (network === "mainnet" ? "npm run agent:thetanuts" : "npm run agent:shadow")}</code> alongside this app.
+          </p>
+        </Disclosure>
+      </div>
+    )}
+
+    <div className="mt-2.5">
+      <Disclosure label={agent?.latest?.decision ? "Why this, and not the others?" : "Show what it checks"}>
+        <div className="mt-2.5">
+          {agent?.latest?.decision && <Assessment latest={agent.latest} />}
+          <div className="rowlist mt-2.5">
+            <Fact label="Execution mode" value={!agent ? "Checking…" : agent.dryRun ? "Dry run — it cannot spend funds" : network === "mainnet" ? "Broadcast enabled" : "Shadow execution — test funds only"} />
+            {/* Distinct from the risk in the assessment: that is what the
+                worker just read, this is what the account has attested
+                on-chain, and only the attested one can arm a fill. */}
+            <Fact label="Risk attested on-chain" value={`${evidence}${threshold != null ? `, trigger ${threshold.toFixed(0)}` : ""}`} />
+            <Fact label="Persistence" value={persistence} />
+            {agent?.recent && (
+              <Fact
+                label="Last transaction"
+                tone={agent.recent.status === "confirmed" ? "text-calm" : "text-crit"}
+                value={<>{agent.recent.status === "confirmed" ? "Confirmed" : "Reverted"}{agent.recent.transactionHash && <>. <ExplorerLink network={network} resource="tx" value={agent.recent.transactionHash} className="underline">View transaction</ExplorerLink></>}</>}
+              />
+            )}
+          </div>
+          <p className="mt-2.5 text-[12px] leading-relaxed text-faint">
+            Checks the live book every 10–15 seconds, within your signed limits and switched-on actions.{" "}
+            {network === "mainnet" ? "Only Auto-Hedge runs on Base mainnet." : "All three actions run on Base Sepolia."}
+          </p>
+        </div>
+      </Disclosure>
+    </div>
   </section>;
 }
 
-function workerText(agent: AgentStatus | null, error: boolean, now: number | null) {
-  if (error) return "Status could not be read from this app.";
-  if (!agent || agent.worker === "not-reporting") return "No report yet.";
-  if (agent.worker === "awaiting-first-check") return "No worker decision recorded yet.";
-  if (agent.worker === "error") return "Last worker check failed.";
-  if (agent.worker === "stale") return "Last worker report is stale.";
-  return agent.latest ? `Checked ${timeAgo(agent.latest.checkedAt, now)}.` : "Checking.";
+/** The verdict as a sentence, so a hold reads as a decision rather than as
+ *  nothing having happened. */
+function monitoringSummary(agent: AgentStatus | null, error: boolean, now: number | null) {
+  if (error) return { state: "attention", title: "Monitoring status is unavailable", badge: "Needs attention", tone: "text-crit", detail: "The app cannot read the monitoring service. Nothing will be filled until it recovers.", needsDeveloperSetup: false };
+  if (!agent || agent.worker === "not-reporting") return { state: "waiting", title: "Monitoring has not started", badge: "Not started", tone: "text-warn", detail: "Your policy is active, but no monitoring service has reported yet. It cannot act until the first check arrives.", needsDeveloperSetup: true };
+  if (agent.worker === "awaiting-first-check") return { state: "waiting", title: "Waiting for the first check", badge: "Starting", tone: "text-warn", detail: "Monitoring has not recorded a market check for this policy yet. It cannot act yet.", needsDeveloperSetup: true };
+  if (agent.worker === "error" || agent.worker === "stale") return { state: "attention", title: "Monitoring needs attention", badge: agent.worker === "stale" ? "Stale" : "Error", tone: "text-crit", detail: "The last monitoring check did not complete. Nothing will be filled until a fresh check succeeds.", needsDeveloperSetup: false };
+  if (!agent.latest) return { state: "waiting", title: "Waiting for the first check", badge: "Starting", tone: "text-warn", detail: "The monitoring service has not recorded a market decision for this policy yet.", needsDeveloperSetup: false };
+  const title = headline(agent.latest);
+  return {
+    state: "checking",
+    title,
+    badge: `Checked ${timeAgo(agent.latest.checkedAt, now)}`,
+    tone: "text-calm",
+    detail: agent.latest.decision?.explanation ?? decisionText(agent.latest),
+    needsDeveloperSetup: false,
+  };
+}
+
+function headline(latest: NonNullable<AgentStatus["latest"]>) {
+  const action = latest.decision?.action;
+  if (action === "HOLD") return "Holding — nothing needs doing";
+  if (action === "CLOSE") return "Closing the position";
+  if (action === "ROLL") return "Rolling the position";
+  if (action === "HEDGE") return "Buying protection";
+  return shortDecisionText(latest);
+}
+
+function Fact({ label, value, tone }: { label: string; value: React.ReactNode; tone?: string }) {
+  return (
+    <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 py-2">
+      <span className="text-[12px] text-muted">{label}</span>
+      <span className={`max-w-[46ch] text-right text-[12px] ${tone ?? "text-fg"}`}>{value}</span>
+    </div>
+  );
 }
 
 const HEALTH_TONE: Record<string, string> = {
@@ -123,55 +195,24 @@ const HEALTH_TONE: Record<string, string> = {
  * contract-risk panel: it shows the three actions that were NOT taken and why,
  * so a hold is legible as a judgement rather than as inactivity.
  */
-function Assessment({ latest, network }: { latest: NonNullable<AgentStatus["latest"]>; network: ExecutionNetwork }) {
+function Assessment({ latest }: { latest: NonNullable<AgentStatus["latest"]> }) {
   const decision = latest.decision!;
   return (
-    <div className="mt-3 rounded-lg border border-edge bg-panel2 p-3 text-[11px]">
-      <div className="flex flex-wrap items-center gap-2">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-faint">Assessment</p>
-        {decision.action && <span className="rounded bg-panel px-1.5 py-0.5 text-[10px] font-semibold text-fg">{decision.action}</span>}
-        {decision.urgency && <span className="rounded bg-panel px-1.5 py-0.5 text-[10px] text-muted">{decision.urgency} urgency</span>}
-        {latest.health && (
-          <span className={`rounded bg-panel px-1.5 py-0.5 text-[10px] font-semibold ${HEALTH_TONE[latest.health] ?? "text-fg"}`}>
-            {latest.health}
-          </span>
-        )}
-        {decision.riskBefore != null && <span className="num text-[10px] text-faint">risk {decision.riskBefore.toFixed(1)} / 100</span>}
+    <div>
+      <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+        {latest.health && <span className={`text-[12px] font-semibold ${HEALTH_TONE[latest.health] ?? "text-fg"}`}>{sentenceCase(latest.health)}</span>}
+        {decision.urgency && <span className="text-[12px] text-faint">{decision.urgency.toLowerCase()} urgency</span>}
+        {decision.riskBefore != null && <span className="num text-[12px] text-faint">risk {decision.riskBefore.toFixed(1)} / 100</span>}
       </div>
-
-      {decision.explanation && <p className="mt-2 leading-relaxed text-muted">{decision.explanation}</p>}
-
-      {decision.aiInitiated && (
-        <p className="mt-2 rounded border border-blue/30 bg-blue/5 p-2 leading-relaxed text-muted">
-          The AI raised this exit itself, on a broken thesis — the one action it may start rather than only narrow. It still had to
-          pass the signed policy, and it is always the whole position.
-        </p>
-      )}
-
-      {decision.recommendationOnly && (
-        <p className="mt-2 rounded border border-warn/30 bg-warn/10 p-2 leading-relaxed text-muted">
-          {network === "mainnet"
-            ? "Base mainnet has no way to execute this. A Thetanuts option can be closed only bilaterally, the OptionBook exposes no maker orders to end users, and an RFQ mints a new option rather than buying this one back — so this is priced for you to act on, not executed."
-            : "This deployment cannot execute the action, so it is a recommendation only."}
-        </p>
-      )}
-
-      {decision.reasonCodes.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1">
-          {decision.reasonCodes.map((code) => (
-            <span key={code} className="rounded bg-panel px-1.5 py-0.5 font-mono text-[10px] text-faint">{code}</span>
-          ))}
-        </div>
-      )}
 
       {decision.alternatives.length > 0 && (
         <div className="mt-2">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-faint">Not taken, and why</p>
-          <ul className="mt-1 grid gap-1">
+          <p className="text-[12px] font-semibold text-fg">Considered and not taken</p>
+          <div className="rowlist mt-0.5">
             {decision.alternatives.map((alternative) => (
-              <li key={alternative.action} className="flex gap-2 leading-relaxed">
-                <span className="w-[52px] shrink-0 font-semibold text-fg">{alternative.action}</span>
-                <span className="text-faint">
+              <div key={alternative.action} className="flex items-baseline gap-3 py-1.5">
+                <span className="w-[46px] shrink-0 text-[12px] font-semibold text-muted">{alternative.action}</span>
+                <span className="text-[12px] leading-relaxed text-faint">
                   {alternative.rejected}
                   {alternative.estimatedCostUsd != null && alternative.estimatedCostUsd !== 0 && (
                     <span className="num">
@@ -179,34 +220,54 @@ function Assessment({ latest, network }: { latest: NonNullable<AgentStatus["late
                     </span>
                   )}
                 </span>
-              </li>
+              </div>
             ))}
-          </ul>
+          </div>
+        </div>
+      )}
+
+      {decision.reasonCodes.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {decision.reasonCodes.map((code) => (
+            <span key={code} className="rounded bg-panel2 px-1.5 py-0.5 font-mono text-[11px] text-faint">{code}</span>
+          ))}
         </div>
       )}
     </div>
   );
 }
 
+const OUTCOME_LABEL: Record<string, string> = {
+  "risk-below-threshold": "Waiting: live risk is below the signed threshold.",
+  "risk-persistence-pending": "Waiting: qualifying risk has not persisted long enough.",
+  "risk-observation-submitted": "Risk evidence submitted; awaiting confirmation.",
+  "risk-observation-simulated": "Dry-run: risk evidence validated, not broadcast.",
+  "risk-reset-submitted": "Risk reset submitted; awaiting confirmation.",
+  "risk-reset-simulated": "Dry-run: risk reset validated, not broadcast.",
+  "quote-unavailable": "Waiting: no fresh listed order satisfies the policy.",
+  "gas-unfunded": "Waiting: the account needs more ETH for gas.",
+  "pending-user-operation": "Waiting for the prior transaction's receipt.",
+  "fill-submitted": "Auto-Hedge: fill submitted; awaiting confirmation.",
+  "close-submitted": "Auto-Close: exit submitted; awaiting confirmation.",
+  "roll-submitted": "Auto-Roll: close-and-replace submitted; awaiting confirmation.",
+  "holding": "Holding — no action cleared every gate.",
+  "recommendation": "Recommendation only — cannot be executed here.",
+  "fill-simulated": "Dry-run: a fresh quote passed every check; no fill broadcast.",
+};
+
+/** Used when there's no Assessment box below to carry the explanation. */
 function decisionText(latest: NonNullable<AgentStatus["latest"]>) {
-  const labels: Record<string, string> = {
-    "risk-below-threshold": "Waiting: live risk is below the signed threshold.",
-    "risk-persistence-pending": "Waiting: qualifying risk has not persisted long enough.",
-    "risk-observation-submitted": "Risk evidence UserOperation submitted; awaiting confirmation.",
-    "risk-observation-simulated": "Dry-run: risk evidence passed validation but was not broadcast.",
-    "risk-reset-submitted": "Risk reset UserOperation submitted; awaiting confirmation.",
-    "risk-reset-simulated": "Dry-run: risk reset passed validation but was not broadcast.",
-    "quote-unavailable": "Waiting: no fresh listed order satisfies the signed policy.",
-    "gas-unfunded": "Waiting: the policy account needs more native ETH for UserOperation gas.",
-    "pending-user-operation": "Waiting for the prior UserOperation receipt.",
-    "fill-submitted": "Auto-Hedge: fill UserOperation submitted; awaiting confirmation.",
-    "close-submitted": "Auto-Close: exit UserOperation submitted; awaiting confirmation.",
-    "roll-submitted": "Auto-Roll: close-and-replace UserOperation submitted; awaiting confirmation.",
-    "holding": "Holding — no action cleared every gate this cycle.",
-    "recommendation": "Recommendation only: this exit cannot be executed here.",
-    "fill-simulated": "Dry-run: a fresh quote passed every policy check; no fill was broadcast.",
-  };
-  return `${labels[latest.outcome] ?? latest.outcome}${latest.detail ? ` ${latest.detail}` : ""}`;
+  const label = OUTCOME_LABEL[latest.outcome] ?? latest.outcome;
+  return latest.detail ? `${label} ${latest.detail}` : label;
+}
+
+/** Used when the Assessment box already explains the outcome below. */
+function shortDecisionText(latest: NonNullable<AgentStatus["latest"]>) {
+  return OUTCOME_LABEL[latest.outcome] ?? latest.outcome;
+}
+
+function sentenceCase(value: string) {
+  return value.charAt(0) + value.slice(1).toLowerCase();
 }
 
 function duration(seconds: number) {

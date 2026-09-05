@@ -7,6 +7,7 @@ import { getTradeQuote, type TradeQuote, type TradeSide } from "@/lib/trade";
 import { TRADE_PERIODS, type TradePeriod } from "@/lib/tradePeriods";
 import { bsOptionPrice } from "@/lib/modelBook";
 import { getMarketSnapshot, type MarketSnapshot } from "@/lib/snapshot";
+import { withRpcRetry } from "@/lib/rpcRetry";
 
 const QUOTE_LIFETIME_SECONDS = 60;
 const MAX_CONTRACTS = 5;
@@ -113,6 +114,16 @@ function rpcUrl() {
   return value;
 }
 
+// The receipt tx-hash scan below queries a 10,000-block eth_getLogs range at a
+// time. A metered provider's free tier can cap that far tighter than its
+// normal per-call rate limit (Alchemy's free plan allows only a 10-block
+// eth_getLogs range, which silently zeroes out every receipt link) — so this
+// non-critical, already-retried lookup gets its own RPC rather than sharing
+// the primary one, which stays on whatever the app is generally configured to use.
+function logsRpcUrl() {
+  return process.env.SHADOW_LOGS_RPC_URL || "https://sepolia.base.org";
+}
+
 function deploymentBlock() {
   const value = process.env.SHADOW_DEPLOYMENT_BLOCK;
   if (!value || !/^\d+$/.test(value)) throw new Error("SHADOW_DEPLOYMENT_BLOCK is not configured");
@@ -120,7 +131,17 @@ function deploymentBlock() {
 }
 
 function validContracts(value: number): number {
-  if (!Number.isFinite(value) || value < 0.001 || value > MAX_CONTRACTS || Math.round(value * 1e6) !== value * 1e6) {
+  // Float multiplication itself introduces error at this scale (0.125786 * 1e6
+  // === 125786.00000000001), so an exact equality check rejects perfectly
+  // valid 6-decimal amounts. Tolerate that representation error while still
+  // catching a genuine 7th decimal place.
+  const scaled = value * 1e6;
+  if (
+    !Number.isFinite(value) ||
+    value < 0.001 ||
+    value > MAX_CONTRACTS ||
+    Math.abs(Math.round(scaled) - scaled) > 1e-6
+  ) {
     throw new Error(`contracts must be from 0.001 to ${MAX_CONTRACTS} with up to 6 decimal places`);
   }
   return value;
@@ -139,6 +160,12 @@ export async function getShadowQuote(
   period: number = 7,
   fresh = false,
   maxPremiumUsd?: number,
+  // A book-row click carries its exact listed strike/expiry through here so
+  // the shadow mirror prices the same order, not just the nearest period —
+  // ShadowOptionBook.fillShadow takes an arbitrary strike/expiry, it was
+  // only this function that used to collapse everything onto a period.
+  strike?: number,
+  expiry?: number,
 ): Promise<ShadowQuote> {
   if (!isOptionsAsset(asset as OptionsAsset)) throw new Error("only BTC and ETH have a live Thetanuts book");
   if (!ethers.isAddress(buyer)) throw new Error("invalid buyer address");
@@ -147,6 +174,8 @@ export async function getShadowQuote(
   const option = await getTradeQuote(asset as OptionsAsset, side, contractsCount, validPeriod(period), {
     fresh,
     maxPremiumUsd,
+    strike,
+    expiry,
   });
   if (option.contracts <= 0 || option.totalCostUsd <= 0) throw new Error("no fillable shadow quote is available");
 
@@ -253,16 +282,25 @@ async function readShadowReceiptBookUncached(): Promise<UnmarkedShadowPosition[]
   const entries = await Promise.all(Array.from({ length: count }, (_, id) => book.positions(id)));
   const event = book.interface.getEvent("ShadowOrderFilled");
   if (!event) throw new Error("Shadow fill event is unavailable");
-  const latest = await provider.getBlockNumber();
+  const logsProvider = new ethers.JsonRpcProvider(logsRpcUrl());
+  const latest = await logsProvider.getBlockNumber();
+  // Best-effort: this only resolves the fill tx hash for a block-explorer link.
+  // Some RPC plans cap eth_getLogs at a far smaller range than the 10,000-block
+  // chunk below (or rate-limit it outright) — a scan failure must not 502 the
+  // whole receipt book, so bail out with whatever hashes were already found.
   const txHashes = new Map<number, string>();
-  for (let fromBlock = deploymentBlock(); fromBlock <= latest; fromBlock += 10_000) {
-    const logs = await provider.getLogs({
-      address: config.optionBook,
-      topics: [event.topicHash],
-      fromBlock,
-      toBlock: Math.min(fromBlock + 9_999, latest),
-    });
-    for (const log of logs) txHashes.set(Number(BigInt(log.topics[1])), log.transactionHash);
+  try {
+    for (let fromBlock = deploymentBlock(); fromBlock <= latest; fromBlock += 10_000) {
+      const logs = await withRpcRetry(() => logsProvider.getLogs({
+        address: config.optionBook,
+        topics: [event.topicHash],
+        fromBlock,
+        toBlock: Math.min(fromBlock + 9_999, latest),
+      }));
+      for (const log of logs) txHashes.set(Number(BigInt(log.topics[1])), log.transactionHash);
+    }
+  } catch (error) {
+    console.error("shadow receipt tx-hash scan failed, continuing without them:", error);
   }
   const positions = entries.flatMap((entry, id) => {
     const asset = ethers.decodeBytes32String(entry.asset) as OptionsAsset;

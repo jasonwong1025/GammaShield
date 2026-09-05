@@ -50,6 +50,11 @@ export type FeedRow = {
   /** Not in the Thetanuts pricing API — Black-Scholes-derived; see lib/modelBook.ts. */
   rho: number | null;
   pricePerContractUsd: number | null;
+  /** The maker's actual settlement token — often a wrapped variant
+   *  (aBasUSDC/aBasWETH/aBascbBTC), not the plain underlying RFQs use. A
+   *  balance check against the wrong token here would misreport a fillable
+   *  order as unaffordable, or vice versa. Null for modeled (non-live) books. */
+  collateralToken: { address: string; symbol: string; decimals: number } | null;
   maker: string;
   /** Per-contract risk for this exact option (lib/contractRisk.ts) — a
    * different question from the book-level `impact` below. Null for
@@ -206,6 +211,7 @@ export async function getMarketSnapshot({ fresh = false }: { fresh?: boolean } =
         strikes,
         expiryTs,
         collateralUsd,
+        collateralToken: { address: raw.collateral, symbol: token.symbol, decimals: token.decimals },
         maker: o.makerAddress,
         greeks,
         pricePerContractUsd: (Number(o.order.price) / 1e8) * tokenUsd(token.symbol),
@@ -364,6 +370,7 @@ export async function getMarketSnapshot({ fresh = false }: { fresh?: boolean } =
             vega: o.greeks?.vega ?? null,
             rho: o.greeks?.rho ?? null,
             pricePerContractUsd: o.pricePerContractUsd,
+            collateralToken: o.collateralToken,
             maker: o.maker,
             risk,
             impact,

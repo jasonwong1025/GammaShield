@@ -12,21 +12,26 @@ type Props = {
   asset: Asset;
   live: boolean;
   spot: number;
-  initialStrike?: number;
 };
 
 export function AgentView({ snap, feed, asset, live, spot }: Props) {
   return (
-    <div className="grid grow grid-cols-1 xl:grid-cols-[7fr_3fr] gap-px bg-edge">
-      {/* Main Column: Policy account setup */}
-      <div className="flex flex-col gap-px min-w-0">
-        <PolicyAccountPanel spot={spot} />
+    <div className="agent-workspace grid grow grid-cols-1 items-stretch gap-px bg-edge xl:grid-cols-[5fr_7fr]">
+      {/* Each column grows to fill the tab's full height, same as the
+          Dashboard tab's TradingArea — otherwise a short account (no
+          positions, policy not yet set up) leaves the raw page background
+          exposed below it instead of the panel it belongs to. The settings
+          side has no natural "grow" content, so it gets a trailing filler;
+          the positions card grows itself via BookCard's own `fill` prop
+          (see its doc comment — it exists for exactly this tab) so a long
+          list scrolls to fit the space instead of capping at 430px and
+          leaving the rest blank. */}
+      <div className="flex min-w-0 flex-col">
+        <PolicyAccountPanel asset={asset} spot={spot} />
         <div className="grow bg-panel" />
       </div>
-
-      {/* Side Rail: Live Options Book, filling the column now that it is alone */}
-      <div className="flex flex-col gap-px min-w-0">
-        <BookCard rows={feed} snap={snap} asset={asset} live={live} spot={spot} fill />
+      <div className="flex min-w-0 flex-col">
+        <BookCard rows={feed} snap={snap} asset={asset} live={live} spot={spot} tabs={["positions"]} fill />
       </div>
     </div>
   );

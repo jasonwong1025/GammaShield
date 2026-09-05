@@ -90,7 +90,7 @@ export type GonkaResponse = {
 /**
  * Executes a call with exponential backoff on HTTP 429 rate limits.
  */
-async function fetchWithBackoff(
+export async function fetchWithBackoff(
   url: string,
   options: RequestInit,
   maxRetries = 2,
@@ -115,7 +115,7 @@ async function fetchWithBackoff(
 /**
  * Extracts and parses JSON from model output, stripping thinking tags (<think>...</think>) if present.
  */
-function extractJson<T>(raw: string): T {
+export function extractJson<T>(raw: string): T {
   let cleaned = raw.replace(/<think[\s\S]*?<\/think>/gi, "");
   const danglingThink = cleaned.search(/<think\b/i);
   if (danglingThink !== -1) cleaned = cleaned.slice(0, danglingThink);

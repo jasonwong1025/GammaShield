@@ -13,7 +13,7 @@ import { useEffect, useRef, useState } from "react";
 import { useAccount, useBalance, useSendTransaction, useSwitchChain } from "wagmi";
 import { getPublicClient, readContract, waitForTransactionReceipt } from "wagmi/actions";
 import { base, baseSepolia } from "wagmi/chains";
-import { decodeFunctionData, type Address, type Hex, zeroAddress } from "viem";
+import { decodeFunctionData, isAddress, type Address, type Hex, zeroAddress } from "viem";
 import { isOptionsAsset, type Asset } from "@/lib/assets";
 import type { TradeQuote, TradeSide } from "@/lib/trade";
 import { TRADE_PERIODS, type TradePeriod } from "@/lib/tradePeriods";
@@ -30,10 +30,14 @@ import { ExplorerLink } from "./ExplorerLink";
 import { useExecutionNetwork } from "./ExecutionNetworkProvider";
 import { ensureWalletChain } from "@/lib/walletChain";
 import { StrategyBuilder } from "./StrategyBuilder";
+import { dispatchPositionChanged } from "@/lib/positionEvents";
 
 const QUOTE_DEBOUNCE_MS = 250;
 const QUOTE_REFRESH_MS = 15_000;
 const rfqExecutionEnabled = process.env.NEXT_PUBLIC_ENABLE_RFQ_EXECUTION === "true";
+const shadowUsdcFromEnv = process.env.NEXT_PUBLIC_BASE_SEPOLIA_SHADOW_USDC_ADDRESS;
+const SHADOW_USDC_ADDRESS: Address | undefined =
+  shadowUsdcFromEnv && isAddress(shadowUsdcFromEnv) ? shadowUsdcFromEnv : undefined;
 type GammaShieldChainId = typeof base.id | typeof baseSepolia.id;
 
 export type HedgeIntent = {
@@ -41,6 +45,25 @@ export type HedgeIntent = {
   contracts: string;
   period: TradePeriod;
   maxPremiumUsd: number;
+  nonce: number;
+};
+
+// Targets one exact listed order clicked from the OptionBook feed — as
+// opposed to the panel's default "nearest ATM for this side+period" quoting.
+// /api/quote already supports pinning an exact strike+expiry (lib/trade.ts);
+// this just routes that through the same approve/preflight/fill machinery
+// buy() already has, rather than duplicating it per book row.
+export type OrderIntent = {
+  asset: Asset;
+  side: TradeSide;
+  strike: number;
+  expiryTs: number;
+  /** The row's own full listed size — seeds Amount so the risk score here
+   *  starts from the same quantity the book row's own score was computed
+   *  against (that one, deliberately, never includes a liquidity/participation
+   *  component — see ContractRiskPanel's "browse view" note — so the two can
+   *  still land on different totals even at equal size). */
+  contracts: number;
   nonce: number;
 };
 
@@ -138,15 +161,34 @@ function displayToken(symbol: string) {
   return symbol.replace(/^aBas/, "");
 }
 
-function fmtDays(d: number) {
-  return d < 1 ? `${Math.round(d * 24)}h` : `${Math.round(d)}d`;
+/** Time remaining to a fixed calendar expiry — never a restated tenor length, since the two can drift apart. */
+function fmtDaysLeft(d: number) {
+  return d < 1 ? `${Math.round(d * 24)}h left` : `${Math.round(d)}d left`;
 }
 
-function periodLabel(p: TradePeriod) {
-  return p === 7 ? "1 Week" : p === 14 ? "2 Weeks" : "4 Weeks";
+/** The real listed expiry date nearest this nominal tenor — leads on the date so there's no duration to contradict. */
+function tenorLabel(p: TradePeriod, expiries: { period: TradePeriod; ts: number }[]) {
+  const entry = expiries.find((e) => e.period === p);
+  return entry ? fmtExpiryDate(entry.ts) : `${p}d`;
 }
 
-export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: boolean; hedgeIntent: HedgeIntent | null }) {
+export function TradePanel({
+  asset,
+  live,
+  hedgeIntent,
+  orderIntent = null,
+  onClearOrderIntent,
+  onFilled,
+}: {
+  asset: Asset;
+  live: boolean;
+  hedgeIntent: HedgeIntent | null;
+  /** Set when a specific row's Buy button was clicked in the OptionBook feed. */
+  orderIntent?: OrderIntent | null;
+  onClearOrderIntent?: () => void;
+  /** Fires once a mainnet or shadow fill confirms, so the position becomes visible somewhere. */
+  onFilled?: () => void;
+}) {
   const { network } = useExecutionNetwork();
   const { address: walletAddress, connector } = useAccount();
   const { switchChainAsync } = useSwitchChain();
@@ -175,12 +217,35 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
   const aiSeq = useRef(0);
   const rfqAddress = useRef<string | null>(null);
 
+  // A fresh position now exists somewhere the user can't see from this panel —
+  // hand off to wherever positions are tracked once the fill actually confirms.
+  useEffect(() => {
+    if (tx.step === "done") onFilled?.();
+  }, [tx, onFilled]);
+  useEffect(() => {
+    if (shadowTx.step === "done") onFilled?.();
+  }, [shadowTx, onFilled]);
+
+  // A row's Buy button was clicked: force this exact side/strike/expiry.
+  // Re-applies on every new nonce (not just at mount) so clicking a
+  // different row while the panel stays mounted takes effect immediately —
+  // same "adjust state during render" pattern as prevKey below.
+  const orderLocked = !!orderIntent && orderIntent.asset === asset;
+  const [appliedOrderNonce, setAppliedOrderNonce] = useState<number | null>(null);
+  if (orderLocked && orderIntent!.nonce !== appliedOrderNonce) {
+    setAppliedOrderNonce(orderIntent!.nonce);
+    setSide(orderIntent!.side);
+    if (orderIntent!.contracts > 0) setAmountStr(fmtContracts(orderIntent!.contracts));
+  }
+
   const amount = Number(amountStr);
   const validAmount = Number.isFinite(amount) && amount > 0;
   const quotePremiumCap = hedgeIntent?.asset === asset && side === "put" ? hedgeIntent.maxPremiumUsd : null;
 
   // Whichever collateral token this trade would actually pull from: the
   // exact maker's token for a book fill, else the standard RFQ collateral.
+  // The shadow book always collateralises in test USDC, one fixed token
+  // (lib/shadow.ts's prepareShadowFill), so no per-quote resolution needed.
   const collateralInfo =
     executionMode === "mainnet"
       ? quote?.source === "book" && quote.txs
@@ -196,7 +261,9 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
               symbol: collateralFor(asset, side),
             }
           : null
-      : null;
+      : SHADOW_USDC_ADDRESS
+        ? { address: SHADOW_USDC_ADDRESS, decimals: 6, symbol: "USDC" }
+        : null;
   const collateralAddress = collateralInfo?.address;
   const collateralDecimals = collateralInfo?.decimals;
   const executionChainId: GammaShieldChainId = executionMode === "mainnet" ? base.id : baseSepolia.id;
@@ -248,10 +315,12 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
     return hash;
   };
 
-  // Reset stale quote/tx state when the market or direction changes.
-  const [prevKey, setPrevKey] = useState(`${asset}:${side}`);
-  if (prevKey !== `${asset}:${side}`) {
-    setPrevKey(`${asset}:${side}`);
+  // Reset stale quote/tx state when the market, direction, or the exact
+  // locked order changes.
+  const orderKey = orderLocked ? `${orderIntent!.strike}:${orderIntent!.expiryTs}` : "auto";
+  const [prevKey, setPrevKey] = useState(`${asset}:${side}:${orderKey}`);
+  if (prevKey !== `${asset}:${side}:${orderKey}`) {
+    setPrevKey(`${asset}:${side}:${orderKey}`);
     setQuote(null);
     setTx({ step: "idle" });
   }
@@ -265,6 +334,10 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
         const contracts = validAmount ? amount : 0;
         const params = new URLSearchParams({ asset, side, contracts: String(contracts), period: String(period) });
         if (quotePremiumCap != null) params.set("maxPremiumUsd", String(quotePremiumCap));
+        if (orderLocked) {
+          params.set("strike", String(orderIntent!.strike));
+          params.set("expiry", String(orderIntent!.expiryTs));
+        }
         const res = await fetch(
           `/api/quote?${params}`,
           { cache: "no-store" },
@@ -288,7 +361,7 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
       clearTimeout(timer);
       clearInterval(refresh);
     };
-  }, [asset, side, amount, validAmount, period, live, quotePremiumCap]);
+  }, [asset, side, amount, validAmount, period, live, quotePremiumCap, orderLocked, orderKey, orderIntent]);
 
   // AI second opinion on the same fill, via GonkaRouter (lib/aiRisk.ts).
   // Manual only — the user clicks "Get AI read"; nothing here auto-fires on
@@ -350,6 +423,10 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
         fresh: "1",
       });
       if (quotePremiumCap != null) params.set("maxPremiumUsd", String(quotePremiumCap));
+      if (orderLocked) {
+        params.set("strike", String(orderIntent!.strike));
+        params.set("expiry", String(orderIntent!.expiryTs));
+      }
       const res = await fetch(`/api/quote?${params}`, { cache: "no-store" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? `quote ${res.status}`);
@@ -387,7 +464,17 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
       setTx({ step: "filling" });
       const fillHash = await sendTx(base.id, prepared.txs.fill);
       setTx({ step: "done", hash: fillHash });
-      window.dispatchEvent(new Event("thetanuts-position-changed"));
+      dispatchPositionChanged({
+        network: "mainnet",
+        txHash: fillHash,
+        asset,
+        isCall: side === "call",
+        strike: prepared.strike,
+        expiryTs: prepared.expiryTs,
+        contracts: prepared.contracts,
+        premiumUsd: null,
+      });
+      onClearOrderIntent?.();
     } catch (e) {
       const message =
         (e as { code?: number })?.code === 4001
@@ -406,6 +493,10 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
       const from = await ensureChain(baseSepolia.id);
       setShadowTx({ step: "preparing" });
       const params = new URLSearchParams({ asset, buyer: from, side, contracts: amountStr, period: String(period) });
+      if (orderLocked) {
+        params.set("strike", String(orderIntent!.strike));
+        params.set("expiry", String(orderIntent!.expiryTs));
+      }
       const res = await fetch(`/api/shadow/quote?${params}`, { cache: "no-store" });
       const shadowQuote = await res.json();
       if (!res.ok) throw new Error(shadowQuote.error ?? `shadow quote ${res.status}`);
@@ -419,6 +510,16 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
       setShadowTx({ step: "filling" });
       const hash = await sendTx(baseSepolia.id, prepared.txs.fill);
       setShadowTx({ step: "done", hash, quote: prepared });
+      dispatchPositionChanged({
+        network: "shadow",
+        txHash: hash,
+        asset,
+        isCall: side === "call",
+        strike: prepared.source.strike,
+        expiryTs: prepared.source.expiryTs,
+        contracts: prepared.source.contracts,
+        premiumUsd: prepared.source.premiumUsd,
+      });
     } catch (e) {
       const message =
         (e as { code?: number })?.code === 4001
@@ -513,6 +614,19 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
         optionAddress = settled?.optionAddress ?? null;
       } catch {}
       setRfq({ step: "done", hash, optionAddress });
+      // The final strike/expiry live only in the maker's signed offer, never
+      // simulated client-side, so no optimistic row — just a fast, targeted
+      // refresh of "My positions" once the indexer picks up the settlement.
+      dispatchPositionChanged({
+        network: "mainnet",
+        txHash: hash,
+        asset,
+        isCall: null,
+        strike: null,
+        expiryTs: null,
+        contracts: null,
+        premiumUsd: null,
+      });
     } catch (e) {
       const message =
         (e as { code?: number })?.code === 4001
@@ -539,7 +653,10 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
   const expiries = quote?.expiries ?? [];
   const selectedEntry = expiries.find((e) => e.period === period) ?? null;
   const fillableExpiries = expiries.filter((e) => e.fillable);
-  const selFillable = !!selectedEntry?.fillable;
+  // quote.source is the authoritative signal — for a locked order it may sit
+  // at an expiry outside the 3 standard periods, where selectedEntry (keyed
+  // off the unrelated `period` state) wouldn't reflect it correctly.
+  const selFillable = quote ? quote.source === "book" : false;
   const nearestFillable = fillableExpiries.reduce<(typeof expiries)[number] | null>(
     (best, e) => (!best || Math.abs(e.period - period) < Math.abs(best.period - period) ? e : best),
     null,
@@ -561,13 +678,17 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
   // Required collateral for this quote: the exact simulated book-fill amount,
   // or contracts × reservePrice (the RFQ escrow) otherwise — same math
   // as lib/trade.ts / lib/rfq.ts, just in plain floats for a UI-only check.
+  // Shadow mirrors this same quote's totalCostUsd exactly, 1:1 in test USDC —
+  // no reserve buffer, since it's a direct premium mirror, not an escrow.
   const requiredCollateral =
     quote && configured
-      ? quote.source === "book"
-        ? quote.totalCostToken
-        : quote.contracts *
-          (side === "put" ? quote.premiumPerContractUsd : quote.premiumPerContractUsd / quote.spot) *
-          RESERVE_BUFFER
+      ? executionMode === "shadow"
+        ? quote.totalCostUsd
+        : quote.source === "book"
+          ? quote.totalCostToken
+          : quote.contracts *
+            (side === "put" ? quote.premiumPerContractUsd : quote.premiumPerContractUsd / quote.spot) *
+            RESERVE_BUFFER
       : null;
   const insufficientToken =
     !!walletAddress &&
@@ -597,14 +718,33 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
 
       {view === "strategy" ? <StrategyBuilder key={asset} asset={asset} /> : <>
 
+      {orderLocked && (
+        <div className="rounded-md border border-blue/40 bg-bluesoft/40 px-3 py-2 text-[11px] leading-relaxed">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-fg">
+              Trading the listed {fmtStrike(orderIntent!.strike)} {orderIntent!.side} from the book · expires{" "}
+              {fmtExpiryDate(orderIntent!.expiryTs)}
+            </span>
+            <button onClick={onClearOrderIntent} className="shrink-0 text-blue hover:underline">
+              browse strikes instead
+            </button>
+          </div>
+          <p className="mt-1 text-muted">
+            Contract risk below may differ slightly from the book row&apos;s own score — the row scores a
+            browse view with no size chosen (liquidity dropped), this one scores your actual amount.
+          </p>
+        </div>
+      )}
+
       {/* Direction */}
       <div className="grid grid-cols-2 gap-1 rounded-lg bg-panel2 p-1">
         {(["call", "put"] as const).map((s) => (
           <button
             key={s}
-            onClick={() => setSide(s)}
+            onClick={() => !orderLocked && setSide(s)}
             aria-pressed={side === s}
-            className="h-8 rounded-md text-[13px] font-semibold transition"
+            disabled={orderLocked}
+            className="h-8 rounded-md text-[13px] font-semibold transition disabled:cursor-not-allowed"
             style={
               side === s
                 ? {
@@ -661,31 +801,38 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
             </span>
           </span>
         </div>
-        <div className="grid grid-cols-3 gap-1 rounded-lg bg-panel2 p-1">
-          {TRADE_PERIODS.map((p) => {
-            const entry = expiries.find((e) => e.period === p);
-            return (
-              <button
-                key={p}
-                onClick={() => setPeriod(p)}
-                aria-pressed={period === p}
-                className={`h-11 rounded-md text-[12px] font-semibold transition flex flex-col items-center justify-center gap-0.5 ${
-                  period === p ? "bg-panel text-fg shadow-sm" : "text-muted hover:text-fg"
-                }`}
-              >
-                <span>{periodLabel(p)}</span>
-                {entry && (
-                  <span className="text-[10px] font-normal text-faint flex items-center gap-1">
-                    {entry.fillable && (
-                      <span className="size-1 rounded-full bg-calm inline-block" />
-                    )}
-                    {fmtDays(entry.days)}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
+        {orderLocked ? (
+          <div className="h-11 rounded-lg bg-panel2 flex items-center justify-center gap-1.5 text-[12px] font-semibold text-fg">
+            <span className="size-1 rounded-full bg-calm inline-block" />
+            Exact listed order — not the nearest-ATM picker
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-1 rounded-lg bg-panel2 p-1">
+            {TRADE_PERIODS.map((p) => {
+              const entry = expiries.find((e) => e.period === p);
+              return (
+                <button
+                  key={p}
+                  onClick={() => setPeriod(p)}
+                  aria-pressed={period === p}
+                  className={`h-11 rounded-md text-[12px] font-semibold transition flex flex-col items-center justify-center gap-0.5 ${
+                    period === p ? "bg-panel text-fg shadow-sm" : "text-muted hover:text-fg"
+                  }`}
+                >
+                  <span>{entry ? fmtExpiryDate(entry.ts) : `${p}d`}</span>
+                  {entry && (
+                    <span className="text-[10px] font-normal text-faint flex items-center gap-1">
+                      {entry.fillable && (
+                        <span className="size-1 rounded-full bg-calm inline-block" />
+                      )}
+                      {fmtDaysLeft(entry.days)}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Quote */}
@@ -745,7 +892,7 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
         >
           <p className="eyebrow text-[10px] font-semibold text-blue">Protective-put plan</p>
           <p className="mt-1 text-muted">
-            Protecting {fmtContracts(amount)} {asset} through {quote ? fmtExpiryDate(quote.expiryTs) : periodLabel(period)}. Your premium cap is {fmtUsd(hedgeIntent.maxPremiumUsd, false, 2)}.
+            Protecting {fmtContracts(amount)} {asset} through {quote ? fmtExpiryDate(quote.expiryTs) : tenorLabel(period, expiries)}. Your premium cap is {fmtUsd(hedgeIntent.maxPremiumUsd, false, 2)}.
           </p>
           {quote && protectedFloorAfterPremium !== null && (
             <p className="mt-1 text-fg">
@@ -758,22 +905,6 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
             </p>
           )}
         </div>
-      )}
-
-      {executionMode === "shadow" ? (
-        <p
-          className="note text-[11px] leading-relaxed text-muted"
-          style={{ borderLeftColor: "var(--blue)", background: "color-mix(in srgb, var(--blue) 6%, transparent)" }}
-        >
-          Mirrors this live quote on Base Sepolia using Circle test USDC. Try 0.01 contracts for a small test; this is not a Thetanuts position.
-        </p>
-      ) : (
-        <p
-          className="note text-[11px] leading-relaxed text-muted"
-          style={{ borderLeftColor: "var(--warn)", background: "color-mix(in srgb, var(--warn) 8%, transparent)" }}
-        >
-          Base mainnet uses real funds. Before your wallet can send a fill, GammaShield refetches the listed OptionBook order and simulates the exact transaction against your account.
-        </p>
       )}
 
       {/* Per-contract risk for the option itself — a separate question from
@@ -867,7 +998,7 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
       {executionMode === "shadow" ? (
         <button
           onClick={buyShadow}
-          disabled={!configured || !quoteInSync || shadowBusy}
+          disabled={!configured || !quoteInSync || shadowBusy || insufficientToken || insufficientGas}
           className="h-10 rounded-lg bg-blue text-white text-[13px] font-semibold hover:brightness-110 transition disabled:opacity-50"
         >
           {shadowBusy
@@ -942,6 +1073,19 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
             trade again
           </button>
         </p>
+      ) : orderLocked && quote && quote.source !== "book" ? (
+        // The RFQ auction below is a different mechanism (its own nearest-ATM
+        // pick for a plain period) — routing a stale locked-order click into
+        // it would silently buy something other than what was clicked.
+        <div
+          className="note text-[12px] leading-relaxed text-muted"
+          style={{ borderLeftColor: "var(--warn)", background: "color-mix(in srgb, var(--warn) 8%, transparent)" }}
+        >
+          This listed order is no longer available — it may have just been filled or cancelled by its maker.
+          <button onClick={onClearOrderIntent} className="mt-2 block text-blue hover:underline">
+            Browse the book for a current listing
+          </button>
+        </div>
       ) : quote && !selFillable && rfqExecutionEnabled ? (
         <div className="flex flex-col gap-1.5">
           <button
@@ -949,18 +1093,16 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
             disabled={!validAmount || insufficientToken || insufficientGas}
             className="h-10 rounded-lg bg-blue text-white text-[13px] font-semibold hover:brightness-110 transition disabled:opacity-50"
           >
-            {insufficientToken || insufficientGas
-              ? "Insufficient balance"
-              : validAmount
-                ? `Request quotes · ${periodLabel(period)} via RFQ auction`
-                : "Enter an amount to trade"}
+            {validAmount
+              ? `Request quotes · ${tenorLabel(period, expiries)} via RFQ auction`
+              : "Enter an amount to trade"}
           </button>
           {nearestFillable && (
             <button
               onClick={() => setPeriod(nearestFillable.period)}
               className="text-[11px] text-muted hover:text-fg transition self-center"
             >
-              or jump to instant fill · {periodLabel(nearestFillable.period)}
+              or jump to instant fill · {tenorLabel(nearestFillable.period, expiries)}
             </button>
           )}
         </div>
@@ -969,13 +1111,13 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
           className="note text-[12px] leading-relaxed text-muted"
           style={{ borderLeftColor: "var(--warn)", background: "color-mix(in srgb, var(--warn) 8%, transparent)" }}
         >
-          This expiry has no listed maker order. RFQ execution is paused by default because it escrows collateral and needs a separate review. Choose an instant-fill tenor instead.
+          No listed order for this expiry, and RFQ execution is paused. Choose an instant-fill tenor instead.
           {nearestFillable && (
             <button
               onClick={() => setPeriod(nearestFillable.period)}
               className="mt-2 block text-blue hover:underline"
             >
-              Choose instant fill · {periodLabel(nearestFillable.period)}
+              Choose instant fill · {tenorLabel(nearestFillable.period, expiries)}
             </button>
           )}
         </div>
@@ -995,15 +1137,13 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
                 : tx.step === "preflighting"
                   ? "Preflighting fill…"
                 : "Filling order…"
-            : insufficientToken || insufficientGas
-              ? "Insufficient balance"
-              : overHedgeBudget
-                ? "Live put exceeds premium cap"
-                : !validAmount
-                  ? "Enter an amount to trade"
-                  : tx.step === "ready"
-                    ? "Review and submit fill"
-                    : !quoteInSync || !quote
+            : overHedgeBudget
+              ? "Live put exceeds premium cap"
+              : !validAmount
+                ? "Enter an amount to trade"
+                : tx.step === "ready"
+                  ? "Review and submit fill"
+                  : !quoteInSync || !quote
                   ? "Quoting…"
                   : configured && quote.txs
                     ? `Buy ${fmtContracts(quote.contracts)} ${asset} ${side}${quote.contracts === 1 ? "" : "s"}`
@@ -1043,11 +1183,6 @@ export function TradePanel({ asset, live, hedgeIntent }: { asset: Asset; live: b
         </p>
       )}
 
-      <p className="text-[11px] text-faint leading-relaxed">
-        Periods with a listed maker order fill instantly from the Thetanuts book; otherwise the
-        period trades through the Thetanuts RFQ auction at the real expiry. Premium is paid in
-        the option&apos;s collateral token; everything settles on Base.
-      </p>
       </>}
     </section>
   );

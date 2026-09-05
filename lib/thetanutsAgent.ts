@@ -55,9 +55,9 @@ export async function runThetanutsAgents(options: { pendingAccounts?: Iterable<s
   const factory = new ethers.Contract(config.factory, ["event AccountCreated(address indexed account,address indexed owner,bytes32 indexed salt)"], provider);
   const latestBlock = await provider.getBlockNumber();
   const discoveryFromBlock = Math.max(config.deploymentBlock, options.discoveryFromBlock ?? config.deploymentBlock);
-  const discoveredAccounts = await discoverPolicyAccounts(factory, discoveryFromBlock, latestBlock);
+  const discovery = await discoverPolicyAccounts(factory, discoveryFromBlock, latestBlock);
   const knownAccounts = [...(options.knownAccounts ?? [])].filter((account): account is string => typeof account === "string" && ethers.isAddress(account)).map(ethers.getAddress);
-  const accounts = [...new Set([...knownAccounts, ...discoveredAccounts])];
+  const accounts = [...new Set([...knownAccounts, ...discovery.accounts])];
   const pendingAccounts = new Set([...(options.pendingAccounts ?? [])].filter((account): account is string => typeof account === "string" && ethers.isAddress(account)).map((account) => ethers.getAddress(account).toLowerCase()));
   const snapshot = await getMarketSnapshot({ fresh: true });
   const results: ThetanutsAgentResult[] = [];
@@ -69,7 +69,7 @@ export async function runThetanutsAgents(options: { pendingAccounts?: Iterable<s
     const result = await runThetanutsAgent(account, config, provider, agent, snapshot);
     if (result) results.push(result);
   }
-  return { results, accounts, scannedToBlock: latestBlock };
+  return { results, accounts, scannedToBlock: discovery.scannedToBlock };
 }
 
 export async function getThetanutsUserOperationReceipt(userOpHash: string) {

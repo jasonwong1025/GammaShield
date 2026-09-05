@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { MarketSnapshot } from "@/lib/snapshot";
+import type { MarketSnapshot, FeedRow } from "@/lib/snapshot";
+import type { AssetSnapshot } from "@/lib/engine";
 import { TopBar, type NavTab } from "./TopBar";
 import { AssetSwitcher } from "./AssetSwitcher";
-import { TradePanel } from "./TradePanel";
+import { TradePanel, type OrderIntent } from "./TradePanel";
 import { PriceChart } from "./PriceChart";
 import { RiskView } from "./RiskView";
 import { BookCard } from "./BookFeed";
@@ -12,6 +13,8 @@ import { CopilotWidget } from "./CopilotWidget";
 import { AgentView } from "./AgentView";
 import { ExecutionNetworkProvider } from "./ExecutionNetworkProvider";
 import { ALL_ASSETS, isOptionsAsset, type Asset } from "@/lib/assets";
+
+const TRADE_PANEL_ANCHOR_ID = "trade-panel-anchor";
 
 const POLL_MS = 10_000;
 const PRICE_POLL_MS = 4_000;
@@ -22,6 +25,7 @@ export function Dashboard() {
   const [activeTab, setActiveTab] = useState<NavTab>("dashboard");
   const [asset, setAsset] = useState<Asset>("BTC");
   const [snap, setSnap] = useState<MarketSnapshot | null>(null);
+  const [pendingRow, setPendingRow] = useState<FeedRow | null>(null);
   const [ticker, setTicker] = useState<Ticker | null>(null);
   const [error, setError] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -129,26 +133,15 @@ export function Dashboard() {
               <>
                 {/* TAB 1: Main Dashboard (Trading, OptionBook, RiskView from main) */}
                 {activeTab === "dashboard" && (
-                  <div className="grid grow grid-cols-1 xl:grid-cols-[1fr_380px] gap-px bg-edge">
-                    <div className="flex flex-col gap-px min-w-0">
-                      <PriceChart asset={asset} flip={a.flipStrike} livePrice={livePrice} />
-                      <BookCard
-                        rows={snap.feed}
-                        snap={a}
-                        asset={asset}
-                        live={live}
-                        spot={livePrice}
-                        volBaseline={snap.volBaseline?.[asset] ?? null}
-                      />
-                      <RiskView snap={a} />
-                      <div className="grow bg-panel" />
-                    </div>
-
-                    <div className="flex flex-col gap-px min-w-0">
-                      <TradePanel key={asset} asset={asset} live={live} hedgeIntent={null} />
-                      <div className="grow bg-panel" />
-                    </div>
-                  </div>
+                  <TradingArea
+                    snap={snap}
+                    a={a}
+                    asset={asset}
+                    live={live}
+                    livePrice={livePrice}
+                    pendingRow={pendingRow}
+                    onFilled={() => setActiveTab("agent")}
+                  />
                 )}
 
                 {/* TAB 2: AI agent workspace — limits, policy, monitoring */}
@@ -169,12 +162,131 @@ export function Dashboard() {
 
       <CopilotWidget
         snap={a}
-        onNavigateToAgent={() => {
-          setActiveTab("agent");
+        onNavigateToHedge={(strike) => {
+          setActiveTab("dashboard");
+          // Route the AI's suggested strike to the nearest actual listed PUT
+          // on the current book — TradePanel reviews real orders only, never
+          // a strike the model invented but nothing on Base is quoting.
+          const puts = typeof strike === "number" ? snap?.feed.filter((r) => r.asset === asset && !r.isCall) : null;
+          if (puts && puts.length > 0) {
+            const nearest = puts.reduce((best, r) =>
+              Math.abs(r.strike - strike!) < Math.abs(best.strike - strike!) ? r : best,
+            );
+            setPendingRow(nearest);
+            // One-shot handoff: TradingArea applies pendingRow via a
+            // render-time comparison (see its appliedPendingRow state) in
+            // the render this triggers, which lands before this timeout
+            // fires. Clearing it after stops an unrelated later tab
+            // revisit from silently re-opening the same suggestion.
+            setTimeout(() => setPendingRow(null), 0);
+          }
         }}
       />
     </div>
     </ExecutionNetworkProvider>
+  );
+}
+
+// Owns the "buy this exact row" flow.
+function TradingArea({
+  snap,
+  a,
+  asset,
+  live,
+  livePrice,
+  pendingRow,
+  onFilled,
+}: {
+  snap: MarketSnapshot;
+  a: AssetSnapshot;
+  asset: Asset;
+  live: boolean;
+  livePrice: number;
+  pendingRow?: FeedRow | null;
+  onFilled: () => void;
+}) {
+  const [orderIntent, setOrderIntent] = useState<OrderIntent | null>(null);
+
+  // TradePanel remounts per-asset (key={asset}) and drops its own state, but
+  // this component doesn't — clear a stale intent rather than have it
+  // silently re-lock the panel if the user switches back to that asset.
+  const [prevAsset, setPrevAsset] = useState(asset);
+  if (prevAsset !== asset) {
+    setPrevAsset(asset);
+    setOrderIntent(null);
+  }
+
+  const buildOrderIntent = (row: FeedRow): OrderIntent => ({
+    asset: row.asset,
+    side: row.isCall ? "call" : "put",
+    strike: row.strike,
+    expiryTs: row.expiryTs,
+    // Same formula the row's own risk score was sized against
+    // (lib/snapshot.ts) — starting the panel here keeps the quantity
+    // component of the two scores comparable.
+    contracts: row.collateralUsd / Math.max(row.strike, 1),
+    nonce: Date.now(),
+  });
+
+  const onBuyRow = useCallback(
+    (row: FeedRow) => {
+      // The row itself is always a real mainnet listing, but ShadowOptionBook
+      // takes an arbitrary strike/expiry (lib/shadow.ts's getShadowQuote), so
+      // it can mirror this exact row too — leave whichever network the user
+      // already has selected alone instead of forcing mainnet.
+      setOrderIntent(buildOrderIntent(row));
+      document.getElementById(TRADE_PANEL_ANCHOR_ID)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    },
+    [],
+  );
+
+  // A Copilot hedge suggestion routes here as a real book row (Dashboard
+  // resolved the AI's strike to the nearest listed PUT). Applied as a
+  // render-time adjustment (same pattern as prevAsset above) rather than an
+  // effect, since Dashboard's pendingRow is a one-shot value it clears right
+  // after — an effect would run one render too late to see it.
+  const [appliedPendingRow, setAppliedPendingRow] = useState<FeedRow | null>(null);
+  if (pendingRow && pendingRow !== appliedPendingRow) {
+    setAppliedPendingRow(pendingRow);
+    setOrderIntent(buildOrderIntent(pendingRow));
+  }
+
+  useEffect(() => {
+    if (!appliedPendingRow) return;
+    document.getElementById(TRADE_PANEL_ANCHOR_ID)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [appliedPendingRow]);
+
+  return (
+    <div className="grid grow grid-cols-1 xl:grid-cols-[1fr_380px] gap-px bg-edge">
+      <div className="flex flex-col gap-px min-w-0">
+        <PriceChart asset={asset} flip={a.flipStrike} livePrice={livePrice} />
+        <BookCard
+          rows={snap.feed}
+          snap={a}
+          asset={asset}
+          live={live}
+          spot={livePrice}
+          volBaseline={snap.volBaseline?.[asset] ?? null}
+          tabs={["book", "expiries"]}
+          onBuyRow={onBuyRow}
+        />
+        <RiskView snap={a} />
+        <div className="grow bg-panel" />
+      </div>
+
+      <div id={TRADE_PANEL_ANCHOR_ID} className="flex flex-col gap-px min-w-0">
+        <TradePanel
+          key={asset}
+          asset={asset}
+          live={live}
+          hedgeIntent={null}
+          orderIntent={orderIntent}
+          onClearOrderIntent={() => setOrderIntent(null)}
+          onFilled={onFilled}
+        />
+        <div className="grow bg-panel" />
+      </div>
+    </div>
   );
 }
 

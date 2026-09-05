@@ -1,6 +1,62 @@
 // URL & Tweet Claim Extractor for Gonka Verification Track.
 // Extracts clean headlines, tweet content, and article summaries from pasted links.
 
+import { isIP } from "node:net";
+import { lookup } from "node:dns/promises";
+
+/**
+ * Blocks SSRF: this fetches whatever URL a user pastes into the fact-check
+ * box, so a hostname resolving to loopback/private/link-local space (incl.
+ * cloud metadata at 169.254.169.254) must never be requested server-side.
+ */
+async function isPublicHttpUrl(rawUrl: string): Promise<boolean> {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+
+  const host = parsed.hostname;
+  const candidates: string[] = [];
+  if (isIP(host)) {
+    candidates.push(host);
+  } else {
+    try {
+      const results = await lookup(host, { all: true });
+      candidates.push(...results.map((r) => r.address));
+    } catch {
+      return false;
+    }
+  }
+  if (candidates.length === 0) return false;
+  return candidates.every((addr) => isPublicAddress(addr));
+}
+
+function isPublicAddress(addr: string): boolean {
+  if (isIP(addr) === 4) {
+    const parts = addr.split(".").map(Number);
+    const [a, b] = parts;
+    if (a === 127) return false; // loopback
+    if (a === 10) return false; // private
+    if (a === 169 && b === 254) return false; // link-local / cloud metadata
+    if (a === 172 && b >= 16 && b <= 31) return false; // private
+    if (a === 192 && b === 168) return false; // private
+    if (a === 0) return false; // "this network"
+    return true;
+  }
+  if (isIP(addr) === 6) {
+    const lower = addr.toLowerCase();
+    if (lower === "::1") return false; // loopback
+    if (lower.startsWith("fe80:")) return false; // link-local
+    if (lower.startsWith("fc") || lower.startsWith("fd")) return false; // unique local
+    if (lower.startsWith("::ffff:")) return isPublicAddress(lower.slice(7)); // v4-mapped
+    return true;
+  }
+  return false;
+}
+
 export type ExtractedClaim = {
   isUrl: boolean;
   originalUrl?: string;
@@ -74,11 +130,13 @@ export async function extractClaimFromInput(input: string): Promise<ExtractedCla
 
   // 2. General News / Web Article Extraction (CoinDesk, Bloomberg, etc.)
   try {
+    if (!(await isPublicHttpUrl(rawUrl))) throw new Error("Blocked non-public URL");
     const res = await fetch(rawUrl, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       },
+      redirect: "manual", // don't let a redirect hop past the public-address check above
       signal: AbortSignal.timeout(3500),
     });
 

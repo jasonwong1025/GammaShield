@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#07080a" />
+    <title>GammaShield — Hackathon Pitch</title>
+    <style>
+      :root {
+        --bg: #07080a;
+        --panel: #0e1014;
+        --line: #31343a;
+        --text: #f7f7f8;
+        --muted: #aeb1ba;
+        --cyan: #00e8ef;
+        --blue: #39b5ff;
+        --purple: #9d2bff;
+        --green: #9aff94;
+        --orange: #ff9d48;
+      }
+
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        overflow: hidden;
+        background: #030405;
+        color: var(--text);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      .deck {
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 28px;
+      }
+
+      .slide-shell {
+        position: relative;
+        width: min(1280px, calc(100vw - 56px));
+        aspect-ratio: 16 / 9;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at 54% 5%, rgba(88, 48, 137, 0.22), transparent 35%),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+          linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+          var(--bg);
+        background-size: auto, 32px 32px, 32px 32px, auto;
+        box-shadow: 0 28px 80px rgba(0, 0, 0, 0.48);
+      }
+
+      .slide {
+        position: absolute;
+        inset: 0;
+        display: none;
+        padding: 62px 98px 66px;
+      }
+      .slide.is-active { display: block; }
+
+      h1, h2, h3, p { margin: 0; }
+      h1 {
+        max-width: 1080px;
+        font-size: clamp(32px, 4.1vw, 58px);
+        line-height: 1.07;
+        letter-spacing: -0.05em;
+      }
+      h2 {
+        font-size: clamp(22px, 2.2vw, 31px);
+        line-height: 1.08;
+        letter-spacing: -0.035em;
+      }
+      .eyebrow {
+        color: var(--cyan);
+        font-size: clamp(10px, 1vw, 14px);
+        font-weight: 700;
+        letter-spacing: 0.14em;
+      }
+      .lede {
+        margin-top: 22px;
+        max-width: 790px;
+        color: var(--muted);
+        font-size: clamp(15px, 1.45vw, 21px);
+        line-height: 1.45;
+      }
+
+      .slide.title-slide {
+        display: none;
+      }
+      .slide.title-slide.is-active {
+        display: grid;
+        justify-items: center;
+        grid-template-rows: auto auto 1fr;
+        padding-top: 38px;
+      }
+      .lockup { width: min(54%, 520px); height: auto; }
+      .title-slide h1 {
+        margin-top: 82px;
+        text-align: center;
+        font-size: clamp(28px, 3.3vw, 47px);
+        font-weight: 500;
+      }
+      .title-slide h1 strong { color: var(--cyan); font-weight: 700; }
+      .title-proof { margin-top: 38px; color: var(--muted); font-size: clamp(12px, 1.1vw, 16px); font-weight: 700; letter-spacing: .12em; }
+
+      .three-grid, .two-grid, .six-grid, .action-grid {
+        display: grid;
+        gap: 28px;
+      }
+      .three-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 64px; }
+      .two-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 56px; }
+      .six-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin-top: 42px; }
+      .action-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; margin-top: 50px; }
+
+      .card {
+        min-height: 274px;
+        padding: 31px 30px;
+        border: 2px solid var(--line);
+        background: rgba(14, 16, 20, 0.74);
+      }
+      .card::before, .mini-card::before {
+        content: "";
+        display: block;
+        width: 50px;
+        height: 3px;
+        margin: -33px 0 37px -32px;
+        background: var(--accent, var(--cyan));
+      }
+      .card .number { color: var(--accent, var(--cyan)); font-size: 13px; font-weight: 800; letter-spacing: .12em; }
+      .card h2 { margin-top: 23px; }
+      .card p { margin-top: 21px; color: var(--muted); font-size: clamp(14px, 1.3vw, 19px); line-height: 1.48; }
+      .accent-purple { --accent: var(--purple); }
+      .accent-blue { --accent: var(--blue); }
+      .accent-green { --accent: var(--green); }
+      .accent-orange { --accent: var(--orange); }
+
+      .phase {
+        position: relative;
+        min-height: 320px;
+        padding: 37px 40px;
+        border: 2px solid var(--line);
+        background: rgba(14, 16, 20, 0.76);
+      }
+      .phase .eyebrow { color: var(--accent, var(--cyan)); }
+      .phase h2 { margin-top: 30px; font-size: clamp(23px, 2.25vw, 32px); }
+      .phase p { max-width: 430px; margin-top: 26px; color: var(--muted); font-size: clamp(14px, 1.3vw, 18px); line-height: 1.5; }
+      .phase::after {
+        content: "";
+        position: absolute;
+        right: -38px;
+        top: 50%;
+        width: 76px;
+        height: 4px;
+        background: linear-gradient(90deg, var(--purple), var(--blue));
+      }
+      .phase:last-child::after { display: none; }
+
+      .mini-card {
+        min-height: 184px;
+        padding: 24px 18px;
+        border: 1px solid var(--line);
+        background: rgba(14, 16, 20, 0.82);
+      }
+      .mini-card::before { width: 26px; margin: -25px 0 28px -19px; }
+      .mini-card .number { color: var(--accent, var(--cyan)); font-weight: 800; font-size: 12px; }
+      .mini-card h3 { margin-top: 21px; font-size: clamp(13px, 1.22vw, 17px); letter-spacing: -.02em; }
+      .impact-panel {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 32px;
+        margin-top: 30px;
+        padding: 22px 28px;
+        border: 1px solid rgba(0, 232, 239, 0.38);
+        background: linear-gradient(90deg, rgba(0, 232, 239, 0.12), rgba(35, 109, 255, 0.08));
+      }
+      .impact-panel p { color: var(--muted); font-size: 16px; line-height: 1.45; }
+      .impact-panel strong { color: var(--cyan); }
+
+      .policy-list { margin-top: 62px; display: grid; gap: 26px; }
+      .policy-list p { color: #c8cbd3; font-size: clamp(16px, 1.55vw, 23px); }
+      .policy-list p::before { content: ""; display: inline-block; width: 11px; height: 11px; margin-right: 24px; background: var(--cyan); }
+      .action {
+        min-height: 210px;
+        padding: 46px 20px 24px;
+        border: 1px solid var(--line);
+        text-align: center;
+        background: rgba(14, 16, 20, 0.58);
+      }
+      .action h2 { color: var(--accent, var(--cyan)); }
+      .action p { margin: 35px auto 0; max-width: 185px; color: var(--muted); font-size: clamp(13px, 1.1vw, 16px); line-height: 1.42; }
+
+      .brain-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; margin-top: 70px; }
+      .brain { min-height: 322px; padding: 36px 35px; border: 1px solid var(--line); background: rgba(14, 16, 20, .68); }
+      .brain h2 { color: var(--accent, var(--cyan)); }
+      .brain p { margin-top: 28px; color: var(--muted); font-size: clamp(14px, 1.35vw, 18px); line-height: 1.48; }
+      .brain footer { margin-top: 34px; color: var(--green); font-size: 12px; font-weight: 800; letter-spacing: .1em; }
+
+      .architecture-slide { padding: 48px 75px 38px; }
+      .architecture-slide h1 { margin-left: 24px; font-size: clamp(28px, 3.1vw, 43px); }
+      .architecture {
+        display: block;
+        width: min(88%, 1030px);
+        height: auto;
+        margin: 34px auto 0;
+        border: 1px solid rgba(255, 255, 255, .17);
+      }
+
+      .competitor-card { min-height: 282px; }
+      .competitor-card .eyebrow { color: #90939a; }
+      .competitor-card h2 { margin-top: 28px; }
+      .competitor-card p { margin-top: 23px; color: var(--muted); font-size: clamp(14px, 1.35vw, 19px); line-height: 1.45; }
+      .difference {
+        position: relative;
+        margin-top: 72px;
+        padding: 28px;
+        border: 2px solid var(--line);
+        background: linear-gradient(90deg, rgba(26, 71, 96, .8), rgba(11, 72, 72, .78));
+        text-align: center;
+      }
+      .difference::before { content: ""; position: absolute; top: -48px; left: 16.6%; height: 48px; border-left: 2px solid var(--line); box-shadow: 382px 0 0 var(--line), 764px 0 0 var(--line); }
+      .difference p { margin-top: 17px; font-size: clamp(19px, 2.05vw, 30px); font-weight: 700; letter-spacing: -.035em; }
+      .competition-slide { padding-top: 52px; }
+      .competition-slide .three-grid { margin-top: 48px; }
+      .competition-slide .competitor-card { min-height: 240px; }
+      .competition-slide .difference { margin-top: 44px; padding: 18px 28px; }
+      .competition-slide .difference p { margin-top: 10px; }
+      .comparison-table { width: 100%; margin-top: 44px; border-collapse: collapse; font-size: clamp(12px, 1.08vw, 16px); }
+      .comparison-table th, .comparison-table td { padding: 18px 20px; border: 1px solid var(--line); text-align: left; vertical-align: middle; }
+      .comparison-table th { color: var(--muted); background: rgba(255, 255, 255, .025); font-size: .78em; letter-spacing: .12em; }
+      .comparison-table td { color: #d6d8dd; line-height: 1.35; }
+      .comparison-table tr:last-child td { color: #f8f8f9; background: linear-gradient(90deg, rgba(0, 232, 239, .13), rgba(154, 255, 148, .08)); font-weight: 600; }
+      .competitor-brand { display: flex; align-items: center; gap: 14px; color: var(--text); font-weight: 800; text-decoration: none; }
+      .competitor-brand img { width: 30px; height: 30px; object-fit: contain; }
+      .competitor-brand .panoptic-logo { width: 112px; height: 30px; object-position: left; }
+      .competitor-brand .gamma-logo { width: 34px; height: 34px; object-fit: contain; object-position: left; }
+
+      .verified-card { min-height: 398px; padding: 48px 48px; }
+      .verified-card .eyebrow { color: var(--accent, var(--cyan)); }
+      .verified-card h2 { margin-top: 36px; font-size: clamp(26px, 2.6vw, 38px); }
+      .verified-card p { margin-top: 40px; color: var(--muted); font-size: clamp(15px, 1.45vw, 21px); line-height: 1.48; }
+
+      .cta { display: grid; grid-template-columns: 1.18fr .86fr; gap: 70px; margin-top: 96px; padding-top: 32px; border-top: 2px solid var(--line); }
+      .cta p { margin-top: 20px; color: #d1d3d9; font-size: clamp(16px, 1.55vw, 23px); line-height: 1.45; }
+      .contact { padding-bottom: 18px; border-bottom: 1px solid var(--line); }
+      .contact .eyebrow { font-size: 12px; }
+      .destination-grid { display: grid; grid-template-columns: 1.3fr .9fr; gap: 24px; margin-top: 22px; }
+      .destination img { display: block; width: 104px; margin-top: 14px; padding: 5px; background: white; }
+      .destination a { display: block; color: var(--cyan); font-size: clamp(11px, .85vw, 13px); line-height: 1.35; text-decoration: none; overflow-wrap: anywhere; }
+      .destination .destination-link { margin-top: 10px; }
+      .destination .github-link { font-size: 11px; letter-spacing: -.04em; white-space: nowrap; }
+      .cta-slide .cta { margin-top: 58px; }
+
+      @media (max-height: 700px) and (min-width: 761px) {
+        .architecture-slide { padding-top: 42px; padding-bottom: 18px; }
+        .architecture { width: min(80%, 940px); margin-top: 18px; }
+      }
+
+      .counter { position: fixed; right: 24px; bottom: 22px; z-index: 2; color: #d0d3da; font-size: 13px; }
+
+      @media (max-width: 760px) {
+        .deck { padding: 0; }
+        .slide-shell { width: 100vw; }
+        .slide { padding: 32px 38px; }
+        .three-grid { gap: 12px; margin-top: 28px; }
+        .card { min-height: 0; padding: 18px; }
+        .card::before { margin: -19px 0 22px -20px; }
+        .card p, .phase p, .brain p, .verified-card p { font-size: 10px; }
+        .card h2, .phase h2, .brain h2, .verified-card h2 { font-size: 15px; }
+        .six-grid { gap: 5px; margin-top: 20px; }
+        .mini-card { min-height: 105px; padding: 11px; }
+        .mini-card h3 { font-size: 9px; margin-top: 12px; }
+        .policy-list { margin-top: 30px; gap: 13px; }
+        .policy-list p { font-size: 11px; }
+        .policy-list p::before { width: 6px; height: 6px; margin-right: 10px; }
+        .action-grid { margin-top: 28px; }
+        .action { min-height: 115px; padding: 20px 8px; }
+        .action h2 { font-size: 12px; }
+        .action p { margin-top: 15px; font-size: 8px; }
+        .brain-grid { margin-top: 35px; }
+        .brain { min-height: 190px; padding: 20px; }
+        .brain footer { margin-top: 17px; font-size: 8px; }
+        .comparison-table { margin-top: 22px; font-size: 8px; }
+        .comparison-table th, .comparison-table td { padding: 8px; }
+        .competitor-brand { gap: 5px; }
+        .competitor-brand img { width: 15px; height: 15px; }
+        .competitor-brand .panoptic-logo { width: 50px; height: 15px; }
+        .competitor-brand .gamma-logo { width: 17px; height: 17px; }
+        .cta { margin-top: 45px; gap: 30px; padding-top: 20px; }
+        .counter { right: 10px; bottom: 10px; }
+      }
+
+      @media print {
+        body { overflow: visible; background: #fff; }
+        .deck { display: block; padding: 0; }
+        .slide-shell { width: 1280px; height: 720px; box-shadow: none; }
+        .slide { position: relative; display: block; width: 1280px; height: 720px; page-break-after: always; }
+        .counter { display: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="deck" aria-label="GammaShield pitch deck">
+      <div class="slide-shell">
+        <section class="slide title-slide is-active" data-slide aria-label="Slide 1: GammaShield">
+          <img class="lockup" src="../gammashield-lockup.png" alt="GammaShield" />
+          <h1>An <strong>Autonomous AI Position Manager</strong><br />for DeFi Options.</h1>
+          <p class="title-proof">LIVE RISK INTELLIGENCE · POLICY-BOUND EXECUTION</p>
+        </section>
+
+        <section class="slide" data-slide aria-label="Slide 2: Problem">
+          <h1>DeFi options punish passive risk management</h1>
+          <div class="three-grid">
+            <article class="card accent-purple">
+              <p class="number">01 / COMPLEXITY</p>
+              <h2>Options hide risk in the payoff</h2>
+              <p>Retail traders face complex payoff profiles, fragmented liquidity, and opaque risk across decentralized venues.</p>
+            </article>
+            <article class="card accent-blue">
+              <p class="number">02 / FRAGILITY</p>
+              <h2>Gamma can amplify every move</h2>
+              <p>Negative gamma feedback loops can turn small market moves into systemic fragility and rapid liquidations.</p>
+            </article>
+            <article class="card accent-green">
+              <p class="number">03 / MONITORING</p>
+              <h2>Risk keeps moving after entry</h2>
+              <p>Theta and vega evolve continuously; humans cannot monitor every position, venue, and hour effectively.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="slide" data-slide aria-label="Slide 3: Solution">
+          <h1>GammaShield turns risk awareness into capital protection</h1>
+          <div class="two-grid">
+            <article class="phase accent-purple">
+              <p class="eyebrow">PHASE 1 / UNDERSTAND</p>
+              <h2>Pre-Trade Risk Intelligence</h2>
+              <p>Before entry, the system quantifies risk, liquidity, market impact, and expiry pressure so the user can review the real trade-off.</p>
+            </article>
+            <article class="phase accent-blue">
+              <p class="eyebrow">PHASE 2 / PROTECT</p>
+              <h2>Post-Trade Autonomous Management</h2>
+              <p>After entry, the agent monitors the policy account and makes only the actions that the user explicitly signed for.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="slide" data-slide aria-label="Slide 4: Risk pillars">
+          <h1>Six deterministic pillars make risk legible before execution</h1>
+          <p class="lede">Traders see the true risk behind the trade—not just the quoted premium.</p>
+          <div class="six-grid">
+            <article class="mini-card accent-purple"><p class="number">01</p><h3>PREMIUM</h3></article>
+            <article class="mini-card accent-blue"><p class="number">02</p><h3>IMPLIED VOL</h3></article>
+            <article class="mini-card accent-green"><p class="number">03</p><h3>TIME DECAY</h3></article>
+            <article class="mini-card accent-orange"><p class="number">04</p><h3>LIQUIDITY</h3></article>
+            <article class="mini-card accent-purple"><p class="number">05</p><h3>MARKET</h3></article>
+            <article class="mini-card accent-blue"><p class="number">06</p><h3>EXPIRY</h3></article>
+          </div>
+          <div class="impact-panel">
+            <p><strong>Market Impact Calculator</strong><br />Simulates absolute dollar impact for whale-sized orders before execution.</p>
+            <p class="eyebrow">IMPACT_SIMULATION: ACTIVE</p>
+          </div>
+        </section>
+
+        <section class="slide" data-slide aria-label="Slide 5: Policy-bound agent">
+          <h1>One agent. Bound by the policy you sign.</h1>
+          <div class="policy-list">
+            <p>It compares the recorded thesis with live market and position risk.</p>
+            <p>It assesses HOLD, HEDGE, ROLL, and CLOSE before taking any action.</p>
+            <p>The venue path and your signed mandate decide what can actually execute.</p>
+          </div>
+          <div class="action-grid">
+            <article class="action accent-cyan"><h2>HOLD</h2><p>No action when risk and thesis still align.</p></article>
+            <article class="action accent-blue"><h2>HEDGE</h2><p>Policy-bound protective fill on Base mainnet.</p></article>
+            <article class="action accent-purple"><h2>ROLL</h2><p>On-chain in Shadow; recommendation on live Thetanuts.</p></article>
+            <article class="action accent-purple"><h2>CLOSE</h2><p>On-chain in Shadow; recommendation on live Thetanuts.</p></article>
+          </div>
+        </section>
+
+        <section class="slide" data-slide aria-label="Slide 6: Decision system">
+          <h1>Two brains. One guarded execution path.</h1>
+          <div class="brain-grid">
+            <article class="brain accent-purple"><h2>AI Copilot</h2><p>Reasons over thesis, context, and trade intent to adapt to market conditions.</p></article>
+            <article class="brain accent-blue"><h2>Math Engine</h2><p>Calculates deterministic risk with transparent, repeatable outputs.</p></article>
+            <article class="brain accent-green"><h2>Policy Guard</h2><p>On-chain limits bind every action; the owner can pause or revoke at any time.</p><footer>ON-CHAIN EXECUTION</footer></article>
+          </div>
+        </section>
+
+        <section class="slide architecture-slide" data-slide aria-label="Slide 7: Architecture">
+          <h1>One policy-bound execution layer</h1>
+          <img class="architecture" src="architecture.png" alt="GammaShield architecture connecting Thetanuts, market data, risk intelligence, policy accounts, and the agent worker" />
+        </section>
+
+        <section class="slide competition-slide" data-slide aria-label="Slide 8: Competitors">
+          <h1>GammaShield complements options venues</h1>
+          <table class="comparison-table">
+            <thead><tr><th>Platform</th><th>Core options model</th><th>Position-management focus</th></tr></thead>
+            <tbody>
+              <tr><td><a class="competitor-brand" href="https://odette.fi/" target="_blank" rel="noreferrer"><img src="odette-logo.svg" alt="Odette" />Odette</a></td><td>1–3 day on-chain options</td><td>Fast daily option execution</td></tr>
+              <tr><td><a class="competitor-brand" href="https://www.hegic.co/" target="_blank" rel="noreferrer"><img src="hegic-logo.png" alt="Hegic" />Hegic</a></td><td>Peer-to-pool BTC/ETH options</td><td>One-click option strategies</td></tr>
+              <tr><td><a class="competitor-brand" href="https://panoptic.xyz/" target="_blank" rel="noreferrer"><img class="panoptic-logo" src="panoptic-logo.svg" alt="Panoptic" /></a></td><td>Perpetual options from AMM liquidity</td><td>Self-directed trading and liquidity</td></tr>
+              <tr><td><span class="competitor-brand"><img class="gamma-logo" src="../gammashield-lockup.png" alt="GammaShield" />GammaShield</span></td><td>Live Thetanuts book + risk engine</td><td>Owner-signed policy constrains an AI agent</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section class="slide" data-slide aria-label="Slide 9: Built and verified">
+          <h1>Built and verified—not just planned</h1>
+          <div class="two-grid">
+            <article class="card verified-card accent-purple">
+              <p class="eyebrow">LIVE INTELLIGENCE</p>
+              <h2>Thetanuts book + risk engine</h2>
+              <p>Live BTC/ETH OptionBook normalization, dealer-gamma analysis, market impact, and transparent risk explanation.</p>
+            </article>
+            <article class="card verified-card accent-blue">
+              <p class="eyebrow">BOUNDED EXECUTION</p>
+              <h2>EIP-712 + ERC-4337</h2>
+              <p>Owner-signed limits, pause/revoke, Pimlico UserOperations, and Base Sepolia Shadow receipts.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="slide cta-slide" data-slide aria-label="Slide 10: Call to action">
+          <h1>Let GammaShield manage the risk<br />between decisions</h1>
+          <div class="cta">
+            <div>
+              <p class="eyebrow" style="color: var(--purple)">GAMMASHIELD</p>
+              <p>Protocol engineering, quantitative risk, and autonomous-agent development.</p>
+            </div>
+            <div class="contact">
+              <p class="eyebrow">CONNECT &amp; BUILD</p>
+              <div class="destination-grid">
+                <div class="destination">
+                  <p class="eyebrow" style="color: #aeb1ba">GITHUB REPOSITORY</p>
+                  <a href="https://github.com/jasonwong1025/GammaShield"><img src="github-qr.png" alt="QR code linking to the GammaShield GitHub repository" /></a>
+                  <a class="destination-link github-link" href="https://github.com/jasonwong1025/GammaShield">github.com/jasonwong1025/GammaShield</a>
+                </div>
+                <div class="destination">
+                  <p class="eyebrow" style="color: #aeb1ba">LIVE APP</p>
+                  <a href="https://gamma-shield.vercel.app/"><img src="vercel-qr.png" alt="QR code linking to the GammaShield live app" /></a>
+                  <a class="destination-link" href="https://gamma-shield.vercel.app/">gamma-shield.vercel.app</a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <span class="counter" aria-live="polite"></span>
+
+    <script>
+      const slides = [...document.querySelectorAll("[data-slide]")];
+      const counter = document.querySelector(".counter");
+      let current = Math.max(0, Math.min(slides.length - 1, Number(location.hash.slice(1)) - 1 || 0));
+
+      function show(index) {
+        current = (index + slides.length) % slides.length;
+        slides.forEach((slide, slideIndex) => slide.classList.toggle("is-active", slideIndex === current));
+        counter.textContent = `${current + 1} / ${slides.length}`;
+        history.replaceState(null, "", `#${current + 1}`);
+      }
+
+      window.addEventListener("keydown", (event) => {
+        if (["ArrowRight", "PageDown", " "].includes(event.key)) { event.preventDefault(); show(current + 1); }
+        if (["ArrowLeft", "PageUp"].includes(event.key)) { event.preventDefault(); show(current - 1); }
+        if (event.key === "Home") { event.preventDefault(); show(0); }
+        if (event.key === "End") { event.preventDefault(); show(slides.length - 1); }
+      });
+      window.addEventListener("hashchange", () => show(Number(location.hash.slice(1)) - 1 || 0));
+      show(current);
+    </script>
+  </body>
+</html>

@@ -182,11 +182,11 @@ const ALL_INTERVALS = INTERVAL_GROUPS.flatMap((g) => g.items);
 const POLL_MS = 15_000;
 
 const COLORS = {
-  calm: "#12a06e",
-  crit: "#d8433b",
-  blue: "#2b66d9",
-  muted: "#5d6a83",
-  edge: "#e3e8f0",
+  calm: "#34d399",
+  crit: "#f87171",
+  blue: "#2f8fef",
+  muted: "#8891a0",
+  edge: "#333e4e",
 };
 
 // ---------- data transforms ----------
@@ -269,7 +269,7 @@ export function PriceChart({
     if (flipRef.current !== null) {
       flipLineRef.current = main.createPriceLine({
         price: flipRef.current,
-        color: "#c8891a",
+        color: "#fbbf24",
         lineWidth: 1,
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
@@ -291,12 +291,12 @@ export function PriceChart({
         attributionLogo: true,
       },
       grid: {
-        vertLines: { color: "rgba(120, 128, 145, 0.14)" },
-        horzLines: { color: "rgba(120, 128, 145, 0.14)" },
+        vertLines: { color: "rgba(232, 236, 241, 0.06)" },
+        horzLines: { color: "rgba(232, 236, 241, 0.06)" },
       },
       crosshair: {
-        vertLine: { labelBackgroundColor: "#33415c" },
-        horzLine: { labelBackgroundColor: "#33415c" },
+        vertLine: { labelBackgroundColor: "#28323f" },
+        horzLine: { labelBackgroundColor: "#28323f" },
       },
       rightPriceScale: { borderColor: COLORS.edge },
       timeScale: { borderColor: COLORS.edge, timeVisible: true, secondsVisible: true },
@@ -372,8 +372,8 @@ export function PriceChart({
           return chart.addSeries(AreaSeries, {
             lineColor: COLORS.blue,
             lineWidth: 2,
-            topColor: "rgba(43, 102, 217, 0.30)",
-            bottomColor: "rgba(43, 102, 217, 0.02)",
+            topColor: "rgba(47, 143, 239, 0.30)",
+            bottomColor: "rgba(47, 143, 239, 0.02)",
           });
         case "baseline":
           return chart.addSeries(BaselineSeries, {
@@ -383,10 +383,10 @@ export function PriceChart({
             },
             topLineColor: COLORS.calm,
             bottomLineColor: COLORS.crit,
-            topFillColor1: "rgba(18, 160, 110, 0.30)",
-            topFillColor2: "rgba(18, 160, 110, 0.02)",
-            bottomFillColor1: "rgba(216, 67, 59, 0.02)",
-            bottomFillColor2: "rgba(216, 67, 59, 0.30)",
+            topFillColor1: "rgba(52, 211, 153, 0.30)",
+            topFillColor2: "rgba(52, 211, 153, 0.02)",
+            bottomFillColor1: "rgba(248, 113, 113, 0.02)",
+            bottomFillColor2: "rgba(248, 113, 113, 0.30)",
           });
         case "columns":
           return chart.addSeries(HistogramSeries, {});
@@ -412,7 +412,7 @@ export function PriceChart({
         rawRef.current.map((c) => ({
           time: c.time as UTCTimestamp,
           value: c.volume,
-          color: c.close >= c.open ? "rgba(18, 160, 110, 0.30)" : "rgba(216, 67, 59, 0.30)",
+          color: c.close >= c.open ? "rgba(52, 211, 153, 0.30)" : "rgba(248, 113, 113, 0.30)",
         })),
       );
       if (fit) {
@@ -612,7 +612,7 @@ export function PriceChart({
 
       <div ref={containerRef} className="mt-3 h-[320px] w-full" />
 
-      <div className="mt-1 flex items-center justify-between text-[10px] text-faint">
+      <div className="mt-1 flex items-center text-[10px] text-faint">
         <span>
           {interval.live
             ? `Building ${interval.label} candles live from the tick stream`
@@ -620,7 +620,6 @@ export function PriceChart({
               ? `Data: ${source === "binance" ? "Binance" : "Coinbase"} spot · ${interval.label}`
               : "Loading candles…"}
         </span>
-        <span>Chart: TradingView Lightweight Charts™</span>
       </div>
     </section>
   );

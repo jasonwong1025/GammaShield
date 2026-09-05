@@ -358,6 +358,7 @@ export async function getTradeQuote(
       expiryTs: targetTs,
       collateralUsd: filled * (isCall ? spot : strike),
       pricePerContractUsd: premiumPerContractUsd,
+      collateralToken: null, // only feeds engine.ts's what-if math, not a balance check
       maker: maker ?? "rfq",
       greeks,
     };

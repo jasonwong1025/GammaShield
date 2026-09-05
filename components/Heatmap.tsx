@@ -72,9 +72,9 @@ function buildOption(snap: AssetSnapshot): { option: EChartsOption; empty: boole
     animationDuration: 300,
     grid: { left: 8, right: 8, top: 8, bottom: 40, containLabel: true },
     tooltip: {
-      backgroundColor: "#ffffff",
-      borderColor: "#c9d2e0",
-      textStyle: { color: "#172136", fontSize: 12 },
+      backgroundColor: "#10141b",
+      borderColor: "#333e4e",
+      textStyle: { color: "#e8ecf1", fontSize: 12 },
       formatter: (params) => {
         const p = Array.isArray(params) ? params[0] : params;
         const [x, y, v] = p.value as [number, number, number];
@@ -84,9 +84,9 @@ function buildOption(snap: AssetSnapshot): { option: EChartsOption; empty: boole
     xAxis: {
       type: "category",
       data: expiries.map((e) => fmtExpiryDate(e)),
-      axisLine: { lineStyle: { color: "#e3e8f0" } },
+      axisLine: { lineStyle: { color: "#333e4e" } },
       axisTick: { show: false },
-      axisLabel: { color: "#8a94a8", fontSize: 10 },
+      axisLabel: { color: "#8891a0", fontSize: 10 },
       splitArea: { show: false },
     },
     yAxis: {
@@ -95,9 +95,9 @@ function buildOption(snap: AssetSnapshot): { option: EChartsOption; empty: boole
         const label = `$${fmtStrike(s)}`;
         return strikes.indexOf(s) === spotIdx ? `${label} ◂` : label;
       }),
-      axisLine: { lineStyle: { color: "#e3e8f0" } },
+      axisLine: { lineStyle: { color: "#333e4e" } },
       axisTick: { show: false },
-      axisLabel: { color: "#8a94a8", fontSize: 10 },
+      axisLabel: { color: "#8891a0", fontSize: 10 },
     },
     visualMap: {
       min: 0,
@@ -109,9 +109,9 @@ function buildOption(snap: AssetSnapshot): { option: EChartsOption; empty: boole
       itemHeight: 90,
       itemWidth: 10,
       text: ["crowded", "quiet"],
-      textStyle: { color: "#8a94a8", fontSize: 10 },
+      textStyle: { color: "#8891a0", fontSize: 10 },
       inRange: {
-        color: ["#eef3fb", "#c9dbf7", "#8fb4ee", "#4a86e8", "#1e4fae"],
+        color: ["#141a24", "#1c3a5e", "#1f5f9e", "#2f8fef", "#7dd3fc"],
       },
     },
     series: [
@@ -119,12 +119,12 @@ function buildOption(snap: AssetSnapshot): { option: EChartsOption; empty: boole
         type: "heatmap",
         data,
         itemStyle: {
-          borderColor: "#ffffff",
+          borderColor: "#0a0d12",
           borderWidth: 1.5,
           borderRadius: 3,
         },
         emphasis: {
-          itemStyle: { shadowBlur: 8, shadowColor: "rgba(43, 102, 217, 0.5)" },
+          itemStyle: { shadowBlur: 8, shadowColor: "rgba(47, 143, 239, 0.5)" },
         },
       },
     ],
