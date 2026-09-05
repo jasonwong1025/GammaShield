@@ -90,7 +90,14 @@ export function AgentMonitoringPanel({ account, mandateHash, network }: { accoun
     setDemoTriggering(true);
     setDemoError(null);
     try {
-      const response = await fetch("/api/demo/agent-tick", { method: "POST" });
+      // Naming the account lets the server skip walking the factory's
+      // AccountCreated logs, which costs up to 200 eth_getLogs calls per tick
+      // and is pure waste when the page already knows which account it wants.
+      const response = await fetch("/api/demo/agent-tick", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ account }),
+      });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(payload?.error ?? `demo tick ${response.status}`);
       const results = Array.isArray(payload?.results) ? payload.results : [];

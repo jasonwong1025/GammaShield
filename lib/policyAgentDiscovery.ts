@@ -16,7 +16,12 @@ const LOG_RANGE = 10;
 // from wherever this one left off, and the gap closes over several ticks
 // instead of one guaranteed-to-fail marathon.
 const MAX_BLOCKS_PER_SCAN = 2_000;
-const CHUNK_DELAY_MS = 200;
+// 200ms paced five eth_getLogs a second, and eth_getLogs is among the most
+// CU-expensive methods a provider bills — enough on its own to pass a
+// free tier's per-second throughput ceiling and start drawing 429s. 600ms
+// keeps the same scan within roughly a third of that rate; a scan takes
+// longer, which costs nothing, because the worker resumes where it left off.
+const CHUNK_DELAY_MS = 600;
 
 export type DiscoveryResult = { accounts: string[]; scannedToBlock: number };
 

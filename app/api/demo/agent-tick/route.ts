@@ -42,23 +42,42 @@ type Journal = {
   lastErrorAt: string | null;
 };
 
-export async function POST() {
+export async function POST(request: Request) {
   const allowed = process.env.NODE_ENV !== "production" || process.env.ALLOW_DEMO_AGENT_TRIGGER === "true";
   if (!allowed) {
     return Response.json({ error: "the demo agent trigger is not enabled on this deployment" }, { status: 403 });
   }
+  const account = await requestedAccount(request);
   let results: ShadowAgentResult[];
   try {
     const state = await readJournal();
-    const outcome = await runShadowAgents({ knownAccounts: state.accounts });
+
+    // Discovery is the expensive half of a tick: it walks the factory's
+    // AccountCreated logs ten blocks per eth_getLogs, up to 2,000 blocks — as
+    // many as 200 calls. The worker amortises that by resuming from its last
+    // scanned block; this route has to do the same, or every click rescans
+    // from the factory's deployment block and burns the provider's throughput
+    // budget for nothing. Where the journal cannot persist (serverless), it
+    // has no progress to resume from, so a caller that already knows which
+    // account it wants can name it and skip discovery altogether.
+    const resumeFrom = state.scannedToBlock == null ? undefined : state.scannedToBlock + 1;
+    const skipDiscovery = account !== null && resumeFrom === undefined;
+    const outcome = await runShadowAgents({
+      knownAccounts: account ? [account] : state.accounts,
+      discoveryFromBlock: skipDiscovery ? Number.MAX_SAFE_INTEGER : resumeFrom,
+    });
     results = outcome.results;
 
     // Best-effort only: Vercel's filesystem for this may be read-only or
     // reset on the next invocation, and either way must never turn a real,
     // successful tick into a reported failure.
     try {
-      state.accounts = outcome.accounts;
-      state.scannedToBlock = outcome.scannedToBlock;
+      // A skipped scan reports a `scannedToBlock` past the chain tip, which
+      // would tell the worker it had already indexed blocks nobody read.
+      if (!skipDiscovery) {
+        state.accounts = outcome.accounts;
+        state.scannedToBlock = outcome.scannedToBlock;
+      }
       state.lastErrorAt = null;
       for (const result of results) applyResult(state, result);
       await writeJournal(state);
@@ -70,6 +89,15 @@ export async function POST() {
     return Response.json({ error: error instanceof Error ? error.message : "shadow agent tick failed" }, { status: 502 });
   }
   return Response.json({ results }, { headers: { "Cache-Control": "no-store" } });
+}
+
+/** The policy account the caller is watching, when it named one. */
+async function requestedAccount(request: Request): Promise<string | null> {
+  if (!(request.headers.get("content-type") ?? "").includes("application/json")) return null;
+  const body: unknown = await request.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  const value = (body as { account?: unknown }).account;
+  return typeof value === "string" && /^0x[0-9a-fA-F]{40}$/.test(value) ? value : null;
 }
 
 function applyResult(state: Journal, result: ShadowAgentResult) {
