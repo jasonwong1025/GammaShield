@@ -121,7 +121,17 @@ function deploymentBlock() {
 }
 
 function validContracts(value: number): number {
-  if (!Number.isFinite(value) || value < 0.001 || value > MAX_CONTRACTS || Math.round(value * 1e6) !== value * 1e6) {
+  // Float multiplication itself introduces error at this scale (0.125786 * 1e6
+  // === 125786.00000000001), so an exact equality check rejects perfectly
+  // valid 6-decimal amounts. Tolerate that representation error while still
+  // catching a genuine 7th decimal place.
+  const scaled = value * 1e6;
+  if (
+    !Number.isFinite(value) ||
+    value < 0.001 ||
+    value > MAX_CONTRACTS ||
+    Math.abs(Math.round(scaled) - scaled) > 1e-6
+  ) {
     throw new Error(`contracts must be from 0.001 to ${MAX_CONTRACTS} with up to 6 decimal places`);
   }
   return value;
@@ -140,6 +150,12 @@ export async function getShadowQuote(
   period: number = 7,
   fresh = false,
   maxPremiumUsd?: number,
+  // A book-row click carries its exact listed strike/expiry through here so
+  // the shadow mirror prices the same order, not just the nearest period —
+  // ShadowOptionBook.fillShadow takes an arbitrary strike/expiry, it was
+  // only this function that used to collapse everything onto a period.
+  strike?: number,
+  expiry?: number,
 ): Promise<ShadowQuote> {
   if (!isOptionsAsset(asset as OptionsAsset)) throw new Error("only BTC and ETH have a live Thetanuts book");
   if (!ethers.isAddress(buyer)) throw new Error("invalid buyer address");
@@ -148,6 +164,8 @@ export async function getShadowQuote(
   const option = await getTradeQuote(asset as OptionsAsset, side, contractsCount, validPeriod(period), {
     fresh,
     maxPremiumUsd,
+    strike,
+    expiry,
   });
   if (option.contracts <= 0 || option.totalCostUsd <= 0) throw new Error("no fillable shadow quote is available");
 

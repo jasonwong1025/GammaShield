@@ -11,7 +11,7 @@ import { RiskView } from "./RiskView";
 import { BookCard } from "./BookFeed";
 import { CopilotWidget } from "./CopilotWidget";
 import { AgentView } from "./AgentView";
-import { ExecutionNetworkProvider, useExecutionNetwork } from "./ExecutionNetworkProvider";
+import { ExecutionNetworkProvider } from "./ExecutionNetworkProvider";
 import { ALL_ASSETS, isOptionsAsset, type Asset } from "@/lib/assets";
 
 const TRADE_PANEL_ANCHOR_ID = "trade-panel-anchor";
@@ -186,8 +186,7 @@ export function Dashboard() {
   );
 }
 
-// Owns the "buy this exact row" flow: needs useExecutionNetwork, which only
-// works below <ExecutionNetworkProvider> — one level under Dashboard itself.
+// Owns the "buy this exact row" flow.
 function TradingArea({
   snap,
   a,
@@ -203,7 +202,6 @@ function TradingArea({
   livePrice: number;
   pendingRow?: FeedRow | null;
 }) {
-  const { setNetwork } = useExecutionNetwork();
   const [orderIntent, setOrderIntent] = useState<OrderIntent | null>(null);
 
   // TradePanel remounts per-asset (key={asset}) and drops its own state, but
@@ -229,14 +227,14 @@ function TradingArea({
 
   const onBuyRow = useCallback(
     (row: FeedRow) => {
-      // The OptionBook feed only ever exists on Base mainnet — force the
-      // execution toggle there regardless of what it was on, so the panel
-      // renders the real buy button rather than the Sepolia mirror.
-      setNetwork("mainnet");
+      // The row itself is always a real mainnet listing, but ShadowOptionBook
+      // takes an arbitrary strike/expiry (lib/shadow.ts's getShadowQuote), so
+      // it can mirror this exact row too — leave whichever network the user
+      // already has selected alone instead of forcing mainnet.
       setOrderIntent(buildOrderIntent(row));
       document.getElementById(TRADE_PANEL_ANCHOR_ID)?.scrollIntoView({ behavior: "smooth", block: "start" });
     },
-    [setNetwork],
+    [],
   );
 
   // A Copilot hedge suggestion routes here as a real book row (Dashboard
@@ -247,7 +245,6 @@ function TradingArea({
   const [appliedPendingRow, setAppliedPendingRow] = useState<FeedRow | null>(null);
   if (pendingRow && pendingRow !== appliedPendingRow) {
     setAppliedPendingRow(pendingRow);
-    setNetwork("mainnet");
     setOrderIntent(buildOrderIntent(pendingRow));
   }
 

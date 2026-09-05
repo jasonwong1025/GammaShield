@@ -2,8 +2,8 @@
 
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useAccount, useBalance, useReadContracts } from "wagmi";
-import { base } from "wagmi/chains";
-import { zeroAddress, type Address } from "viem";
+import { base, baseSepolia } from "wagmi/chains";
+import { isAddress, zeroAddress, type Address } from "viem";
 import type { FeedRow } from "@/lib/snapshot";
 import type { AssetSnapshot, StrikeGex } from "@/lib/engine";
 import type { Asset } from "@/lib/assets";
@@ -28,6 +28,10 @@ import { POSITION_CHANGED_EVENT, type PositionChangeDetail } from "@/lib/positio
 type BookCardTab = "book" | "expiries" | "positions";
 
 const ALL_TABS: readonly BookCardTab[] = ["book", "expiries", "positions"];
+
+const shadowUsdcFromEnv = process.env.NEXT_PUBLIC_BASE_SEPOLIA_SHADOW_USDC_ADDRESS;
+const SHADOW_USDC_ADDRESS: Address | undefined =
+  shadowUsdcFromEnv && isAddress(shadowUsdcFromEnv) ? shadowUsdcFromEnv : undefined;
 
 export function BookCard({
   rows,
@@ -84,19 +88,25 @@ export function BookCard({
   // wrapped variant (aBasUSDC/aBasWETH/aBascbBTC), not the plain
   // USDC/WETH/cbBTC RFQs use, so guessing a fixed token gets it wrong. Batch
   // one multicall for the small set of distinct tokens actually resting in
-  // this asset's book, rather than a read per row. Always against Base
-  // mainnet: the OptionBook feed itself only ever exists there, regardless
-  // of which network the wallet-execution toggle is on.
+  // this asset's book, rather than a read per row.
+  //
+  // Row clicks can now fill against either network (ShadowOptionBook mirrors
+  // this exact strike/expiry, see lib/shadow.ts), so the check has to follow
+  // whichever network the execution toggle is on rather than hardcoding Base
+  // mainnet — a shadow-mode wallet with no mainnet ETH would otherwise always
+  // read as "insufficient", even with plenty of Sepolia test funds.
   const { address: walletAddress } = useAccount();
-  const distinctTokens = onBuyRow
-    ? [
-        ...new Map(
-          rows
-            .filter((r) => r.collateralToken)
-            .map((r) => [r.collateralToken!.address.toLowerCase(), r.collateralToken!] as const),
-        ).values(),
-      ]
-    : [];
+  const executionChainId = network === "mainnet" ? base.id : baseSepolia.id;
+  const distinctTokens =
+    onBuyRow && network === "mainnet"
+      ? [
+          ...new Map(
+            rows
+              .filter((r) => r.collateralToken)
+              .map((r) => [r.collateralToken!.address.toLowerCase(), r.collateralToken!] as const),
+          ).values(),
+        ]
+      : [];
   const { data: tokenBalanceResults } = useReadContracts({
     contracts: distinctTokens.map((t) => ({
       address: t.address as Address,
@@ -107,9 +117,23 @@ export function BookCard({
     })),
     query: { enabled: Boolean(onBuyRow && walletAddress && distinctTokens.length) },
   });
+  // Shadow mode always settles in the one fixed test-USDC token regardless of
+  // side (lib/shadow.ts's fillShadow), unlike mainnet's per-side collateral.
+  const { data: shadowUsdcBalanceData } = useReadContracts({
+    contracts: [
+      {
+        address: (SHADOW_USDC_ADDRESS ?? zeroAddress) as Address,
+        abi: erc20Abi,
+        functionName: "balanceOf" as const,
+        args: [walletAddress ?? zeroAddress] as const,
+        chainId: baseSepolia.id,
+      },
+    ],
+    query: { enabled: Boolean(onBuyRow && walletAddress && network === "sepolia" && SHADOW_USDC_ADDRESS) },
+  });
   const { data: ethBalanceData } = useBalance({
     address: walletAddress,
-    chainId: base.id,
+    chainId: executionChainId,
     query: { enabled: Boolean(onBuyRow && walletAddress) },
   });
   const tokenBalances = new Map<string, number>(
@@ -119,6 +143,9 @@ export function BookCard({
       return [t.address.toLowerCase(), value];
     }),
   );
+  const shadowUsdcRaw = shadowUsdcBalanceData?.[0];
+  const shadowUsdcBalance =
+    shadowUsdcRaw?.status === "success" ? Number(shadowUsdcRaw.result as bigint) / 1e6 : NaN;
   const ethBalance = ethBalanceData ? Number(ethBalanceData.value) / 1e18 : null;
 
   // The same 1-contract-or-less size TradePanel defaults to for a fresh
@@ -129,8 +156,15 @@ export function BookCard({
   // one token the user checked (often not the one actually short) is fine.
   const rowInsufficientReason = (row: FeedRow): string | null => {
     if (!walletAddress) return null;
-    if (ethBalance != null && ethBalance < 0.0003) return "Insufficient ETH for gas";
-    if (row.pricePerContractUsd == null || !row.collateralToken) return null;
+    if (ethBalance != null && ethBalance < 0.0003) {
+      return network === "mainnet" ? "Insufficient ETH for gas" : "Insufficient Sepolia ETH for gas";
+    }
+    if (row.pricePerContractUsd == null) return null;
+    if (network === "sepolia") {
+      if (Number.isNaN(shadowUsdcBalance) || shadowUsdcBalance >= row.pricePerContractUsd) return null;
+      return `Insufficient USDC balance — need ~${row.pricePerContractUsd.toPrecision(3)}, have ${shadowUsdcBalance.toPrecision(3)}`;
+    }
+    if (!row.collateralToken) return null;
     const requiredToken = row.isCall ? row.pricePerContractUsd / Math.max(spot, 1) : row.pricePerContractUsd;
     const balance = tokenBalances.get(row.collateralToken.address.toLowerCase());
     if (balance == null || Number.isNaN(balance) || balance >= requiredToken) return null;

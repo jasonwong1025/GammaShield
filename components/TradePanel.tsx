@@ -481,6 +481,10 @@ export function TradePanel({
       const from = await ensureChain(baseSepolia.id);
       setShadowTx({ step: "preparing" });
       const params = new URLSearchParams({ asset, buyer: from, side, contracts: amountStr, period: String(period) });
+      if (orderLocked) {
+        params.set("strike", String(orderIntent!.strike));
+        params.set("expiry", String(orderIntent!.expiryTs));
+      }
       const res = await fetch(`/api/shadow/quote?${params}`, { cache: "no-store" });
       const shadowQuote = await res.json();
       if (!res.ok) throw new Error(shadowQuote.error ?? `shadow quote ${res.status}`);
