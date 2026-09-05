@@ -327,11 +327,17 @@ contract MandateAccount {
             }
         }
 
-        if (!valid) return SIG_VALIDATION_FAILED;
+        // ERC-4337 requires the prefund to be paid regardless of whether
+        // validation passes, so the bundler can price a bad signature without
+        // eating the gas itself. Paying it AFTER an early return on `!valid`
+        // (the previous order here) meant any failed business-logic check
+        // surfaced as the EntryPoint's generic "AA21 didn't pay prefund"
+        // instead of a real reason, and looked identical to being unfunded.
         if (missingAccountFunds > 0) {
             (bool paid,) = payable(msg.sender).call{value: missingAccountFunds}("");
             paid;
         }
+        if (!valid) return SIG_VALIDATION_FAILED;
         return uint256(validUntil) << 160;
     }
 

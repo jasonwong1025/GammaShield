@@ -38,7 +38,7 @@ export async function submitPolicyUserOperation({ chainId, provider, agent, send
 
 export async function getPolicyUserOperationReceipt(chainId: 8453 | 84532, pimlicoApiKey: string, userOpHash: string) {
   if (!ethers.isHexString(userOpHash, 32)) throw new Error("invalid UserOperation hash");
-  return pimlicoRpc<unknown>(`https://api.pimlico.io/v2/${chainId}/rpc?apikey=${encodeURIComponent(pimlicoApiKey)}`, "pimlico_getUserOperationReceipt", [userOpHash]);
+  return pimlicoRpc<unknown>(`https://api.pimlico.io/v2/${chainId}/rpc?apikey=${encodeURIComponent(pimlicoApiKey)}`, "eth_getUserOperationReceipt", [userOpHash]);
 }
 
 async function signUserOperation(entryPoint: ethers.Contract, agent: ethers.Wallet, sender: string, nonce: bigint, callData: string, gas: Gas, maxFeePerGas: bigint, maxPriorityFeePerGas: bigint): Promise<UserOperation> {

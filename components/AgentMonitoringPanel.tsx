@@ -70,11 +70,16 @@ export function AgentMonitoringPanel({ account, mandateHash, network }: { accoun
   }, [account, network]);
 
   // DEMO ONLY — runs one manual assessment tick against the Base Sepolia
-  // shadow book instead of waiting on the polling worker, then re-reads the
-  // same status endpoint the panel already polls. Kept independent of the
-  // polling effect above rather than sharing its callback, since this only
-  // ever runs from a click, never inside an effect. Delete alongside
-  // app/api/demo/agent-tick/route.ts after the presentation.
+  // shadow book instead of waiting on the polling worker. Renders straight
+  // from this request's own response rather than re-polling /api/agent-status
+  // afterward: that endpoint reads a state file written by the worker script,
+  // and on a serverless deployment (Vercel) a later request has no guarantee
+  // of landing on the same instance or disk, so a second fetch here could
+  // show stale or empty data even though this tick genuinely ran. Kept
+  // independent of the polling effect above rather than sharing its
+  // callback, since this only ever runs from a click, never inside an
+  // effect. Delete alongside app/api/demo/agent-tick/route.ts after the
+  // presentation.
   const triggerDemoTick = async () => {
     setDemoTriggering(true);
     setDemoError(null);
@@ -82,8 +87,27 @@ export function AgentMonitoringPanel({ account, mandateHash, network }: { accoun
       const response = await fetch("/api/demo/agent-tick", { method: "POST" });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(payload?.error ?? `demo tick ${response.status}`);
-      const statusResponse = await fetch(`/api/agent-status?network=${network}&account=${account}`, { cache: "no-store" });
-      if (statusResponse.ok) setAgent(await statusResponse.json() as AgentStatus);
+      const results = Array.isArray(payload?.results) ? payload.results : [];
+      const mine = results.find((entry: { account?: string }) => entry.account?.toLowerCase() === account.toLowerCase());
+      if (mine) {
+        setAgent((previous) => ({
+          dryRun: previous?.dryRun ?? false,
+          command: previous?.command ?? "npm run agent:shadow",
+          worker: "checking",
+          latest: {
+            outcome: mine.outcome,
+            detail: mine.detail ?? null,
+            score: mine.score ?? null,
+            threshold: mine.threshold ?? null,
+            checkedAt: new Date().toISOString(),
+            userOpHash: mine.userOpHash ?? null,
+            health: mine.health ?? null,
+            decision: mine.decision ?? null,
+          },
+          recent: previous?.recent ?? null,
+        }));
+      }
+      setAgentError(false);
     } catch (error) {
       setDemoError(error instanceof Error ? error.message : "demo tick failed");
     } finally {
