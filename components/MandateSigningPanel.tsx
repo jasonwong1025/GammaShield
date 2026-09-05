@@ -441,7 +441,7 @@ export function MandateSigningPanel({
 
   return (
     <section className="py-5" aria-label="Set agent limits">
-      <StepHeader step={2} state={active ? "done" : "current"} title={collapsed ? "Limits in force" : "Set the agent's limits"}>
+      <StepHeader title={collapsed ? "Limits in force" : "Set the agent's limits"}>
         {/* Settled terms do not need the explanation of what setting them
             means; it belongs on the step you are actually working through. */}
         {collapsed ? undefined : "The agent may only take the actions you switch on, only within these limits, and only from this account. You sign them; it cannot change them, and you can revoke before any action."}
@@ -645,7 +645,7 @@ export function MandateSigningPanel({
       {active && (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-edge pt-3">
           <span className="text-[12px] text-muted">
-            {control?.[0] ? "Paused — it cannot act" : "Stop it acting"}
+            {control?.[0] ? "Paused — it cannot act" : "Pause is temporary; revoke is permanent"}
             {isReadingControl && <span className="ml-1 text-faint">checking state…</span>}
           </span>
           {controlError ? (

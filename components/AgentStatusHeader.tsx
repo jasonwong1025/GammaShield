@@ -53,15 +53,14 @@ export function AgentStatusHeader({
   const expired = expiresAt != null && now != null && expiresAt <= now;
   const state = control?.[1] ? "revoked" : control?.[0] ? "paused" : expired ? "expired" : "active";
 
-  // Two lines: what it is doing, and what it has left to do it with. The
-  // signed detail behind those lives in the limits summary below, where it is
-  // read once at setup rather than on every visit.
+  // This reads only the policy account. Monitoring is reported separately by
+  // the worker panel below, so this must never imply that the agent is awake.
   return (
     <div className="border-b border-edge p-5">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
         <StateHeading state={state} />
         <span className="text-[12px] text-faint">
-          {network === "mainnet" ? "Base mainnet" : "Base Sepolia"}
+          {network === "mainnet" ? "Base mainnet" : "Base Sepolia · test funds"}
           {!expired && expiresAt != null && now != null && <> · expires in {untilText(expiresAt - now)}</>}
         </span>
       </div>
@@ -69,8 +68,8 @@ export function AgentStatusHeader({
       <p className="mt-2 text-[13px] text-muted">
         {cap != null && remaining != null ? (
           <>
-            <span className="num text-[15px] font-semibold text-fg">{fmtUsd(remaining, false, 2)}</span> left of the{" "}
-            {fmtUsd(cap, false, 2)} it may lose
+            Risk budget: <span className="num text-[15px] font-semibold text-fg">{fmtUsd(remaining, false, 2)}</span> remaining of{" "}
+            {fmtUsd(cap, false, 2)} maximum premium
             {spent != null && spent > 0 && <> · {fmtUsd(spent, false, 2)} spent</>}
           </>
         ) : (
@@ -91,14 +90,10 @@ export function AgentStatusHeader({
 
 function StateHeading({ state }: { state: string }) {
   if (state === "active") {
-    // "Live", not "watching": this reads the chain, and whether anything is
-    // actually checking depends on the off-chain worker reported below. A
-    // header claiming it is watching over "checks have stopped" would be a
-    // contradiction the user has to resolve themselves.
     return (
       <h3 className="flex items-center gap-2 text-[15px] font-bold tracking-[-0.01em] text-fg">
-        <span className="live-dot inline-block size-2 shrink-0 rounded-full bg-calm" />
-        Agent is live
+        <span className="inline-block size-2 shrink-0 rounded-full bg-calm" />
+        Policy is active
       </h3>
     );
   }
