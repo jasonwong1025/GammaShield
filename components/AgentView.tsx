@@ -16,14 +16,9 @@ type Props = {
 
 export function AgentView({ snap, feed, asset, live, spot }: Props) {
   return (
-    <div className="agent-workspace grid grid-cols-1 items-start gap-px bg-edge xl:grid-cols-[5fr_7fr]">
-      <div className="flex min-w-0 flex-col gap-px">
-        <PolicyAccountPanel asset={asset} spot={spot} />
-      </div>
-
-      <div className="min-w-0">
-        <BookCard rows={feed} snap={snap} asset={asset} live={live} spot={spot} tabs={["positions"]} />
-      </div>
+    <div className="agent-workspace flex min-w-0 flex-col gap-px bg-edge">
+      <PolicyAccountPanel asset={asset} spot={spot} />
+      <BookCard rows={feed} snap={snap} asset={asset} live={live} spot={spot} tabs={["positions"]} />
     </div>
   );
 }

@@ -27,13 +27,11 @@ export function AgentStatusHeader({
   mandateHash,
   network,
   chainId,
-  onManagePolicy,
 }: {
   account: Address;
   mandateHash: Hex;
   network: ExecutionNetwork;
   chainId: 8453 | 84532;
-  onManagePolicy?: () => void;
 }) {
   const { data: mandate } = useReadContract({ address: account, abi: mandateAccountAbi, functionName: "getMandate", args: [mandateHash], chainId });
   const { data: control } = useReadContract({ address: account, abi: mandateAccountAbi, functionName: "controls", args: [mandateHash], chainId });
@@ -61,12 +59,9 @@ export function AgentStatusHeader({
     <div className="border-b border-edge p-5">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
         <StateHeading state={state} />
-        <span className="flex items-center gap-3 text-[12px] text-faint">
-          <span>
-            {network === "mainnet" ? "Base mainnet" : "Base Sepolia · test funds"}
-            {!expired && expiresAt != null && now != null && <> · expires in {untilText(expiresAt - now)}</>}
-          </span>
-          {onManagePolicy && <button type="button" onClick={onManagePolicy} className="font-semibold text-blue hover:underline">Manage policy</button>}
+        <span className="text-[12px] text-faint">
+          {network === "mainnet" ? "Base mainnet" : "Base Sepolia"}
+          {!expired && expiresAt != null && now != null && <> · expires in {untilText(expiresAt - now)}</>}
         </span>
       </div>
 
