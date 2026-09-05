@@ -175,6 +175,7 @@ body {
 .agent-workspace .card {
   border: 0;
   border-radius: 0;
+  align-self: start;
 }
 .agent-disclosure {
   display: flex;
@@ -192,6 +193,12 @@ body {
 }
 .agent-disclosure[aria-expanded="true"] {
   border-bottom: 1px solid var(--edge);
+}
+.agent-disclosure svg {
+  transition: transform 150ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.agent-disclosure[aria-expanded="true"] svg {
+  transform: rotate(180deg);
 }
 
 /* The monitoring verdict is the one live surface on the agent page. A slow
