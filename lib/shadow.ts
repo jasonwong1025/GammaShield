@@ -114,6 +114,16 @@ function rpcUrl() {
   return value;
 }
 
+// The receipt tx-hash scan below queries a 10,000-block eth_getLogs range at a
+// time. A metered provider's free tier can cap that far tighter than its
+// normal per-call rate limit (Alchemy's free plan allows only a 10-block
+// eth_getLogs range, which silently zeroes out every receipt link) — so this
+// non-critical, already-retried lookup gets its own RPC rather than sharing
+// the primary one, which stays on whatever the app is generally configured to use.
+function logsRpcUrl() {
+  return process.env.SHADOW_LOGS_RPC_URL || "https://sepolia.base.org";
+}
+
 function deploymentBlock() {
   const value = process.env.SHADOW_DEPLOYMENT_BLOCK;
   if (!value || !/^\d+$/.test(value)) throw new Error("SHADOW_DEPLOYMENT_BLOCK is not configured");
@@ -272,7 +282,8 @@ async function readShadowReceiptBookUncached(): Promise<UnmarkedShadowPosition[]
   const entries = await Promise.all(Array.from({ length: count }, (_, id) => book.positions(id)));
   const event = book.interface.getEvent("ShadowOrderFilled");
   if (!event) throw new Error("Shadow fill event is unavailable");
-  const latest = await provider.getBlockNumber();
+  const logsProvider = new ethers.JsonRpcProvider(logsRpcUrl());
+  const latest = await logsProvider.getBlockNumber();
   // Best-effort: this only resolves the fill tx hash for a block-explorer link.
   // Some RPC plans cap eth_getLogs at a far smaller range than the 10,000-block
   // chunk below (or rate-limit it outright) — a scan failure must not 502 the
@@ -280,7 +291,7 @@ async function readShadowReceiptBookUncached(): Promise<UnmarkedShadowPosition[]
   const txHashes = new Map<number, string>();
   try {
     for (let fromBlock = deploymentBlock(); fromBlock <= latest; fromBlock += 10_000) {
-      const logs = await withRpcRetry(() => provider.getLogs({
+      const logs = await withRpcRetry(() => logsProvider.getLogs({
         address: config.optionBook,
         topics: [event.topicHash],
         fromBlock,
