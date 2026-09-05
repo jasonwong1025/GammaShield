@@ -14,8 +14,9 @@ import { useExecutionNetwork } from "./ExecutionNetworkProvider";
 import { policyNetwork } from "@/lib/policyNetwork";
 import { ensureWalletChain, walletActionError } from "@/lib/walletChain";
 import type { ExecutionNetwork } from "@/lib/explorer";
+import type { OptionsAsset } from "@/lib/assets";
 
-export function PolicyAccountPanel({ spot, onAgentActive }: { spot: number; onAgentActive?: (agent: { account: Address; mandateHash: Hex; network: ExecutionNetwork } | null) => void }) {
+export function PolicyAccountPanel({ asset, spot, onAgentActive }: { asset: OptionsAsset; spot: number; onAgentActive?: (agent: { account: Address; mandateHash: Hex; network: ExecutionNetwork } | null) => void }) {
   const { network } = useExecutionNetwork();
   const policy = policyNetwork(network);
   const { address, connector, isConnected } = useAccount();
@@ -137,7 +138,7 @@ export function PolicyAccountPanel({ spot, onAgentActive }: { spot: number; onAg
             </>
           )}
           {isConfirming && transactionHash && <p className="rounded-lg border border-edge bg-panel2 p-3 text-[12px] text-muted">Deployment transaction submitted; awaiting Base confirmation. <ExplorerLink network={network} resource="tx" value={transactionHash} className="underline">View transaction</ExplorerLink></p>}
-          {deployed && accountAddress && <MandateSigningPanel key={accountAddress} owner={address} account={accountAddress} network={network} spot={spot} />}
+          {deployed && accountAddress && <MandateSigningPanel key={accountAddress} owner={address} account={accountAddress} network={network} asset={asset} spot={spot} />}
           {deployed && accountAddress && <PolicyFundingPanel account={accountAddress} network={network} collateral={policy.collateral} collateralLabel={policy.collateralLabel} chainId={policy.chainId} />}
         </>
       )}

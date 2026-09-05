@@ -85,17 +85,20 @@ export function MandateSigningPanel({
   owner,
   account,
   network,
+  asset,
   spot,
 }: {
   owner: Address;
   account: Address;
   network: ExecutionNetwork;
+  /** Whichever asset the dashboard is currently showing — the mandate always
+   *  targets that one; there is nothing here for the user to pick. */
+  asset: OptionsAsset;
   spot: number;
 }) {
   const policy = policyNetwork(network);
   // The two money fields keep their raw text here so a half-typed number stays
   // on screen; `limits` is the parsed view the rest of the panel works from.
-  const [asset, setAsset] = useState<OptionsAsset>(DEFAULT_AGENT_LIMITS.asset);
   const [actions, setActions] = useState<Record<AgentAction, boolean>>(DEFAULT_AGENT_LIMITS.actions);
   const [maxLossText, setMaxLossText] = useState(String(DEFAULT_AGENT_LIMITS.maxLossUsd));
   const [maxTradeText, setMaxTradeText] = useState(String(DEFAULT_AGENT_LIMITS.maxTradeNotionalUsd));
@@ -410,7 +413,6 @@ export function MandateSigningPanel({
   };
 
   const applyDraft = (value: AiMandateDraft) => {
-    setAsset(value.asset);
     setMaxLossText(String(value.maxLossUsd));
     setMaxTradeText(String(value.maxTradeNotionalUsd));
     setTiming(value.timing);
@@ -436,7 +438,11 @@ export function MandateSigningPanel({
       ) : (
         <>
           <div className="mt-3 grid gap-3 sm:grid-cols-3">
-            <Select label="Asset" value={asset} onChange={(value) => { setAsset(value as OptionsAsset); setSigned(null); }} options={["BTC", "ETH"]} />
+            <div className="field block p-2.5 text-[11px] text-faint">
+              <span className="block">Asset</span>
+              <span className="mt-1 block text-[13px] font-semibold text-fg">{asset}</span>
+              <span className="mt-1 block text-[10px] leading-snug">whichever asset the dashboard is showing now</span>
+            </div>
             <MoneyField
               label="Maximum loss"
               hint="total premium the agent may put at risk"
@@ -813,8 +819,4 @@ function MoneyField({ label, hint, value, onChange }: { label: string; hint: str
       <span className="mt-1 block text-[10px] leading-snug">{hint}</span>
     </label>
   );
-}
-
-function Select({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) {
-  return <label className="field block p-2.5 text-[11px] text-faint"><span className="block">{label}</span><select value={value} onChange={(event) => onChange(event.target.value)} className="mt-1 w-full bg-transparent text-[13px] font-semibold text-fg outline-none">{options.map((option) => <option key={option} value={option}>{option.toUpperCase()}</option>)}</select></label>;
 }

@@ -29,7 +29,7 @@ export function AgentView({ snap, feed, asset, live, spot }: Props) {
           it's doing right below that — same column, since both are about
           the agent's own setup rather than the market it trades. */}
       <div className="flex flex-col gap-px min-w-0">
-        <PolicyAccountPanel spot={spot} onAgentActive={setActiveAgent} />
+        <PolicyAccountPanel asset={asset} spot={spot} onAgentActive={setActiveAgent} />
         {activeAgent && (
           <section className="card p-5" aria-label="Agent activity">
             <AgentMonitoringPanel account={activeAgent.account} mandateHash={activeAgent.mandateHash} network={activeAgent.network} />
