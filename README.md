@@ -17,7 +17,8 @@
 > GammaShield is a hackathon project for research and demonstration. It is not investment advice. Base Sepolia Shadow positions are GammaShield test receipts, not live Thetanuts positions.
 
 - **Deployed Project:** [https://gamma-shield.vercel.app/](https://gamma-shield.vercel.app/)
-- **Live Demo:** [https://www.youtube.com/watch?v=M2NnxWrjPRQ](https://www.youtube.com/watch?v=M2NnxWrjPRQ)
+- **Live Demo:** [https://youtu.be/eoeE9Dvcnls](https://youtu.be/eoeE9Dvcnls)
+- **Pitch Deck:** [https://gammashield-pitch-deck.ryanlau1220.workers.dev/](https://gammashield-pitch-deck.ryanlau1220.workers.dev/)
 - **Submission:** [https://devfolio.co/projects/gammashield-f8d8](https://devfolio.co/projects/gammashield-f8d8)
 
 ## Team & Contributions
