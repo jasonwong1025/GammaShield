@@ -51,7 +51,6 @@ export function PolicyAccountPanel({ asset, spot }: { asset: OptionsAsset; spot:
   });
   const activeMandate = activeMandateHash && activeMandateHash !== zeroHash ? activeMandateHash : null;
   const accountStateUnknown = Boolean(bytecodeError);
-  const [accountDetailsOpen, setAccountDetailsOpen] = useState(false);
   const [policyDetailsOpen, setPolicyDetailsOpen] = useState(false);
 
   const deploymentMessage = deploymentFailed
@@ -84,14 +83,27 @@ export function PolicyAccountPanel({ asset, spot }: { asset: OptionsAsset; spot:
           so it sits above the setup it came from rather than below it. */}
       {live && (
         <section className="agent-surface" aria-label="Agent status">
-          <AgentStatusHeader account={accountAddress} mandateHash={activeMandate} network={network} chainId={policy.chainId} onManagePolicy={() => setPolicyDetailsOpen(true)} />
+          <AgentStatusHeader account={accountAddress} mandateHash={activeMandate} network={network} chainId={policy.chainId} />
           <div className="p-5">
             <AgentMonitoringPanel account={accountAddress} mandateHash={activeMandate} network={network} />
           </div>
         </section>
       )}
 
-      {(!live || policyDetailsOpen) && <section className="agent-surface" aria-label="Policy account setup">
+      {live && (
+        <button
+          type="button"
+          className="agent-disclosure"
+          aria-expanded={policyDetailsOpen}
+          aria-controls="policy-controls"
+          onClick={() => setPolicyDetailsOpen((open) => !open)}
+        >
+          <span>Policy controls</span>
+          <span aria-hidden>{policyDetailsOpen ? "⌃" : "⌄"}</span>
+        </button>
+      )}
+
+      {(!live || policyDetailsOpen) && <section id={live ? "policy-controls" : undefined} className="agent-surface" aria-label="Policy account setup">
         {!policy.factory || !policy.agent ? (
           <p className="m-5 rounded-lg border border-crit/30 bg-crit/10 p-3 text-[12px] text-crit">The {network === "mainnet" ? "Base-mainnet" : "Base Sepolia"} policy-account factory or agent is not configured.</p>
         ) : !isConnected || !address ? (
@@ -101,13 +113,11 @@ export function PolicyAccountPanel({ asset, spot }: { asset: OptionsAsset; spot:
           </div>
         ) : (
           <div className="rowlist px-5">
-            {/* Completed account setup collapses to one quiet row. */}
-            {deployed && accountAddress && !accountDetailsOpen ? (
+            {deployed && accountAddress ? (
               <div className="flex items-center justify-between gap-4 py-3.5">
                 <span className="text-[13px] font-semibold text-fg">Policy account</span>
                 <span className="flex shrink-0 items-center gap-3 text-[12px]">
                   <ExplorerLink network={network} resource="address" value={accountAddress} className="font-mono text-fg hover:text-blue">{shortAddr(accountAddress)}</ExplorerLink>
-                  <button type="button" onClick={() => setAccountDetailsOpen(true)} className="font-semibold text-blue hover:underline">Details</button>
                 </span>
               </div>
             ) : (
@@ -129,16 +139,9 @@ export function PolicyAccountPanel({ asset, spot }: { asset: OptionsAsset; spot:
                 {accountStateUnknown && <p className="mt-2 text-[12px] text-crit">Could not verify whether this policy account is deployed. Reload or restore the Base RPC connection before submitting another deployment.</p>}
 
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  {deployed && accountAddress ? (
-                    <>
-                      <ExplorerLink network={network} resource="address" value={accountAddress} className="h-9 rounded-lg bg-panel2 px-3 text-[12px] font-semibold text-blue hover:bg-panel3">View account ↗</ExplorerLink>
-                      <button type="button" onClick={() => setAccountDetailsOpen(false)} className="h-9 rounded-lg px-3 text-[12px] font-semibold text-muted hover:bg-panel2">Hide details</button>
-                    </>
-                  ) : (
-                    <button type="button" onClick={() => void createAccount()} disabled={busy || isDeriving || isCheckingDeployment || !canDerive || accountStateUnknown} className="h-9 rounded-lg bg-blue px-3 text-[12px] font-semibold text-white hover:brightness-110 disabled:cursor-wait disabled:opacity-60">
-                      {isSwitching ? "Switching network…" : isSubmitting ? "Confirm in wallet…" : isConfirming ? "Deploying account…" : "Create policy account"}
-                    </button>
-                  )}
+                  <button type="button" onClick={() => void createAccount()} disabled={busy || isDeriving || isCheckingDeployment || !canDerive || accountStateUnknown} className="h-9 rounded-lg bg-blue px-3 text-[12px] font-semibold text-white hover:brightness-110 disabled:cursor-wait disabled:opacity-60">
+                    {isSwitching ? "Switching network…" : isSubmitting ? "Confirm in wallet…" : isConfirming ? "Deploying account…" : "Create policy account"}
+                  </button>
                   {!deployed && <span className="text-[12px] text-faint">One wallet transaction. It does not enable trading on its own.</span>}
                 </div>
 
@@ -151,11 +154,6 @@ export function PolicyAccountPanel({ asset, spot }: { asset: OptionsAsset; spot:
               <>
                 <MandateSigningPanel key={accountAddress} owner={address} account={accountAddress} network={network} asset={asset} spot={spot} />
                 <PolicyFundingPanel account={accountAddress} network={network} collateral={policy.collateral} collateralLabel={policy.collateralLabel} chainId={policy.chainId} />
-                {live && (
-                  <div className="flex justify-end py-3">
-                    <button type="button" onClick={() => setPolicyDetailsOpen(false)} className="text-[12px] font-semibold text-muted hover:text-fg">Back to monitoring</button>
-                  </div>
-                )}
               </>
             ) : null}
           </div>
