@@ -99,7 +99,7 @@ export function PolicyAccountPanel({ asset, spot }: { asset: OptionsAsset; spot:
           onClick={() => setPolicyDetailsOpen((open) => !open)}
         >
           <span>Policy controls</span>
-          <span aria-hidden>{policyDetailsOpen ? "⌃" : "⌄"}</span>
+          <ChevronIcon />
         </button>
       )}
 
@@ -160,6 +160,14 @@ export function PolicyAccountPanel({ asset, spot }: { asset: OptionsAsset; spot:
         )}
       </section>}
     </>
+  );
+}
+
+function ChevronIcon() {
+  return (
+    <svg className="size-4" aria-hidden viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75">
+      <path d="m4 6 4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   );
 }
 
