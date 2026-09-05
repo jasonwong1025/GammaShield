@@ -84,31 +84,20 @@ export function PolicyAccountPanel({ asset, spot }: { asset: OptionsAsset; spot:
           so it sits above the setup it came from rather than below it. */}
       {live && (
         <section className="agent-surface" aria-label="Agent status">
-          <AgentStatusHeader account={accountAddress} mandateHash={activeMandate} network={network} chainId={policy.chainId} />
+          <AgentStatusHeader account={accountAddress} mandateHash={activeMandate} network={network} chainId={policy.chainId} onManagePolicy={() => setPolicyDetailsOpen(true)} />
           <div className="p-5">
             <AgentMonitoringPanel account={accountAddress} mandateHash={activeMandate} network={network} />
           </div>
         </section>
       )}
 
-      <section className="agent-surface" aria-label="Policy account setup">
+      {(!live || policyDetailsOpen) && <section className="agent-surface" aria-label="Policy account setup">
         {!policy.factory || !policy.agent ? (
           <p className="m-5 rounded-lg border border-crit/30 bg-crit/10 p-3 text-[12px] text-crit">The {network === "mainnet" ? "Base-mainnet" : "Base Sepolia"} policy-account factory or agent is not configured.</p>
         ) : !isConnected || !address ? (
           <div className="p-5">
             <h3 className="text-[15px] font-bold tracking-[-0.01em] text-fg">Set up the agent</h3>
             <p className="mt-1 text-[12px] leading-relaxed text-muted">Connect the wallet that will own this policy account. Create it once, choose its limits, then add funds.</p>
-          </div>
-        ) : live && accountAddress && !policyDetailsOpen ? (
-          <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-3 p-5">
-            <div>
-              <p className="text-[13px] font-semibold text-fg">Policy account ready</p>
-              <p className="mt-1 text-[12px] text-muted">Limits and funding are managed separately from your main wallet.</p>
-            </div>
-            <div className="flex items-center gap-3 text-[12px]">
-              <ExplorerLink network={network} resource="address" value={accountAddress} className="font-mono text-muted hover:text-blue">{shortAddr(accountAddress)}</ExplorerLink>
-              <button type="button" onClick={() => setPolicyDetailsOpen(true)} className="h-8 rounded-md bg-panel3 px-3 font-semibold text-blue hover:bg-panel2">Manage policy</button>
-            </div>
           </div>
         ) : (
           <div className="rowlist px-5">
@@ -171,7 +160,7 @@ export function PolicyAccountPanel({ asset, spot }: { asset: OptionsAsset; spot:
             ) : null}
           </div>
         )}
-      </section>
+      </section>}
     </>
   );
 }
