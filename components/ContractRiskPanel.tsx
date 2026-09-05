@@ -86,7 +86,7 @@ export function ContractRiskPanel({
 }) {
   const color = riskColor(risk.score);
   return (
-    <div className="rounded-lg border border-edge bg-panel p-2.5 flex flex-col gap-2.5">
+    <div className="card p-2.5 flex flex-col gap-2.5">
       <div className="flex items-center justify-between">
         <span className="text-muted">
           Contract risk{" "}

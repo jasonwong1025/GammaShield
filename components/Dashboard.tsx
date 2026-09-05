@@ -257,7 +257,7 @@ function TradingArea({
   }, [appliedPendingRow]);
 
   return (
-    <div className="grid grow grid-cols-1 xl:grid-cols-[1fr_380px] gap-px bg-edge">
+    <div className="trading-workspace grid grow grid-cols-1 xl:grid-cols-[1fr_380px] gap-px bg-edge">
       <div className="flex flex-col gap-px min-w-0">
         <PriceChart asset={asset} flip={a.flipStrike} livePrice={livePrice} />
         <BookCard

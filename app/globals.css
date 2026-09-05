@@ -164,6 +164,24 @@ body {
   background: var(--blue);
 }
 
+/* Flat workspace grids — both tabs' top-level layout: panels sit flush
+   against the grid's own hairline (gap-px + bg-edge) dividers rather than
+   floating as separately-bordered, rounded cards. A card keeps its border
+   and radius everywhere else (e.g. stacked inside a plain column with real
+   margin between items); it's only inside one of these two grids that the
+   grid itself is the border. */
+.agent-workspace .card,
+.trading-workspace .card {
+  border: 0;
+  border-radius: 0;
+}
+/* AgentView's own nested grids (e.g. the Limits / What it may do pair) size
+   each .card to its own content by default — MandateSigningPanel opts a row
+   back into equal-height stretching with `!self-stretch` where it wants that. */
+.agent-workspace .card {
+  align-self: start;
+}
+
 /* Agent surfaces sit in AgentView's hairline grid, so they don't need their
    own rounded card border. */
 .agent-surface {
@@ -171,11 +189,6 @@ body {
 }
 .agent-surface .readout {
   border-radius: 0;
-}
-.agent-workspace .card {
-  border: 0;
-  border-radius: 0;
-  align-self: start;
 }
 .agent-disclosure {
   display: flex;

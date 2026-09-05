@@ -67,11 +67,18 @@ import type { ExecutionNetwork } from "@/lib/explorer";
 import { ensureWalletChain, walletActionError } from "@/lib/walletChain";
 
 /** Signed terms the five controls do not cover. Defaults until an AI draft
- *  proposes better ones; always rendered before signing. */
+ *  proposes better ones; always rendered before signing.
+ *
+ *  DEMO OVERRIDE: NEXT_PUBLIC_DEMO_RISK_THRESHOLD / _PERSISTENCE_MINUTES let a
+ *  local presentation sign a mandate that clears Auto-Hedge's gate against the
+ *  real live book score almost immediately, instead of waiting for it to cross
+ *  75/100 for a full 10 minutes. Unset in .env.local when the demo is over —
+ *  every mandate signed while they're set is more aggressive than the real
+ *  default a production user would see. */
 const DEFAULT_TIMING: MandateDraftTiming = {
-  riskScore: "75",
+  riskScore: process.env.NEXT_PUBLIC_DEMO_RISK_THRESHOLD ?? "75",
   positionRiskScore: String(DEFAULT_POSITION_RISK_TRIGGER),
-  persistenceMinutes: "10",
+  persistenceMinutes: process.env.NEXT_PUBLIC_DEMO_PERSISTENCE_MINUTES ?? "10",
   cooldownMinutes: "60",
   validityHours: "24",
   minTenorDays: "1",

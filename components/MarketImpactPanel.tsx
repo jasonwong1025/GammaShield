@@ -127,7 +127,7 @@ export function MarketImpactPanel({
   ].filter((s): s is string => Boolean(s));
 
   return (
-    <div className="rounded-md border border-edge p-3 text-[12px] flex flex-col gap-2">
+    <div className="card p-3 text-[12px] flex flex-col gap-2">
       <div className="flex items-center justify-between gap-3">
         <span className="text-muted">Market impact</span>
         <label className="flex items-center gap-1.5 text-faint text-[11px]">

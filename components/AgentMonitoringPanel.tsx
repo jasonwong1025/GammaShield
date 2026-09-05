@@ -42,6 +42,8 @@ export function AgentMonitoringPanel({ account, mandateHash, network }: { accoun
   const [agent, setAgent] = useState<AgentStatus | null>(null);
   const [agentError, setAgentError] = useState(false);
   const [now, setNow] = useState<number | null>(null);
+  const [demoTriggering, setDemoTriggering] = useState(false);
+  const [demoError, setDemoError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -66,6 +68,28 @@ export function AgentMonitoringPanel({ account, mandateHash, network }: { accoun
       window.clearInterval(interval);
     };
   }, [account, network]);
+
+  // DEMO ONLY — runs one manual assessment tick against the Base Sepolia
+  // shadow book instead of waiting on the polling worker, then re-reads the
+  // same status endpoint the panel already polls. Kept independent of the
+  // polling effect above rather than sharing its callback, since this only
+  // ever runs from a click, never inside an effect. Delete alongside
+  // app/api/demo/agent-tick/route.ts after the presentation.
+  const triggerDemoTick = async () => {
+    setDemoTriggering(true);
+    setDemoError(null);
+    try {
+      const response = await fetch("/api/demo/agent-tick", { method: "POST" });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.error ?? `demo tick ${response.status}`);
+      const statusResponse = await fetch(`/api/agent-status?network=${network}&account=${account}`, { cache: "no-store" });
+      if (statusResponse.ok) setAgent(await statusResponse.json() as AgentStatus);
+    } catch (error) {
+      setDemoError(error instanceof Error ? error.message : "demo tick failed");
+    } finally {
+      setDemoTriggering(false);
+    }
+  };
 
   const score = riskState ? Number(riskState[0]) / 100 : null;
   const eligibleSince = riskState ? Number(riskState[1]) : 0;
@@ -113,6 +137,24 @@ export function AgentMonitoringPanel({ account, mandateHash, network }: { accoun
             For a local demo, run <code className="font-mono text-fg">{agent?.command ?? (network === "mainnet" ? "npm run agent:thetanuts" : "npm run agent:shadow")}</code> alongside this app.
           </p>
         </Disclosure>
+      </div>
+    )}
+
+    {/* DEMO ONLY — delete this block and app/api/demo/agent-tick/route.ts
+        after the presentation. Runs one real assessment tick on demand
+        instead of waiting for the polling worker; Sepolia only, and the
+        route itself refuses outside development regardless. */}
+    {network === "sepolia" && (
+      <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
+        <button
+          type="button"
+          onClick={() => void triggerDemoTick()}
+          disabled={demoTriggering}
+          className="h-8 rounded-lg border border-edge px-3 text-[12px] font-semibold text-fg hover:bg-panel2 disabled:cursor-wait disabled:opacity-60"
+        >
+          {demoTriggering ? "Running agent check…" : "Run agent check now (demo)"}
+        </button>
+        {demoError && <span className="text-[12px] text-crit">{demoError}</span>}
       </div>
     )}
 
