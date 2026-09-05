@@ -6,7 +6,9 @@
    panel-3 #e9edf4 · edge #e3e8f0 · edge-2 #c9d2e0 · text #172136
    muted #5d6a83 · faint #8a94a8 · blue #2b66d9 · blue-soft #e8effc
    calm #12a06e · warn #c8891a · crit #d8433b */
-:root {
+:root,
+[data-theme="dark"],
+.dark {
   --bg: #0a0d12;
   --bg-deep: #05070a;
   --panel: #10141b;
@@ -22,6 +24,25 @@
   --calm: #34d399;
   --warn: #fbbf24;
   --crit: #f87171;
+}
+
+[data-theme="light"],
+.light {
+  --bg: #f4f6fa;
+  --bg-deep: #edf0f6;
+  --panel: #ffffff;
+  --panel-2: #f3f5f9;
+  --panel-3: #e9edf4;
+  --edge: #e3e8f0;
+  --edge-2: #c9d2e0;
+  --text: #172136;
+  --muted: #5d6a83;
+  --faint: #8a94a8;
+  --blue: #2b66d9;
+  --blue-soft: #e8effc;
+  --calm: #12a06e;
+  --warn: #c8891a;
+  --crit: #d8433b;
 }
 
 @theme inline {
