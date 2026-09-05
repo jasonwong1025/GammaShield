@@ -1,13 +1,9 @@
 "use client";
 
-import { useState } from "react";
-import type { Address, Hex } from "viem";
 import type { AssetSnapshot } from "@/lib/engine";
 import type { FeedRow } from "@/lib/snapshot";
 import type { Asset } from "@/lib/assets";
-import type { ExecutionNetwork } from "@/lib/explorer";
 import { PolicyAccountPanel } from "./PolicyAccountPanel";
-import { AgentMonitoringPanel } from "./AgentMonitoringPanel";
 import { BookCard } from "./BookFeed";
 
 type Props = {
@@ -18,23 +14,14 @@ type Props = {
   spot: number;
 };
 
-type ActiveAgent = { account: Address; mandateHash: Hex; network: ExecutionNetwork };
-
 export function AgentView({ snap, feed, asset, live, spot }: Props) {
-  const [activeAgent, setActiveAgent] = useState<ActiveAgent | null>(null);
-
   return (
     <div className="grid grow grid-cols-1 xl:grid-cols-[5fr_7fr] gap-px bg-edge">
-      {/* Settings rail: configure the account and its limits, then watch what
-          it's doing right below that — same column, since both are about
-          the agent's own setup rather than the market it trades. */}
+      {/* Settings rail: what the agent is doing now, then the setup it came
+          from — both are about the agent itself rather than the market it
+          trades, and the console orders them by how often they're read. */}
       <div className="flex flex-col gap-px min-w-0">
-        <PolicyAccountPanel asset={asset} spot={spot} onAgentActive={setActiveAgent} />
-        {activeAgent && (
-          <section className="card p-5" aria-label="Agent activity">
-            <AgentMonitoringPanel account={activeAgent.account} mandateHash={activeAgent.mandateHash} network={activeAgent.network} />
-          </section>
-        )}
+        <PolicyAccountPanel asset={asset} spot={spot} />
         <div className="grow bg-panel" />
       </div>
 

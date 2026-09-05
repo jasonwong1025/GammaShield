@@ -1,4 +1,4 @@
-import { isAddress, stringToHex, zeroAddress, type Address, type Hex, type TypedDataDomain } from "viem";
+import { hexToString, isAddress, stringToHex, zeroAddress, type Address, type Hex, type TypedDataDomain } from "viem";
 import type { OptionsAsset } from "./assets.ts";
 import type { TradeSide } from "./trade.ts";
 
@@ -140,3 +140,14 @@ function isContractAddress(value: string): value is Address {
 }
 
 export type MandateTypedMessage = ReturnType<typeof mandateMessage> & { asset: Hex };
+
+/** The inverse of the `stringToHex` above, for reading a mandate back off the
+ *  chain. Returns null rather than a guess when the word does not decode, so a
+ *  caller shows nothing instead of showing the wrong asset. */
+export function assetFromHex(value: Hex): string | null {
+  try {
+    return hexToString(value, { size: 32 }).replace(/\0+$/, "") || null;
+  } catch {
+    return null;
+  }
+}

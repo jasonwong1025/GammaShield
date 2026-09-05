@@ -5,6 +5,7 @@ import { useReadContract } from "wagmi";
 import { mandateAccountAbi } from "@/lib/generated/contracts";
 import type { ExecutionNetwork } from "@/lib/explorer";
 import { ExplorerLink } from "./ExplorerLink";
+import { Disclosure } from "./Disclosure";
 import type { Address, Hex } from "viem";
 
 type AgentStatus = {
@@ -78,31 +79,88 @@ export function AgentMonitoringPanel({ account, mandateHash, network }: { accoun
 
   const needsAttention = agent?.worker === "error" || agent?.worker === "stale" || agentError;
   return <section aria-label="Agent monitoring">
-    <div className="flex flex-wrap items-start justify-between gap-2">
-      <div className="flex items-center gap-2">
-        {!needsAttention && <span className="live-dot inline-block size-2 rounded-full bg-calm" />}
-        <h3 className="text-[16px] font-bold tracking-[-0.01em] text-fg">{needsAttention ? "Agent needs attention" : "Policy is active"}</h3>
-      </div>
-      {needsAttention && <span className="rounded-full bg-crit/10 px-2.5 py-1 text-[10px] font-semibold text-crit">Action needed</span>}
-    </div>
-    <p className="mt-1 max-w-[68ch] text-[12px] leading-relaxed text-muted">
-      Checks the live book every 10–15 seconds and can only act within your signed limits and enabled switches.{" "}
-      {network === "mainnet" ? "Only Auto-Hedge runs on Base mainnet." : "All three actions run on Base Sepolia."}
-    </p>
-    <div className="readout mt-3 grid gap-2 p-3 text-[11px] sm:grid-cols-[150px_1fr]">
-      <span className="text-faint">Worker</span><span className="text-fg">{workerText(agent, agentError, now)}</span>
-      <span className="text-faint">Execution mode</span><span className="text-fg">{!agent ? "Checking…" : agent.dryRun ? "Dry run — cannot spend funds." : network === "mainnet" ? "Broadcast enabled." : "Shadow execution — test funds only."}</span>
-      <span className="text-faint">Latest decision</span><span className="text-fg">{agent?.latest ? (agent.latest.decision ? shortDecisionText(agent.latest) : decisionText(agent.latest)) : "Waiting for the first check."}</span>
-      <span className="text-faint">Risk evidence</span><span className="text-fg">{evidence}{threshold != null ? ` · threshold ${threshold.toFixed(2)} / 100` : ""}</span>
-      <span className="text-faint">Persistence</span><span className="text-fg">{persistence}</span>
-      {agent?.recent && <><span className="text-faint">Latest UserOperation</span><span className={agent.recent.status === "confirmed" ? "text-calm" : "text-crit"}>{agent.recent.status === "confirmed" ? "Confirmed" : "Reverted"}{agent.recent.transactionHash && <>. <ExplorerLink network={network} resource="tx" value={agent.recent.transactionHash} className="underline">View transaction</ExplorerLink></>}</span></>}
+    {/* The verdict, and nothing else by default. Everything the agent weighed
+        to reach it is real and stays available, but a visit is normally only
+        asking "is it fine?" — so the workings wait to be asked for. */}
+    <div className="flex flex-wrap items-baseline justify-between gap-2">
+      <h3 className="text-[15px] font-bold tracking-[-0.01em] text-fg">{headline(agent, agentError)}</h3>
+      <span className={`text-[12px] ${needsAttention ? "font-semibold text-crit" : "text-faint"}`}>{workerText(agent, agentError, now)}</span>
     </div>
 
-    {agent?.latest?.decision && <Assessment latest={agent.latest} network={network} />}
-    {agent?.worker === "not-reporting" || agent?.worker === "awaiting-first-check" ? <p className="mt-2 rounded-lg border border-blue/25 bg-bluesoft/30 p-3 text-[11px] text-faint">No worker report yet. Run <code className="font-mono text-fg">{agent?.command ?? (network === "mainnet" ? "npm run agent:thetanuts" : "npm run agent:shadow")}</code> alongside this app.</p> : null}
-    {(agent?.worker === "error" || agent?.worker === "stale" || agentError) && <p className="mt-2 rounded-lg border border-crit/30 bg-crit/10 p-3 text-[11px] text-crit">Worker check failing — see its terminal. No fill until it recovers.</p>}
-    <p className="mt-2 rounded-lg border border-blue/25 bg-bluesoft/30 p-3 text-[11px] text-faint"><ExplorerLink network={network} resource="address" value={account} className="underline">Policy account</ExplorerLink>: pause or revoke takes effect before every fill.</p>
+    {agent?.latest && (
+      <p className="mt-1 text-[13px] leading-relaxed text-muted">
+        {agent.latest.decision?.explanation ?? decisionText(agent.latest)}
+      </p>
+    )}
+
+    {/* Consequential enough to stay in view: one says the AI started this
+        itself, the other that nothing was actually executed. */}
+    {agent?.latest?.decision?.aiInitiated && (
+      <p className="note mt-2.5 text-[12px] leading-relaxed text-muted" style={{ borderLeftColor: "var(--blue)", background: "var(--blue-soft)" }}>
+        The AI raised this exit itself, on a broken thesis — the one action it may start rather than only narrow. It still had to
+        pass the signed policy, and it is always the whole position.
+      </p>
+    )}
+    {agent?.latest?.decision?.recommendationOnly && (
+      <p className="note mt-2.5 text-[12px] leading-relaxed text-muted" style={{ borderLeftColor: "var(--warn)", background: "color-mix(in srgb, var(--warn) 8%, transparent)" }}>
+        {network === "mainnet"
+          ? "Base mainnet has no way to execute this. A Thetanuts option can be closed only bilaterally, the OptionBook exposes no maker orders to end users, and an RFQ mints a new option rather than buying this one back — so this is priced for you to act on, not executed."
+          : "This deployment cannot execute the action, so it is a recommendation only."}
+      </p>
+    )}
+
+    {(agent?.worker === "error" || agent?.worker === "stale" || agentError) && <p className="note mt-2.5 text-[12px] text-crit" style={{ borderLeftColor: "var(--crit)" }}>The worker check is failing — see its terminal. Nothing will be filled until it recovers.</p>}
+    {agent?.worker === "not-reporting" || agent?.worker === "awaiting-first-check" ? <p className="note mt-2.5 text-[12px] leading-relaxed text-faint" style={{ borderLeftColor: "var(--edge-2)" }}>Run <code className="font-mono text-fg">{agent?.command ?? (network === "mainnet" ? "npm run agent:thetanuts" : "npm run agent:shadow")}</code> alongside this app to start it checking.</p> : null}
+
+    <div className="mt-2.5">
+      <Disclosure label={agent?.latest?.decision ? "Why this, and not the others?" : "Show what it checks"}>
+        <div className="mt-2.5">
+          {agent?.latest?.decision && <Assessment latest={agent.latest} />}
+          <div className="rowlist mt-2.5">
+            <Fact label="Execution mode" value={!agent ? "Checking…" : agent.dryRun ? "Dry run — it cannot spend funds" : network === "mainnet" ? "Broadcast enabled" : "Shadow execution — test funds only"} />
+            {/* Distinct from the risk in the assessment: that is what the
+                worker just read, this is what the account has attested
+                on-chain, and only the attested one can arm a fill. */}
+            <Fact label="Risk attested on-chain" value={`${evidence}${threshold != null ? `, trigger ${threshold.toFixed(0)}` : ""}`} />
+            <Fact label="Persistence" value={persistence} />
+            {agent?.recent && (
+              <Fact
+                label="Last transaction"
+                tone={agent.recent.status === "confirmed" ? "text-calm" : "text-crit"}
+                value={<>{agent.recent.status === "confirmed" ? "Confirmed" : "Reverted"}{agent.recent.transactionHash && <>. <ExplorerLink network={network} resource="tx" value={agent.recent.transactionHash} className="underline">View transaction</ExplorerLink></>}</>}
+              />
+            )}
+          </div>
+          <p className="mt-2.5 text-[12px] leading-relaxed text-faint">
+            Checks the live book every 10–15 seconds, within your signed limits and switched-on actions.{" "}
+            {network === "mainnet" ? "Only Auto-Hedge runs on Base mainnet." : "All three actions run on Base Sepolia."}
+          </p>
+        </div>
+      </Disclosure>
+    </div>
   </section>;
+}
+
+/** The verdict as a sentence, so a hold reads as a decision rather than as
+ *  nothing having happened. */
+function headline(agent: AgentStatus | null, error: boolean) {
+  if (error || agent?.worker === "error" || agent?.worker === "stale") return "Checks have stopped";
+  if (!agent?.latest) return "Waiting for the first check";
+  const action = agent.latest.decision?.action;
+  if (action === "HOLD") return "Holding — nothing needs doing";
+  if (action === "CLOSE") return "Closing the position";
+  if (action === "ROLL") return "Rolling the position";
+  if (action === "HEDGE") return "Buying protection";
+  return shortDecisionText(agent.latest);
+}
+
+function Fact({ label, value, tone }: { label: string; value: React.ReactNode; tone?: string }) {
+  return (
+    <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 py-2">
+      <span className="text-[12px] text-muted">{label}</span>
+      <span className={`max-w-[46ch] text-right text-[12px] ${tone ?? "text-fg"}`}>{value}</span>
+    </div>
+  );
 }
 
 function workerText(agent: AgentStatus | null, error: boolean, now: number | null) {
@@ -127,55 +185,24 @@ const HEALTH_TONE: Record<string, string> = {
  * contract-risk panel: it shows the three actions that were NOT taken and why,
  * so a hold is legible as a judgement rather than as inactivity.
  */
-function Assessment({ latest, network }: { latest: NonNullable<AgentStatus["latest"]>; network: ExecutionNetwork }) {
+function Assessment({ latest }: { latest: NonNullable<AgentStatus["latest"]> }) {
   const decision = latest.decision!;
   return (
-    <div className="mt-3 rounded-lg border border-edge bg-panel2 p-3 text-[11px]">
-      <div className="flex flex-wrap items-center gap-2">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-faint">Assessment</p>
-        {decision.action && <span className="rounded bg-panel px-1.5 py-0.5 text-[10px] font-semibold text-fg">{decision.action}</span>}
-        {decision.urgency && <span className="rounded bg-panel px-1.5 py-0.5 text-[10px] text-muted">{decision.urgency} urgency</span>}
-        {latest.health && (
-          <span className={`rounded bg-panel px-1.5 py-0.5 text-[10px] font-semibold ${HEALTH_TONE[latest.health] ?? "text-fg"}`}>
-            {latest.health}
-          </span>
-        )}
-        {decision.riskBefore != null && <span className="num text-[10px] text-faint">risk {decision.riskBefore.toFixed(1)} / 100</span>}
+    <div>
+      <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+        {latest.health && <span className={`text-[12px] font-semibold ${HEALTH_TONE[latest.health] ?? "text-fg"}`}>{sentenceCase(latest.health)}</span>}
+        {decision.urgency && <span className="text-[12px] text-faint">{decision.urgency.toLowerCase()} urgency</span>}
+        {decision.riskBefore != null && <span className="num text-[12px] text-faint">risk {decision.riskBefore.toFixed(1)} / 100</span>}
       </div>
-
-      {decision.explanation && <p className="mt-2 leading-relaxed text-muted">{decision.explanation}</p>}
-
-      {decision.aiInitiated && (
-        <p className="mt-2 rounded border border-blue/30 bg-blue/5 p-2 leading-relaxed text-muted">
-          The AI raised this exit itself, on a broken thesis — the one action it may start rather than only narrow. It still had to
-          pass the signed policy, and it is always the whole position.
-        </p>
-      )}
-
-      {decision.recommendationOnly && (
-        <p className="mt-2 rounded border border-warn/30 bg-warn/10 p-2 leading-relaxed text-muted">
-          {network === "mainnet"
-            ? "Base mainnet has no way to execute this. A Thetanuts option can be closed only bilaterally, the OptionBook exposes no maker orders to end users, and an RFQ mints a new option rather than buying this one back — so this is priced for you to act on, not executed."
-            : "This deployment cannot execute the action, so it is a recommendation only."}
-        </p>
-      )}
-
-      {decision.reasonCodes.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1">
-          {decision.reasonCodes.map((code) => (
-            <span key={code} className="rounded bg-panel px-1.5 py-0.5 font-mono text-[10px] text-faint">{code}</span>
-          ))}
-        </div>
-      )}
 
       {decision.alternatives.length > 0 && (
         <div className="mt-2">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-faint">Not taken, and why</p>
-          <ul className="mt-1 grid gap-1">
+          <p className="text-[12px] font-semibold text-fg">Considered and not taken</p>
+          <div className="rowlist mt-0.5">
             {decision.alternatives.map((alternative) => (
-              <li key={alternative.action} className="flex gap-2 leading-relaxed">
-                <span className="w-[52px] shrink-0 font-semibold text-fg">{alternative.action}</span>
-                <span className="text-faint">
+              <div key={alternative.action} className="flex items-baseline gap-3 py-1.5">
+                <span className="w-[46px] shrink-0 text-[12px] font-semibold text-muted">{alternative.action}</span>
+                <span className="text-[12px] leading-relaxed text-faint">
                   {alternative.rejected}
                   {alternative.estimatedCostUsd != null && alternative.estimatedCostUsd !== 0 && (
                     <span className="num">
@@ -183,9 +210,17 @@ function Assessment({ latest, network }: { latest: NonNullable<AgentStatus["late
                     </span>
                   )}
                 </span>
-              </li>
+              </div>
             ))}
-          </ul>
+          </div>
+        </div>
+      )}
+
+      {decision.reasonCodes.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {decision.reasonCodes.map((code) => (
+            <span key={code} className="rounded bg-panel2 px-1.5 py-0.5 font-mono text-[11px] text-faint">{code}</span>
+          ))}
         </div>
       )}
     </div>
@@ -219,6 +254,10 @@ function decisionText(latest: NonNullable<AgentStatus["latest"]>) {
 /** Used when the Assessment box already explains the outcome below. */
 function shortDecisionText(latest: NonNullable<AgentStatus["latest"]>) {
   return OUTCOME_LABEL[latest.outcome] ?? latest.outcome;
+}
+
+function sentenceCase(value: string) {
+  return value.charAt(0) + value.slice(1).toLowerCase();
 }
 
 function duration(seconds: number) {
