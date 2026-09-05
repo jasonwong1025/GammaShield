@@ -178,6 +178,7 @@ export function TradePanel({
   hedgeIntent,
   orderIntent = null,
   onClearOrderIntent,
+  onFilled,
 }: {
   asset: Asset;
   live: boolean;
@@ -185,6 +186,8 @@ export function TradePanel({
   /** Set when a specific row's Buy button was clicked in the OptionBook feed. */
   orderIntent?: OrderIntent | null;
   onClearOrderIntent?: () => void;
+  /** Fires once a mainnet or shadow fill confirms, so the position becomes visible somewhere. */
+  onFilled?: () => void;
 }) {
   const { network } = useExecutionNetwork();
   const { address: walletAddress, connector } = useAccount();
@@ -213,6 +216,15 @@ export function TradePanel({
   const seq = useRef(0);
   const aiSeq = useRef(0);
   const rfqAddress = useRef<string | null>(null);
+
+  // A fresh position now exists somewhere the user can't see from this panel —
+  // hand off to wherever positions are tracked once the fill actually confirms.
+  useEffect(() => {
+    if (tx.step === "done") onFilled?.();
+  }, [tx, onFilled]);
+  useEffect(() => {
+    if (shadowTx.step === "done") onFilled?.();
+  }, [shadowTx, onFilled]);
 
   // A row's Buy button was clicked: force this exact side/strike/expiry.
   // Re-applies on every new nonce (not just at mount) so clicking a

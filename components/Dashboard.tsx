@@ -140,6 +140,7 @@ export function Dashboard() {
                     live={live}
                     livePrice={livePrice}
                     pendingRow={pendingRow}
+                    onFilled={() => setActiveTab("agent")}
                   />
                 )}
 
@@ -194,6 +195,7 @@ function TradingArea({
   live,
   livePrice,
   pendingRow,
+  onFilled,
 }: {
   snap: MarketSnapshot;
   a: AssetSnapshot;
@@ -201,6 +203,7 @@ function TradingArea({
   live: boolean;
   livePrice: number;
   pendingRow?: FeedRow | null;
+  onFilled: () => void;
 }) {
   const [orderIntent, setOrderIntent] = useState<OrderIntent | null>(null);
 
@@ -279,6 +282,7 @@ function TradingArea({
           hedgeIntent={null}
           orderIntent={orderIntent}
           onClearOrderIntent={() => setOrderIntent(null)}
+          onFilled={onFilled}
         />
         <div className="grow bg-panel" />
       </div>
