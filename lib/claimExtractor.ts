@@ -6,6 +6,8 @@ export type ExtractedClaim = {
   originalUrl?: string;
   domain?: string;
   headline: string;
+  fetchStatus?: "VERIFIED_PAGE" | "HTTP_404" | "HTTP_ERROR" | "TIMEOUT_OR_BLOCKED" | "NO_URL";
+  warning?: string;
 };
 
 /**
@@ -19,6 +21,7 @@ export async function extractClaimFromInput(input: string): Promise<ExtractedCla
     return {
       isUrl: false,
       headline: trimmed,
+      fetchStatus: "NO_URL",
     };
   }
 
@@ -31,6 +34,7 @@ export async function extractClaimFromInput(input: string): Promise<ExtractedCla
     return {
       isUrl: false,
       headline: trimmed,
+      fetchStatus: "NO_URL",
     };
   }
 
@@ -55,6 +59,7 @@ export async function extractClaimFromInput(input: string): Promise<ExtractedCla
               originalUrl: rawUrl,
               domain,
               headline: data.author_name ? `@${data.author_name}: "${tweetText}"` : tweetText,
+              fetchStatus: "VERIFIED_PAGE",
             };
           }
         }
@@ -63,6 +68,9 @@ export async function extractClaimFromInput(input: string): Promise<ExtractedCla
       // Fall through to fallback slug parsing
     }
   }
+
+  let fetchStatus: ExtractedClaim["fetchStatus"] = undefined;
+  let warning: string | undefined = undefined;
 
   // 2. General News / Web Article Extraction (CoinDesk, Bloomberg, etc.)
   try {
@@ -74,7 +82,13 @@ export async function extractClaimFromInput(input: string): Promise<ExtractedCla
       signal: AbortSignal.timeout(3500),
     });
 
-    if (res.ok) {
+    if (res.status === 404) {
+      fetchStatus = "HTTP_404";
+      warning = formatHttpWarning(404, domain);
+    } else if (!res.ok) {
+      fetchStatus = "HTTP_ERROR";
+      warning = formatHttpWarning(res.status, domain);
+    } else {
       const html = await res.text();
 
       // Extract OpenGraph title or HTML title
@@ -103,11 +117,13 @@ export async function extractClaimFromInput(input: string): Promise<ExtractedCla
           originalUrl: rawUrl,
           domain,
           headline: combined.slice(0, 400),
+          fetchStatus: "VERIFIED_PAGE",
         };
       }
     }
   } catch {
-    // Network or timeout, fall through to slug extractor
+    fetchStatus = "TIMEOUT_OR_BLOCKED";
+    warning = `Could not connect to ${domain} (connection timed out). Reconstructed headline from link.`;
   }
 
   // 3. Fallback: Extract claim from URL path slug
@@ -123,11 +139,17 @@ export async function extractClaimFromInput(input: string): Promise<ExtractedCla
       .trim();
 
     if (cleanSlug.length > 5) {
+      const formattedTitle = cleanSlug.charAt(0).toUpperCase() + cleanSlug.slice(1);
+      const headline = fetchStatus === "HTTP_404"
+        ? `[Dead Link on ${domain}] ${formattedTitle}`
+        : `Report from ${domain}: ${formattedTitle}`;
       return {
         isUrl: true,
         originalUrl: rawUrl,
         domain,
-        headline: `Report from ${domain}: ${cleanSlug.charAt(0).toUpperCase() + cleanSlug.slice(1)}`,
+        headline,
+        fetchStatus: fetchStatus || "TIMEOUT_OR_BLOCKED",
+        warning,
       };
     }
   } catch {}
@@ -136,8 +158,33 @@ export async function extractClaimFromInput(input: string): Promise<ExtractedCla
     isUrl: true,
     originalUrl: rawUrl,
     domain,
-    headline: `Link from ${domain}: ${rawUrl}`,
+    headline: fetchStatus === "HTTP_404" ? `[Dead Link on ${domain}] ${rawUrl}` : `Link from ${domain}: ${rawUrl}`,
+    fetchStatus: fetchStatus || "TIMEOUT_OR_BLOCKED",
+    warning,
   };
+}
+
+/**
+ * Translates technical HTTP status codes to user-friendly plain English.
+ */
+function formatHttpWarning(status: number, domain: string): string {
+  switch (status) {
+    case 404:
+      return `Article not found on ${domain} (page does not exist or was removed).`;
+    case 429:
+      return `Rate limited by ${domain} (too many automated requests; anti-bot active). Reconstructed headline from link.`;
+    case 403:
+      return `Access blocked by ${domain} (anti-scraping protection active). Reconstructed headline from link.`;
+    case 401:
+      return `${domain} requires a login or paid subscription. Reconstructed headline from link.`;
+    case 500:
+    case 502:
+    case 503:
+    case 504:
+      return `${domain} servers are temporarily unavailable. Reconstructed headline from link.`;
+    default:
+      return `Could not load page directly from ${domain} (server responded with code ${status}). Reconstructed headline from link.`;
+  }
 }
 
 /**

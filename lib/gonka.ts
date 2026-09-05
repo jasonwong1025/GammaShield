@@ -8,11 +8,13 @@ import type { Asset } from "./assets";
 import { getSpotVolume } from "./spotVolume";
 import { getVolContext } from "./realizedVol";
 import { dailyVolPctOf, oneRoundImpact, IMPACT_COEFFICIENT } from "./marketImpact";
+import type { TavilyEvidence } from "./tavily";
 
 export const GONKA_MODELS = {
-  PRIMARY: "MiniMaxAI/MiniMax-M2.7", // Recommended agent & reasoning model (200k context)
-  KIMI: "moonshotai/Kimi-K2.6",      // High accuracy factual verification
-  FLASH: "deepseek-ai/DeepSeek-V4-Flash-0731", // High throughput & fast screening
+  PRIMARY: "MiniMaxAI/MiniMax-M2.7", // High capacity & deep reasoning (200k context)
+  DEEPSEEK: "deepseek-ai/DeepSeek-V4-Flash-0731", // High throughput & fast factual screening
+  FLASH: "deepseek-ai/DeepSeek-V4-Flash-0731", // High throughput failover
+  KIMI: "moonshotai/Kimi-K2.6", // Note: Temporarily offline on GonkaRouter
 } as const;
 
 export type GonkaModelId =
@@ -43,7 +45,10 @@ export type FactCheckRequest = {
     originalUrl?: string;
     domain?: string;
     headline: string;
+    fetchStatus?: "VERIFIED_PAGE" | "HTTP_404" | "HTTP_ERROR" | "TIMEOUT_OR_BLOCKED" | "NO_URL";
+    warning?: string;
   };
+  webEvidence?: TavilyEvidence[];
 };
 
 export type FactCheckResult = {
@@ -65,7 +70,10 @@ export type FactCheckResult = {
     originalUrl?: string;
     domain?: string;
     headline: string;
+    fetchStatus?: "VERIFIED_PAGE" | "HTTP_404" | "HTTP_ERROR" | "TIMEOUT_OR_BLOCKED" | "NO_URL";
+    warning?: string;
   };
+  webEvidence?: TavilyEvidence[];
   traces?: ConsensusTraceStep[];
 };
 
@@ -149,12 +157,18 @@ async function callGonkaModelStep(
       }),
     }, 1, 1000, timeoutMs);
 
-    if (res.ok) {
-      const json = await res.json();
-      const content = json.choices?.[0]?.message?.content || "{}";
-      const requestId = typeof json.id === "string" ? json.id : res.headers.get("x-request-id");
-      return { raw: content, requestId, modelUsed: primaryModel };
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`HTTP ${res.status}: ${errText}`);
     }
+
+    const json = await res.json();
+    const content = json.choices?.[0]?.message?.content || "";
+    if (content.toLowerCase().includes("offline") || content.toLowerCase().includes("taken offline") || !content.includes("{")) {
+      throw new Error(`Model returned offline notice or invalid JSON: ${content.slice(0, 100)}`);
+    }
+    const requestId = typeof json.id === "string" ? json.id : res.headers.get("x-request-id");
+    return { raw: content, requestId, modelUsed: primaryModel };
   } catch (err) {
     console.warn(`[GonkaRouter Consensus] ${primaryModel} failed, falling back to ${fallbackModel}:`, err);
   }
@@ -208,11 +222,17 @@ export async function analyzeMarketRumor(params: FactCheckRequest): Promise<Gonk
 Your goal is to cross-examine viral crypto news/rumors against factual veracity, on-chain news credibility, and FUD patterns.
 Core Rules:
 1. Truth Score (0-100%): 
-   - 0-35%: Baseless panic / fabricated FUD / viral misinterpretation.
-   - 36-70%: Plausible event with unverified or exaggerated elements.
+   - 0-35%: Baseless panic / fabricated FUD / dead links (HTTP 404) / unprovable hearsay / rumors about pseudonymous founders (e.g. Satoshi Nakamoto car crash).
+   - 36-70%: Plausible event with unverified elements, uncorroborated market expansion claims, or speculative gossip.
    - 71-100%: High-veracity news, verified on-chain transfer, or legitimate systemic event.
-2. veracity: "<VERIFIED | PLAUSIBLE | UNVERIFIED_FUD | DEBUNKED>"
-3. factualReasoning: 1 concise paragraph detailing evidence cross-check and narrative veracity.
+2. Cross-examine the claim against the provided "Real-Time Web Search Evidence (Tavily)":
+   - If credible web news directly corroborates or debunks the claim, explicitly cite those findings in factualReasoning.
+   - If NO credible news exists for an alleged major event (e.g. sudden founder death, SEC crash), treat the complete absence of reporting as strong evidence of fabricated FUD (Truth Score <= 20%).
+3. If the URL returned a 404 Not Found or does not exist, classify veracity as "DEBUNKED", set Truth Score <= 15%, and explicitly declare that the provided link is non-existent/fabricated.
+4. If the user presents hearsay about anonymous or fictional events (e.g., "my friend said Bitcoin founder had a car crash"), immediately debunk it: Satoshi Nakamoto is pseudonymous, has been completely inactive since 2010, and no founder identity is known or involved in any accident.
+5. If the user presents general rumors without links (e.g., "Bitcoin expanded to supply chain"), analyze what is factually true vs misconceptions (e.g., Bitcoin is a decentralized protocol without a corporate expansion team, though third parties build on it).
+6. veracity: "<VERIFIED | PLAUSIBLE | UNVERIFIED_FUD | DEBUNKED>"
+7. factualReasoning: 1 concise paragraph detailing evidence cross-check and narrative veracity.
 
 Output ONLY valid JSON:
 {
@@ -229,7 +249,7 @@ Core Rules:
 2. Dealer Regime Correlation:
    - When Net GEX < 0 (Amplifier Mode), dealer hedging chases price downward, turning panics into liquidity cascades.
    - When Net GEX > 0 (Dampener Mode), dealers buy dips, buffering price impact.
-3. shouldHedge: boolean. True if market fragility warrants buying downside Put protection on Thetanuts.
+3. shouldHedge: boolean. True if market fragility warrants buying downside Put protection on Thetanuts. If a claim is an obvious fake link or absurd hearsay with no real market impact, shouldHedge must be false.
 4. strikeSuggestion: Exact numeric USD strike for a protective Long Put (snapped near or below Gamma Flip).
 
 Output ONLY valid JSON:
@@ -244,6 +264,10 @@ Output ONLY valid JSON:
   "actionRationale": "<1 sentence explaining why this strike protects capital>"
 }`;
 
+  const webEvidenceText = params.webEvidence && params.webEvidence.length > 0
+    ? params.webEvidence.map((ev, i) => `${i + 1}. "${ev.title}" (${ev.domain}): ${ev.content}`).join("\n")
+    : "No live web news articles found matching this query.";
+
   const sharedContext = `Asset: ${params.asset} (Spot: $${params.spotPrice.toLocaleString("en-US", { maximumFractionDigits: 2 })})
 Dealer Fragility Score: ${params.gexScore}/100
 Net Dealer GEX: ${params.netGexUsd ? `${params.netGexUsd.toLocaleString()} USD/1% move` : "N/A"}
@@ -251,34 +275,38 @@ Market Regime: ${params.regime || "neutral"}
 Gamma Flip Level: ${params.flipStrike ? `$${params.flipStrike}` : "None"}
 Optimal Protective Put Strike: ${params.optimalContract ? `$${params.optimalContract.strike} (${params.optimalContract.protectionCoveragePct}% coverage)` : "N/A"}
 ${params.extractedClaim?.isUrl ? `Source Domain: ${params.extractedClaim.domain}` : ""}
+${params.extractedClaim?.warning ? `URL Live Verification Note: ${params.extractedClaim.warning}` : ""}
+
+Real-Time Web Search Evidence (Tavily):
+${webEvidenceText}
 
 Claim to Verify: "${headlineToCheck}"`;
 
   try {
-    // Run Model A (Kimi) and Model B (MiniMax) in parallel on Gonka Network
+    // Run Model A (DeepSeek Flash) and Model B (MiniMax M2.7) in parallel on Gonka Network
     const [stepAResult, stepBResult] = await Promise.allSettled([
       callGonkaModelStep(
         baseUrl,
         apiKey,
-        GONKA_MODELS.KIMI,
-        GONKA_MODELS.FLASH,
+        GONKA_MODELS.DEEPSEEK,
+        GONKA_MODELS.PRIMARY,
         modelASystemPrompt,
         sharedContext,
-        24_000,
+        45_000,
       ),
       callGonkaModelStep(
         baseUrl,
         apiKey,
         GONKA_MODELS.PRIMARY,
-        GONKA_MODELS.FLASH,
+        GONKA_MODELS.DEEPSEEK,
         modelBSystemPrompt,
         sharedContext,
-        24_000,
+        45_000,
       ),
     ]);
 
     let parsedA: { truthScore?: number; veracity?: string; factualReasoning?: string } | null = null;
-    let modelAUsed: string = GONKA_MODELS.KIMI;
+    let modelAUsed: string = GONKA_MODELS.DEEPSEEK;
     let reqIdA: string | null = null;
     if (stepAResult.status === "fulfilled") {
       modelAUsed = stepAResult.value.modelUsed;
@@ -361,6 +389,7 @@ Claim to Verify: "${headlineToCheck}"`;
       factualPerspective,
       marketPerspective,
       extractedClaim: params.extractedClaim,
+      webEvidence: params.webEvidence || [],
       traces,
     };
 

@@ -3,6 +3,7 @@ import { analyzeMarketRumor, GONKA_MODELS, type FactCheckRequest } from "@/lib/g
 import { getOptimalPutHedge } from "@/lib/optimizer";
 import { ALL_ASSETS, type Asset } from "@/lib/assets";
 import { extractClaimFromInput } from "@/lib/claimExtractor";
+import { searchTavily, type TavilyEvidence } from "@/lib/tavily";
 
 export async function POST(req: NextRequest) {
   try {
@@ -37,8 +38,25 @@ export async function POST(req: NextRequest) {
       optimalContract = optRec.optimalContract;
     } catch {}
 
-    // Extract claim from URL or tweet if a link was submitted
+    // 1. Extract claim from URL or tweet if a link was submitted
     const extractedClaim = await extractClaimFromInput(headline);
+
+    // 2. Real-time Web Search via Tavily:
+    // - Always query web for raw text claims.
+    // - Always query web for social posts (Twitter / X links), because a tweet is an unverified user statement.
+    // - Query web for URLs if the link is dead/404, rate-limited, or blocked.
+    // - Conserve credits only for clean news articles where the full metadata was already parsed.
+    let webEvidence: TavilyEvidence[] = [];
+    const isSocialPost = extractedClaim.domain?.includes("x.com") || extractedClaim.domain?.includes("twitter.com");
+    const shouldQueryWeb = !extractedClaim.isUrl || isSocialPost || extractedClaim.fetchStatus !== "VERIFIED_PAGE";
+    if (shouldQueryWeb) {
+      try {
+        const queryTerm = extractedClaim.isUrl ? extractedClaim.headline : headline;
+        webEvidence = await searchTavily(queryTerm, 3);
+      } catch (err) {
+        console.warn("[FactCheck API] Tavily search error:", err);
+      }
+    }
 
     const requestParams: FactCheckRequest = {
       headline: extractedClaim.headline,
@@ -51,6 +69,7 @@ export async function POST(req: NextRequest) {
       model: model || undefined,
       optimalContract,
       extractedClaim,
+      webEvidence,
     };
 
     const analysis = await analyzeMarketRumor(requestParams);

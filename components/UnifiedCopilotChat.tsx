@@ -393,54 +393,102 @@ export function UnifiedCopilotChat({
               <div className="mt-2 p-3.5 rounded-lg bg-panel border border-edge flex flex-col gap-3">
                 {/* Extracted URL / Tweet Source (if URL was submitted) */}
                 {m.rumorData.extractedClaim?.isUrl && (
-                  <div className="flex items-center gap-2 p-2 rounded-lg bg-blue/5 border border-blue/20 text-[11.5px]">
-                    <span className="font-semibold text-blue shrink-0">🔗 Source:</span>
-                    {m.rumorData.extractedClaim.domain && (
-                      <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-panel border border-edge text-fg shrink-0 font-medium">
-                        {m.rumorData.extractedClaim.domain}
-                      </span>
+                  <div className="flex flex-col gap-1.5 p-2 rounded-lg bg-panel2 border border-edge text-[11.5px]">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-blue shrink-0">🔗 Source:</span>
+                      {m.rumorData.extractedClaim.domain && (
+                        <span className="font-mono text-[10.5px] px-2 py-0.5 rounded bg-panel border border-edge text-fg font-medium">
+                          {m.rumorData.extractedClaim.domain}
+                        </span>
+                      )}
+                      {m.rumorData.extractedClaim.originalUrl && (
+                        <a
+                          href={m.rumorData.extractedClaim.originalUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[10px] text-muted hover:text-blue transition-colors flex items-center gap-1 ml-auto"
+                        >
+                          <span>Open link</span>
+                          <span>↗</span>
+                        </a>
+                      )}
+                    </div>
+                    {m.rumorData.extractedClaim.warning && (
+                      <div className="flex items-center gap-1.5 text-[11px] text-amber-500 font-medium bg-amber-500/10 px-2 py-1 rounded border border-amber-500/20">
+                        <span>⚠️</span>
+                        <span>{m.rumorData.extractedClaim.warning}</span>
+                      </div>
                     )}
-                    <span className="truncate text-muted" title={m.rumorData.extractedClaim.headline}>
-                      {m.rumorData.extractedClaim.headline}
-                    </span>
                   </div>
                 )}
 
                 {/* Consensus Truth Score Header */}
-                <div className="flex items-center justify-between gap-3 pb-2.5 border-b border-edge">
-                  <div className="flex items-center gap-3">
-                    <div className="flex flex-col items-center justify-center size-12 rounded-full border border-edge bg-panel2 text-center shrink-0 shadow-xs">
-                      <span
-                        className="num text-[15px] font-bold leading-none"
-                        style={{ color: m.rumorData.truthScore > 65 ? "var(--crit)" : "var(--calm)" }}
-                      >
-                        {m.rumorData.truthScore}%
-                      </span>
-                      <span className="text-[7.5px] text-faint font-bold uppercase mt-0.5 tracking-tight">Consensus</span>
-                    </div>
-                    <div className="flex flex-col gap-0.5">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-bold text-[12.5px] text-fg">
-                          {m.rumorData.truthScore > 65 ? "⚠️ High Fragility Alert" : "🛡️ Low Volatility Risk / FUD"}
-                        </span>
-                        <span
-                          className="text-[10px] font-bold px-2 py-0.5 rounded-full"
-                          style={{
-                            background: m.rumorData.urgency === "CRITICAL" ? "rgba(216, 67, 59, 0.15)" : "rgba(18, 160, 110, 0.15)",
-                            color: m.rumorData.urgency === "CRITICAL" ? "var(--crit)" : "var(--calm)",
-                          }}
-                        >
-                          {m.rumorData.urgency}
-                        </span>
+                {(() => {
+                  const isThreat = m.rumorData.urgency === "CRITICAL" || m.rumorData.urgency === "HIGH" || m.rumorData.shouldHedge;
+                  const isVerified = m.rumorData.truthScore > 65;
+                  const isDebunked = m.rumorData.truthScore <= 35;
+
+                  let headerTitle = "⚠️ Unverified Narrative / Low Impact";
+                  if (isVerified && isThreat) {
+                    headerTitle = "🚨 High-Risk Shock Verified";
+                  } else if (isVerified) {
+                    headerTitle = "✅ Verified Market Catalyst";
+                  } else if (isDebunked) {
+                    headerTitle = "🛡️ Debunked FUD / False Rumor";
+                  } else if (isThreat) {
+                    headerTitle = "⚠️ Unconfirmed Threat / Precaution Advised";
+                  }
+
+                  const scoreColor = isThreat && isVerified
+                    ? "var(--crit)"
+                    : isVerified || isDebunked
+                    ? "var(--calm)"
+                    : "var(--warn)";
+
+                  const urgencyConfig = {
+                    CRITICAL: { bg: "rgba(216, 67, 59, 0.15)", color: "var(--crit)" },
+                    HIGH: { bg: "rgba(216, 67, 59, 0.12)", color: "var(--crit)" },
+                    MEDIUM: { bg: "rgba(200, 137, 26, 0.15)", color: "var(--warn)" },
+                    LOW: { bg: "rgba(18, 160, 110, 0.15)", color: "var(--calm)" },
+                  }[m.rumorData.urgency] || { bg: "rgba(18, 160, 110, 0.15)", color: "var(--calm)" };
+
+                  return (
+                    <div className="flex items-center justify-between gap-3 pb-2.5 border-b border-edge">
+                      <div className="flex items-center gap-3">
+                        <div className="flex flex-col items-center justify-center size-12 rounded-full border border-edge bg-panel2 text-center shrink-0 shadow-xs">
+                          <span
+                            className="num text-[15px] font-bold leading-none"
+                            style={{ color: scoreColor }}
+                          >
+                            {m.rumorData.truthScore}%
+                          </span>
+                          <span className="text-[7.5px] text-faint font-bold uppercase mt-0.5 tracking-tight">Consensus</span>
+                        </div>
+                        <div className="flex flex-col gap-0.5">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-bold text-[12.5px] text-fg">
+                              {headerTitle}
+                            </span>
+                            <span
+                              className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                              style={{
+                                background: urgencyConfig.bg,
+                                color: urgencyConfig.color,
+                              }}
+                            >
+                              {m.rumorData.urgency}
+                            </span>
+                          </div>
+                          <span className="text-[11px] text-muted">
+                            {m.rumorData.consensusStatus === "STRONG"
+                              ? `⚡ Strong Multi-Model Consensus (${m.rumorData.consensusAgreementPct}% alignment)`
+                              : "⚡ Multi-Model Cross-Examination Verified"}
+                          </span>
+                        </div>
                       </div>
-                      <span className="text-[11px] text-muted">
-                        {m.rumorData.consensusStatus === "STRONG"
-                          ? `⚡ Strong Multi-Model Consensus (${m.rumorData.consensusAgreementPct}% alignment)`
-                          : "⚡ Multi-Model Cross-Examination Verified"}
-                      </span>
                     </div>
-                  </div>
-                </div>
+                  );
+                })()}
 
                 {/* Executive Verdict */}
                 <div className="p-2.5 rounded-lg bg-panel2 border border-edge text-[12px] leading-relaxed">
@@ -461,7 +509,7 @@ export function UnifiedCopilotChat({
                           <span>Factual News Veracity</span>
                         </div>
                         <span className="font-mono text-[10px] text-muted font-normal px-1.5 py-0.5 rounded bg-panel border border-edge shrink-0">
-                          {(m.traces?.[0] || m.rumorData.traces?.[0])?.model?.split("/").pop() || "Kimi-K2.6"}
+                          {(m.traces?.[0] || m.rumorData.traces?.[0])?.model?.split("/").pop() || "DeepSeek-Flash"}
                         </span>
                       </div>
                       <p className="text-muted leading-relaxed">{m.rumorData.factualPerspective}</p>
@@ -485,6 +533,47 @@ export function UnifiedCopilotChat({
                   )}
                 </div>
 
+                {/* Real-Time Web Evidence Card (Tavily Search) */}
+                {m.rumorData.webEvidence && m.rumorData.webEvidence.length > 0 && (
+                  <div className="p-2.5 rounded-lg bg-panel2 border border-edge text-[11.5px] flex flex-col gap-2">
+                    <div className="flex items-center justify-between gap-1.5 pb-1 border-b border-edge/60">
+                      <div className="flex items-center gap-1.5 font-semibold text-fg text-[11px]">
+                        <span>🌐</span>
+                        <span>Live Web Evidence</span>
+                        <span className="text-[10px] text-faint font-normal">
+                          ({m.rumorData.webEvidence.length} {m.rumorData.webEvidence.length === 1 ? "source" : "sources"})
+                        </span>
+                      </div>
+                      <span className="font-mono text-[9px] text-blue font-medium px-1.5 py-0.5 rounded bg-blue/10 border border-blue/20">
+                        Tavily Search
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1.5">
+                      {m.rumorData.webEvidence.map((ev, eIdx) => (
+                        <a
+                          key={eIdx}
+                          href={ev.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-panel border border-edge/80 hover:border-blue/50 hover:bg-panel2/60 transition-colors group text-[11px]"
+                          title={ev.title}
+                        >
+                          <span className="font-medium text-fg group-hover:text-blue transition-colors truncate max-w-[200px]">
+                            {ev.title}
+                          </span>
+                          {ev.domain && (
+                            <span className="font-mono text-[9px] px-1.5 py-0.2 rounded bg-panel2 text-muted border border-edge shrink-0 font-normal">
+                              {ev.domain}
+                            </span>
+                          )}
+                          <span className="text-[10px] text-faint group-hover:text-blue shrink-0">↗</span>
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* Autonomous Hedge Recommendation */}
                 <div
                   className={`p-2.5 rounded-lg border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-[11.5px] ${m.rumorData.shouldHedge
@@ -495,7 +584,7 @@ export function UnifiedCopilotChat({
                   <div className="flex flex-col gap-0.5">
                     <div className="flex items-center gap-1.5 font-bold text-fg">
                       <span>{m.source === "deterministic" ? "No executable recommendation" : m.rumorData.shouldHedge ? "🚨 Protective PUT review suggested" : "✅ No immediate hedge suggested"}</span>
-                      {(m.source === "gonka" || m.source === "ai") && m.rumorData.optimalContract && (
+                      {(m.source === "gonka" || m.source === "ai") && m.rumorData.shouldHedge && m.rumorData.optimalContract && (
                         <span className="font-mono px-1.5 py-0.2 rounded bg-panel border border-edge text-blue text-[11px]">
                           ${m.rumorData.optimalContract.strike.toLocaleString()} PUT
                         </span>
