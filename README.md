@@ -25,7 +25,7 @@
 
 | Name | GitHub | Role |
 | --- | --- | --- |
-| Tng Kar Ming | [@TngEr0425](https://github.com/TngEr0425) | Project Leader |
+| Tng Kar Ming | [@TngEr0425](https://github.com/TngEr0425) | Project Manager |
 | Wong Jia Sen | [@jasonwong1025](https://github.com/jasonwong1025) | Tech Leader |
 | Ong Jyong Vey | [@jayveeong05](https://github.com/jayveeong05) | AI Engineer |
 | Ryan Lau Jun Hong | [@ryanlau1220](https://github.com/ryanlau1220) | Software Engineer |
